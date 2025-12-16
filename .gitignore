@@ -1,0 +1,40 @@
+# Logs and coverage
+logs/
+*.log
+coverage/
+.nyc_output/
+coverage-final.json
+
+# Dependency directories
+node_modules/
+packages/
+vendor/
+.venv/
+venv/
+env/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Build output
+dist/
+build/
+out/
+bin/
+obj/
+
+# Environment and secrets
+.env
+.env.*
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+
+# Misc
+*.DS_Store
+Thumbs.db
