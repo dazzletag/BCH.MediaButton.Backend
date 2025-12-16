@@ -1,10 +1,15 @@
 using System.Reflection;
 using MediaButtonBackend.Auth;
+using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddControllers().ConfigureApplicationPartManager(manager =>
+{
+    // Minimal API plus controllers; no special configuration yet.
+});
 
 var app = builder.Build();
 
@@ -16,6 +21,8 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseMiddleware<DeviceAuthMiddleware>();
+
+app.MapControllers();
 
 app.MapGet("/health", () =>
 {
