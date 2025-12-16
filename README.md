@@ -27,7 +27,6 @@ Swagger UI is enabled in Development. Health/info endpoints:
 
 ## Next steps
 
-- Add simple auth (e.g., API keys or bearer tokens) suitable for Pi devices.
-- Define request/response contracts for Pi device interactions.
-- Add CI (GitHub Actions) for build/test and basic linting.
-- Document required environment variables and deployment pipeline specifics.
+- Configure Azure SQL connection string (`ConnectionStrings:Default`), Storage (`Storage:*`), and Azure AD B2C (`AzureAdB2C:*`) in App Settings/Key Vault.
+- Replace placeholder device keys in `appsettings.json` (or better: move to App Settings/Key Vault).
+- Add CI (GitHub Actions) for build/test and deployment to App Service.

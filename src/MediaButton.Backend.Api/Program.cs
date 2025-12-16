@@ -1,6 +1,11 @@
 using System.Reflection;
 using MediaButtonBackend.Auth;
+using MediaButtonBackend.Data;
+using MediaButtonBackend.Services;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Identity.Web;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,6 +16,27 @@ builder.Services.AddControllers().ConfigureApplicationPartManager(manager =>
     // Minimal API plus controllers; no special configuration yet.
 });
 
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAdB2C"));
+
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("AdminOrRelative", policy =>
+    {
+        policy.RequireAuthenticatedUser();
+        policy.RequireAssertion(ctx =>
+        {
+            var roles = ctx.User.FindAll("roles").Select(r => r.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return roles.Contains("Admin") || roles.Contains("Relative");
+        });
+    });
+});
+
+builder.Services.AddScoped<StorageSasService>();
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -20,7 +46,9 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseAuthentication();
 app.UseMiddleware<DeviceAuthMiddleware>();
+app.UseAuthorization();
 
 app.MapControllers();
 
