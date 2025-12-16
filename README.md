@@ -1,19 +1,33 @@
 # BCH.MediaButton.Backend
 
-Backend service for BCH Media Button. Project scaffold with README, gitignore, and MIT license placeholder.
+Backend for the Media Button system used in care homes. It serves Raspberry Pi devices and the staff web UI via a .NET 8 Web API deployed to Azure App Service. Priorities: clarity, stability, Pi-friendly APIs, simple auth, and minimal over-engineering.
 
-## Getting Started
+## Structure
 
-Clone the repo and add your backend source under `src` (or preferred layout). Set up the stack of your choice, then push changes.
+- `MediaButton.Backend.sln` — solution.
+- `src/MediaButton.Backend.Api` — ASP.NET Core 8 Web API (minimal API).
+
+## Running locally
+
+Requirements: .NET 8 SDK.
 
 ```bash
-git clone https://github.com/dazzletag/BCH.MediaButton.Backend.git
-cd BCH.MediaButton.Backend
+dotnet restore
+dotnet run --project src/MediaButton.Backend.Api
 ```
 
-## Next Steps
+Swagger UI is enabled in Development. Health/info endpoints:
+- `GET /health`
+- `GET /api/info`
 
-- Decide on the backend stack (e.g., .NET, Node.js, or Python) and add a project template.
-- Configure CI, code style, and testing tools.
-- Document environment variables and deployment targets once defined.
+## Deploying
 
+- Target: Azure App Service.
+- Publish with `dotnet publish -c Release` and deploy the output of `src/MediaButton.Backend.Api/bin/Release/net8.0/publish`.
+
+## Next steps
+
+- Add simple auth (e.g., API keys or bearer tokens) suitable for Pi devices.
+- Define request/response contracts for Pi device interactions.
+- Add CI (GitHub Actions) for build/test and basic linting.
+- Document required environment variables and deployment pipeline specifics.

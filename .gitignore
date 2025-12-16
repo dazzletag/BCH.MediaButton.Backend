@@ -25,6 +25,9 @@ build/
 out/
 bin/
 obj/
+.vs/
+*.user
+*.suo
 
 # Environment and secrets
 .env
