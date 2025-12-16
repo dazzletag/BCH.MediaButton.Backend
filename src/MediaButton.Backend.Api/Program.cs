@@ -1,4 +1,5 @@
 using System.Reflection;
+using MediaButtonBackend.Auth;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -14,6 +15,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseMiddleware<DeviceAuthMiddleware>();
 
 app.MapGet("/health", () =>
 {
