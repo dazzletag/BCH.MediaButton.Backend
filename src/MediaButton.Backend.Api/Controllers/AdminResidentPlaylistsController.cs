@@ -21,6 +21,17 @@ public class AdminResidentPlaylistsController : ControllerBase
         _db = db;
     }
 
+    [HttpGet]
+    public async Task<IActionResult> ListResidents()
+    {
+        var residents = await _db.ResidentPlaylists
+            .Select(r => r.Resident)
+            .OrderBy(r => r)
+            .ToListAsync();
+
+        return Ok(residents);
+    }
+
     [HttpGet("{resident}/ai-playlist")]
     public async Task<IActionResult> GetAi(string resident)
     {
