@@ -1,10 +1,17 @@
+import { InteractionStatus } from "@azure/msal-browser";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import Dashboard from "./views/Dashboard";
 import { loginRequest } from "./msalConfig";
 import "./styles/layout.css";
 
 function Landing() {
-  const { instance } = useMsal();
+  const { instance, inProgress } = useMsal();
+  const isBusy = inProgress !== InteractionStatus.None;
+
+  const beginSignIn = () => {
+    if (isBusy) return;
+    instance.loginRedirect(loginRequest);
+  };
 
   return (
     <div className="page">
@@ -14,11 +21,8 @@ function Landing() {
           Bristol Care Homes • Media
         </div>
         <div className="nav-actions">
-          <button
-            className="btn primary"
-            onClick={() => instance.loginRedirect(loginRequest)}
-          >
-            Sign in to manage
+          <button className="btn primary" onClick={beginSignIn} disabled={isBusy}>
+            {isBusy ? "Starting sign-in…" : "Sign in to manage"}
           </button>
         </div>
       </header>
@@ -35,17 +39,11 @@ function Landing() {
           safe, and simple.
         </p>
         <div className="nav-actions">
-          <button
-            className="btn primary"
-            onClick={() => instance.loginRedirect(loginRequest)}
-          >
-            Continue with Bristol Care Homes
+          <button className="btn primary" onClick={beginSignIn} disabled={isBusy}>
+            {isBusy ? "Starting sign-in…" : "Continue with Bristol Care Homes"}
           </button>
-          <button
-            className="btn ghost"
-            onClick={() => instance.loginRedirect(loginRequest)}
-          >
-            I am a relative
+          <button className="btn ghost" onClick={beginSignIn} disabled={isBusy}>
+            {isBusy ? "Please wait…" : "I am a relative"}
           </button>
         </div>
       </section>
