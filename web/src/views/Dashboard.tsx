@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import { useApiClient } from "../hooks/useApiClient";
 import { appConfig } from "../config";
-import type { MediaItem, MediaType, Playlist } from "../types";
+import type { AiPlaylistEnvelope, ManualPlaylistResponse, MediaItem, MediaType, Playlist } from "../types";
 
 type UploadRequest = {
   fileName: string;
@@ -90,6 +90,14 @@ export default function Dashboard() {
 
   const accountName = useMemo(() => accounts[0]?.name ?? "Signed-in user", [accounts]);
 
+  // Resident AI/manual editing
+  const [residentQuery, setResidentQuery] = useState("");
+  const [aiSuggestion, setAiSuggestion] = useState<string[]>([]);
+  const [manualText, setManualText] = useState("");
+  const [manualMeta, setManualMeta] = useState<{ updatedAt?: string | null; updatedBy?: string | null }>({});
+  const [loadingResident, setLoadingResident] = useState(false);
+  const [savingManual, setSavingManual] = useState(false);
+
   const loadData = useCallback(async () => {
     if (!isAuthed) return;
     setLoading(true);
@@ -112,6 +120,83 @@ export default function Dashboard() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const loadResidentAi = useCallback(async () => {
+    if (!residentQuery.trim()) {
+      setError("Enter a resident name to load the AI playlist.");
+      return;
+    }
+    setLoadingResident(true);
+    setError(null);
+    try {
+      const data = await call<AiPlaylistEnvelope>({
+        url: `/api/admin/residents/${encodeURIComponent(residentQuery.trim())}/ai-playlist`,
+        method: "GET",
+      });
+      const suggestion = Array.isArray(data?.payload?.playlist) ? (data.payload.playlist as string[]) : [];
+      setAiSuggestion(suggestion);
+      if (suggestion.length) {
+        setManualText(suggestion.join("\n"));
+      }
+    } catch (err) {
+      console.error(err);
+      setAiSuggestion([]);
+      setError("Could not load AI playlist for that resident.");
+    } finally {
+      setLoadingResident(false);
+    }
+  }, [call, residentQuery]);
+
+  const loadResidentManual = useCallback(async () => {
+    if (!residentQuery.trim()) {
+      setError("Enter a resident name to load manual playlist.");
+      return;
+    }
+    setLoadingResident(true);
+    setError(null);
+    try {
+      const data = await call<ManualPlaylistResponse>({
+        url: `/api/admin/residents/${encodeURIComponent(residentQuery.trim())}/manual-playlist`,
+        method: "GET",
+      });
+      const items = data?.items ?? [];
+      setManualText(items.join("\n"));
+      setManualMeta({ updatedAt: data?.updatedAtUtc, updatedBy: data?.updatedBy });
+    } catch (err) {
+      console.error(err);
+      setManualText("");
+      setManualMeta({});
+      setError("Could not load manual playlist for that resident.");
+    } finally {
+      setLoadingResident(false);
+    }
+  }, [call, residentQuery]);
+
+  const saveResidentManual = useCallback(async () => {
+    if (!residentQuery.trim()) {
+      setError("Resident name is required.");
+      return;
+    }
+    const items = manualText
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    setSavingManual(true);
+    setError(null);
+    try {
+      await call({
+        url: `/api/admin/residents/${encodeURIComponent(residentQuery.trim())}/manual-playlist`,
+        method: "PUT",
+        data: { items },
+      });
+      setManualMeta({ updatedAt: new Date().toISOString(), updatedBy: accountName });
+    } catch (err) {
+      console.error(err);
+      setError("Failed to save manual playlist.");
+    } finally {
+      setSavingManual(false);
+    }
+  }, [accountName, call, manualText, residentQuery]);
 
   const onUploadMedia = useCallback(
     async (evt: React.FormEvent) => {
@@ -445,6 +530,63 @@ export default function Dashboard() {
               {assigning ? "Assigning…" : "Assign"}
             </button>
           </form>
+        </div>
+
+        <div className="card glass">
+          <div className="card-header">
+            <p className="card-title">AI → Manual playlist</p>
+            <span className="tag">Resident-specific</span>
+          </div>
+          <div className="grid" style={{ gap: 12 }}>
+            <div className="form-row">
+              <input
+                className="input"
+                placeholder="Resident name (e.g., Margaret James)"
+                value={residentQuery}
+                onChange={(e) => setResidentQuery(e.target.value)}
+              />
+              <div className="nav-actions" style={{ gap: 8 }}>
+                <button className="btn ghost" type="button" disabled={loadingResident} onClick={loadResidentAi}>
+                  {loadingResident ? "Loading..." : "Load AI suggestion"}
+                </button>
+                <button className="btn ghost" type="button" disabled={loadingResident} onClick={loadResidentManual}>
+                  {loadingResident ? "Loading..." : "Load manual"}
+                </button>
+              </div>
+            </div>
+            <div className="grid">
+              <span className="muted">Manual playlist (one line per item). Save to send to Pi as manual override.</span>
+              <textarea
+                className="textarea"
+                style={{ minHeight: 160 }}
+                value={manualText}
+                onChange={(e) => setManualText(e.target.value)}
+                placeholder="Enter titles or queries per line..."
+              />
+              <div className="nav-actions" style={{ justifyContent: "space-between", width: "100%" }}>
+                <div className="muted">
+                  {manualMeta.updatedAt && (
+                    <span>
+                      Last saved {formatDate(manualMeta.updatedAt)} {manualMeta.updatedBy ? `by ${manualMeta.updatedBy}` : ""}
+                    </span>
+                  )}
+                </div>
+                <div className="nav-actions" style={{ gap: 8 }}>
+                  <button
+                    className="btn ghost"
+                    type="button"
+                    disabled={!aiSuggestion.length}
+                    onClick={() => setManualText(aiSuggestion.join("\n"))}
+                  >
+                    Use AI suggestion
+                  </button>
+                  <button className="btn primary" type="button" disabled={savingManual} onClick={saveResidentManual}>
+                    {savingManual ? "Saving…" : "Save manual override"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="grid c2">

@@ -19,3 +19,15 @@ public record PlaylistItemResponse(Guid MediaId, string? Name, MediaType Type, U
 public record DevicePlaylistResponse(string DeviceId, string? PlaylistName, IReadOnlyList<PlaylistItemResponse> Items, object? Config);
 
 public record DeviceConfigResponse(string DeviceId, object? Config);
+
+public record AiPlaylistPayload(
+    string Resident,
+    string? SurveyHash,
+    string? Model,
+    List<string> Playlist,
+    DateTimeOffset? BuiltAt,
+    Dictionary<string, object>? Meta);
+
+public record ManualPlaylistUpdate(List<string> Items);
+
+public record ManualPlaylistResponse(string Resident, IReadOnlyList<string> Items, DateTimeOffset? UpdatedAtUtc, string? UpdatedBy);

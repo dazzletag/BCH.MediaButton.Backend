@@ -31,3 +31,16 @@ export type DevicePlaylistResponse = {
   items: PlaylistItem[];
   config?: unknown;
 };
+
+export type ManualPlaylistResponse = {
+  resident: string;
+  items: string[];
+  updatedAtUtc?: string | null;
+  updatedBy?: string | null;
+};
+
+export type AiPlaylistEnvelope = {
+  resident: string;
+  payload?: { playlist?: string[]; [key: string]: unknown };
+  updatedAtUtc?: string | null;
+};
