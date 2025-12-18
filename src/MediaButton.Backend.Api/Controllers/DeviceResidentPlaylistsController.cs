@@ -33,16 +33,36 @@ public class DeviceResidentPlaylistsController : ControllerBase
             return BadRequest("Resident and playlist are required.");
         }
 
+        if (payload.Playlist == null || payload.Playlist.Count == 0)
+        {
+            return BadRequest("Playlist items are required.");
+        }
+
         var resident = NormalizeResident(payload.Resident);
-        var snapshot = await _db.ResidentPlaylists.FirstOrDefaultAsync(r => r.Resident == resident)
-                       ?? new ResidentPlaylistSnapshot { Resident = resident };
+        var snapshot = await _db.ResidentPlaylists.FirstOrDefaultAsync(r => r.Resident == resident);
+        var isNew = snapshot == null;
+        snapshot ??= new ResidentPlaylistSnapshot { Resident = resident };
 
-        snapshot.AiPlaylistJson = JsonSerializer.Serialize(payload, _jsonOptions);
-        snapshot.AiUpdatedAt = DateTimeOffset.UtcNow;
+        try
+        {
+            snapshot.AiPlaylistJson = JsonSerializer.Serialize(payload, _jsonOptions);
+            snapshot.AiUpdatedAt = DateTimeOffset.UtcNow;
 
-        _db.ResidentPlaylists.Update(snapshot);
-        await _db.SaveChangesAsync();
-        return NoContent();
+            if (isNew)
+            {
+                _db.ResidentPlaylists.Add(snapshot);
+            }
+            else
+            {
+                _db.ResidentPlaylists.Update(snapshot);
+            }
+            await _db.SaveChangesAsync();
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Failed to save AI playlist: {ex.Message}");
+        }
     }
 
     [HttpGet("{resident}/manual-playlist")]

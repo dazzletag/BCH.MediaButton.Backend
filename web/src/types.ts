@@ -44,3 +44,5 @@ export type AiPlaylistEnvelope = {
   payload?: { playlist?: string[]; [key: string]: unknown };
   updatedAtUtc?: string | null;
 };
+
+export type ResidentList = string[];

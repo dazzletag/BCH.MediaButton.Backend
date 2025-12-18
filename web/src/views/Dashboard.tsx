@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import { useApiClient } from "../hooks/useApiClient";
 import { appConfig } from "../config";
-import type { AiPlaylistEnvelope, ManualPlaylistResponse, MediaItem, MediaType, Playlist } from "../types";
+import type { AiPlaylistEnvelope, ManualPlaylistResponse, MediaItem, MediaType, Playlist, ResidentList } from "../types";
 
 type UploadRequest = {
   fileName: string;
@@ -97,6 +97,7 @@ export default function Dashboard() {
   const [manualMeta, setManualMeta] = useState<{ updatedAt?: string | null; updatedBy?: string | null }>({});
   const [loadingResident, setLoadingResident] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
+  const [residentList, setResidentList] = useState<string[]>([]);
 
   const loadData = useCallback(async () => {
     if (!isAuthed) return;
@@ -120,6 +121,18 @@ export default function Dashboard() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    const fetchResidents = async () => {
+      try {
+        const residents = await call<ResidentList>({ url: "/api/admin/residents", method: "GET" });
+        setResidentList(residents || []);
+      } catch (err) {
+        console.error("Failed to load resident list", err);
+      }
+    };
+    fetchResidents();
+  }, [call]);
 
   const loadResidentAi = useCallback(async () => {
     if (!residentQuery.trim()) {
@@ -539,12 +552,18 @@ export default function Dashboard() {
           </div>
           <div className="grid" style={{ gap: 12 }}>
             <div className="form-row">
-              <input
-                className="input"
-                placeholder="Resident name (e.g., Margaret James)"
+              <select
+                className="select"
                 value={residentQuery}
                 onChange={(e) => setResidentQuery(e.target.value)}
-              />
+              >
+                <option value="">Select resident...</option>
+                {residentList.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
               <div className="nav-actions" style={{ gap: 8 }}>
                 <button className="btn ghost" type="button" disabled={loadingResident} onClick={loadResidentAi}>
                   {loadingResident ? "Loading..." : "Load AI suggestion"}
@@ -575,7 +594,7 @@ export default function Dashboard() {
                   <button
                     className="btn ghost"
                     type="button"
-                    disabled={!aiSuggestion.length}
+                    disabled={!aiSuggestion.length || !residentQuery}
                     onClick={() => setManualText(aiSuggestion.join("\n"))}
                   >
                     Use AI suggestion

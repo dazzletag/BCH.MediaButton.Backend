@@ -63,16 +63,31 @@ public class AdminResidentPlaylistsController : ControllerBase
         if (update?.Items == null) return BadRequest("Items are required.");
 
         var key = NormalizeResident(resident);
-        var snapshot = await _db.ResidentPlaylists.FirstOrDefaultAsync(r => r.Resident == key)
-                       ?? new ResidentPlaylistSnapshot { Resident = key };
+        var snapshot = await _db.ResidentPlaylists.FirstOrDefaultAsync(r => r.Resident == key);
+        var isNew = snapshot == null;
+        snapshot ??= new ResidentPlaylistSnapshot { Resident = key };
 
-        snapshot.ManualPlaylistJson = JsonSerializer.Serialize(update.Items, _jsonOptions);
-        snapshot.ManualUpdatedAt = DateTimeOffset.UtcNow;
-        snapshot.ManualUpdatedBy = User?.Identity?.Name;
+        try
+        {
+            snapshot.ManualPlaylistJson = JsonSerializer.Serialize(update.Items, _jsonOptions);
+            snapshot.ManualUpdatedAt = DateTimeOffset.UtcNow;
+            snapshot.ManualUpdatedBy = User?.Identity?.Name;
 
-        _db.ResidentPlaylists.Update(snapshot);
-        await _db.SaveChangesAsync();
-        return NoContent();
+            if (isNew)
+            {
+                _db.ResidentPlaylists.Add(snapshot);
+            }
+            else
+            {
+                _db.ResidentPlaylists.Update(snapshot);
+            }
+            await _db.SaveChangesAsync();
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Failed to save manual playlist: {ex.Message}");
+        }
     }
 
     private static string NormalizeResident(string resident) =>

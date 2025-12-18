@@ -22,6 +22,23 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAd"));
 
+// Relax audience validation to accept both GUID and api://GUID forms
+builder.Services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>
+{
+    var clientId = builder.Configuration["AzureAd:ClientId"];
+    var configuredAudience = builder.Configuration["AzureAd:Audience"];
+    var audiences = new List<string?>();
+    if (!string.IsNullOrWhiteSpace(configuredAudience))
+        audiences.Add(configuredAudience);
+    if (!string.IsNullOrWhiteSpace(clientId))
+    {
+        audiences.Add(clientId);
+        audiences.Add($"api://{clientId}");
+    }
+    options.TokenValidationParameters.ValidateAudience = false;
+    options.TokenValidationParameters.ValidAudiences = audiences.Where(a => !string.IsNullOrWhiteSpace(a));
+});
+
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("AdminOrRelative", policy =>
@@ -29,8 +46,15 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser();
         policy.RequireAssertion(ctx =>
         {
-            var roles = ctx.User.FindAll("roles").Select(r => r.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            return roles.Contains("Admin") || roles.Contains("Relative");
+            // Roles can arrive as either the raw "roles" claim or the mapped ClaimTypes.Role.
+            var roleValues = ctx.User.Claims
+                .Where(c =>
+                    string.Equals(c.Type, "roles", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(c.Type, System.Security.Claims.ClaimTypes.Role, StringComparison.OrdinalIgnoreCase))
+                .Select(c => c.Value)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            return roleValues.Contains("Admin") || roleValues.Contains("Relative");
         });
     });
 });
