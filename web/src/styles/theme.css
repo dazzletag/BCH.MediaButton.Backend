@@ -1,0 +1,50 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Playfair+Display:wght@600&display=swap");
+
+:root {
+  --bg: #f2f6f8;
+  --bg-soft: #e5eef3;
+  --card: rgba(255, 255, 255, 0.9);
+  --card-strong: #ffffff;
+  --ink: #0f2438;
+  --muted: #5c6b7a;
+  --brand: #1e6ba8;
+  --brand-strong: #0f4c81;
+  --brand-accent: #f2b544;
+  --success: #2f9e44;
+  --warning: #d9480f;
+  --radius: 16px;
+  --shadow-soft: 0 20px 60px rgba(17, 40, 75, 0.15);
+  --shadow-sharp: 0 15px 45px rgba(17, 40, 75, 0.1);
+  --border: 1px solid rgba(16, 35, 56, 0.08);
+  --gradient: radial-gradient(circle at 20% 20%, rgba(30, 107, 168, 0.15), transparent 40%),
+    radial-gradient(circle at 80% 0%, rgba(242, 181, 68, 0.18), transparent 35%),
+    linear-gradient(145deg, #f7fbff 0%, #f2f6f8 50%, #eef4fb 100%);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Manrope", "Inter", system-ui, -apple-system, sans-serif;
+  background: var(--gradient);
+  color: var(--ink);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+}
+
+#root {
+  min-height: 100vh;
+}
