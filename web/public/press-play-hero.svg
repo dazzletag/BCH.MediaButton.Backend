@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 520" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 600" role="img" aria-labelledby="title desc">
   <title id="title">Press &amp; Play Media Button</title>
   <desc id="desc">Gradient button icon with Press &amp; Play Media Button text.</desc>
   <defs>
@@ -12,18 +12,18 @@
     </linearGradient>
   </defs>
   <g fill="none" fill-rule="evenodd">
-    <g transform="translate(60 90)">
-      <circle cx="130" cy="170" r="150" fill="url(#btnGrad)" />
-      <ellipse cx="130" cy="230" rx="110" ry="34" fill="url(#btnShadow)" />
-      <circle cx="130" cy="152" r="94" fill="#f3f6fa" />
-      <ellipse cx="130" cy="178" rx="102" ry="30" fill="#cfd5df" opacity="0.8" />
+    <g transform="translate(70 90)">
+      <circle cx="180" cy="210" r="170" fill="url(#btnGrad)" />
+      <ellipse cx="180" cy="280" rx="130" ry="40" fill="url(#btnShadow)" />
+      <circle cx="180" cy="184" r="110" fill="#f3f6fa" />
+      <ellipse cx="180" cy="214" rx="118" ry="32" fill="#cfd5df" opacity="0.8" />
     </g>
     <g font-family="Arial, Helvetica, sans-serif" font-weight="700" fill="#0c778f">
-      <text font-size="88" x="360" y="260">Press</text>
-      <text font-size="88" x="360" y="350">&amp; Play</text>
+      <text font-size="96" x="420" y="250">Press</text>
+      <text font-size="96" x="420" y="360">&amp; Play</text>
     </g>
-    <g font-family="Arial, Helvetica, sans-serif" font-weight="600" font-size="48" letter-spacing="4" fill="#555a65">
-      <text x="360" y="420">MEDIA BUTTON</text>
+    <g font-family="Arial, Helvetica, sans-serif" font-weight="600" font-size="52" letter-spacing="4" fill="#555a65">
+      <text x="420" y="440">MEDIA BUTTON</text>
     </g>
   </g>
 </svg>
