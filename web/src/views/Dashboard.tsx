@@ -25,17 +25,8 @@ type MediaRegisterRequest = {
   durationSeconds?: number | null;
 };
 
-type PlaylistCreateRequest = {
-  name: string;
-  items: {
-    mediaId: string;
-    order: number;
-    durationSeconds?: number | null;
-  }[];
-};
-
 function formatDate(dateString?: string) {
-  if (!dateString) return "—";
+  if (!dateString) return "-";
   return new Intl.DateTimeFormat("en-GB", {
     month: "short",
     day: "numeric",
@@ -74,7 +65,6 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [creating, setCreating] = useState(false);
   const [assigning, setAssigning] = useState(false);
 
   const [selectedMediaType, setSelectedMediaType] = useState<MediaType>("Photo");
@@ -82,11 +72,12 @@ export default function Dashboard() {
   const [mediaName, setMediaName] = useState("");
   const [duration, setDuration] = useState<number | undefined>(undefined);
 
-  const [playlistName, setPlaylistName] = useState("");
-  const [selectedMediaIds, setSelectedMediaIds] = useState<string[]>([]);
-
   const [deviceId, setDeviceId] = useState("");
   const [playlistId, setPlaylistId] = useState("");
+  const [seasonalTheme, setSeasonalTheme] = useState("");
+  const [radioFavorites, setRadioFavorites] = useState<string[]>([]);
+  const [urlInput, setUrlInput] = useState("");
+  const [playlistUrls, setPlaylistUrls] = useState<string[]>([]);
 
   const accountName = useMemo(() => accounts[0]?.name ?? "Signed-in user", [accounts]);
 
@@ -271,46 +262,6 @@ export default function Dashboard() {
     [call, duration, loadData, mediaName, selectedFile, selectedMediaType]
   );
 
-  const onCreatePlaylist = useCallback(
-    async (evt: React.FormEvent) => {
-      evt.preventDefault();
-      if (!playlistName.trim()) {
-        setError("Playlist name is required.");
-        return;
-      }
-      if (selectedMediaIds.length === 0) {
-        setError("Select at least one media item.");
-        return;
-      }
-      setCreating(true);
-      setError(null);
-      try {
-        const items = selectedMediaIds.map((id, index) => ({
-          mediaId: id,
-          order: index,
-        }));
-        const body: PlaylistCreateRequest = {
-          name: playlistName.trim(),
-          items,
-        };
-        await call({
-          url: "/api/admin/playlists",
-          method: "POST",
-          data: body,
-        });
-        setPlaylistName("");
-        setSelectedMediaIds([]);
-        await loadData();
-      } catch (err) {
-        console.error(err);
-        setError("Could not create playlist. Ensure your token has the Admin or Relative role.");
-      } finally {
-        setCreating(false);
-      }
-    },
-    [call, loadData, playlistName, selectedMediaIds]
-  );
-
   const onAssignPlaylist = useCallback(
     async (evt: React.FormEvent) => {
       evt.preventDefault();
@@ -321,13 +272,22 @@ export default function Dashboard() {
       setAssigning(true);
       setError(null);
       try {
+        const payload = {
+          playlistId: playlistId.trim(),
+          radioFavorites,
+          playlistUrls,
+          seasonalTheme,
+        };
         await call({
           url: `/api/admin/devices/${encodeURIComponent(deviceId.trim())}/playlist`,
           method: "PUT",
-          data: playlistId,
+          data: payload,
         });
         setDeviceId("");
         setPlaylistId("");
+        setSeasonalTheme("");
+        setRadioFavorites([]);
+        setPlaylistUrls([]);
       } catch (err) {
         console.error(err);
         setError("Assignment failed. Confirm the device ID and playlist ID.");
@@ -335,7 +295,7 @@ export default function Dashboard() {
         setAssigning(false);
       }
     },
-    [call, deviceId, playlistId]
+    [call, deviceId, playlistId, playlistUrls, radioFavorites, seasonalTheme]
   );
 
   const mediaByType = useMemo(
@@ -347,6 +307,22 @@ export default function Dashboard() {
   );
 
   const handleLogout = () => instance.logoutRedirect();
+
+  const radioPresets = [
+    { name: "BBC Radio 2", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_two" },
+    { name: "BBC Radio 3", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_three" },
+    { name: "BBC Radio 4", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_fourfm" },
+    { name: "BBC 6 Music", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_6music" },
+    { name: "BBC Radio Bristol", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_bristol" },
+  ];
+
+  const seasonalOptions = ["", "Christmas", "Easter", "Diwali", "Eid", "Hanukkah", "Remembrance", "Summer", "Winter"];
+
+  const addUrl = () => {
+    if (!urlInput.trim()) return;
+    setPlaylistUrls((prev) => (prev.includes(urlInput.trim()) ? prev : [...prev, urlInput.trim()]));
+    setUrlInput("");
+  };
 
   return (
     <div className="page">
@@ -409,17 +385,17 @@ export default function Dashboard() {
         <div className="grid c3">
           <StatCard
             title="Playlists ready"
-            value={loading ? "—" : `${playlists.length}`}
+            value={loading ? "-" : `${playlists.length}`}
             hint="Curated sets you can assign to any device."
           />
           <StatCard
             title="Photos"
-            value={loading ? "—" : `${mediaByType.photo.length}`}
+            value={loading ? "-" : `${mediaByType.photo.length}`}
             hint="Gentle visuals for residents."
           />
           <StatCard
             title="Videos"
-            value={loading ? "—" : `${mediaByType.video.length}`}
+            value={loading ? "-" : `${mediaByType.video.length}`}
             hint="Stories that feel familiar."
           />
         </div>
@@ -477,45 +453,44 @@ export default function Dashboard() {
                 </label>
               </div>
               <button className="btn primary" type="submit" disabled={uploading}>
-                {uploading ? "Uploading…" : "Upload & register"}
+                {uploading ? "Uploading." : "Upload & register"}
               </button>
             </form>
           </div>
 
           <div className="card glass">
             <div className="card-header">
-              <p className="card-title">Create playlist</p>
-              <span className="tag">Drag-free, quick stack</span>
+              <p className="card-title">Playlist options</p>
+              <span className="tag">Radio, links, season</span>
             </div>
-            <form className="grid" onSubmit={onCreatePlaylist}>
+            <div className="grid" style={{ gap: 12 }}>
               <label className="grid">
-                <span className="muted">Playlist name</span>
-                <input
-                  className="input"
-                  value={playlistName}
-                  onChange={(e) => setPlaylistName(e.target.value)}
-                  placeholder="Evening calm - Willow House"
-                />
+                <span className="muted">Seasonal influence</span>
+                <select className="select" value={seasonalTheme} onChange={(e) => setSeasonalTheme(e.target.value)}>
+                  {seasonalOptions.map((s) => (
+                    <option key={s || "none"} value={s}>
+                      {s || "No seasonal focus"}
+                    </option>
+                  ))}
+                </select>
               </label>
-              <label className="grid">
-                <span className="muted">Pick media (order follows selection)</span>
-                <div className="list" style={{ maxHeight: 200, overflow: "auto" }}>
-                  {media.map((m) => {
-                    const checked = selectedMediaIds.includes(m.id);
+
+              <div className="grid">
+                <span className="muted">Pick up to 3 BBC stations</span>
+                <div className="list" style={{ gap: 6 }}>
+                  {radioPresets.map((r) => {
+                    const checked = radioFavorites.includes(r.url);
+                    const disabled = !checked && radioFavorites.length >= 3;
                     return (
-                      <label key={m.id} className="row">
-                        <div>
-                          <div style={{ fontWeight: 700 }}>{m.name || "Untitled"}</div>
-                          <div className="muted" style={{ fontSize: 12 }}>
-                            {m.type} • {formatDate(m.uploadedAt)}
-                          </div>
-                        </div>
+                      <label className="row" key={r.url}>
+                        <div style={{ fontWeight: 700 }}>{r.name}</div>
                         <input
                           type="checkbox"
                           checked={checked}
+                          disabled={disabled}
                           onChange={(e) => {
-                            setSelectedMediaIds((prev) =>
-                              e.target.checked ? [...prev, m.id] : prev.filter((id) => id !== m.id)
+                            setRadioFavorites((prev) =>
+                              e.target.checked ? [...prev, r.url] : prev.filter((u) => u !== r.url)
                             );
                           }}
                         />
@@ -523,47 +498,45 @@ export default function Dashboard() {
                     );
                   })}
                 </div>
-              </label>
-              <button className="btn primary" type="submit" disabled={creating}>
-                {creating ? "Saving…" : "Create playlist"}
-              </button>
-            </form>
+              </div>
+
+              <div className="grid">
+                <span className="muted">Add stream or media URLs to include in playlists</span>
+                <div className="form-row">
+                  <input
+                    className="input"
+                    placeholder="https://example.com/stream.mp3"
+                    value={urlInput}
+                    onChange={(e) => setUrlInput(e.target.value)}
+                  />
+                  <button className="btn ghost" type="button" onClick={addUrl} disabled={!urlInput.trim()}>
+                    Add URL
+                  </button>
+                </div>
+                {!!playlistUrls.length && (
+                  <div className="list">
+                    {playlistUrls.map((u) => (
+                      <div className="row" key={u}>
+                        <span style={{ wordBreak: "break-all" }}>{u}</span>
+                        <button
+                          className="btn ghost"
+                          type="button"
+                          onClick={() => setPlaylistUrls((prev) => prev.filter((x) => x !== u))}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
         <div className="card glass">
           <div className="card-header">
-            <p className="card-title">Assign playlist to device</p>
-            <span className="tag">Pi endpoints</span>
-          </div>
-          <form className="form-row" onSubmit={onAssignPlaylist}>
-            <input
-              className="input"
-              placeholder="Device ID (e.g., beech_pi_01)"
-              value={deviceId}
-              onChange={(e) => setDeviceId(e.target.value)}
-            />
-            <select
-              className="select"
-              value={playlistId}
-              onChange={(e) => setPlaylistId(e.target.value)}
-            >
-              <option value="">Select playlist</option>
-              {playlists.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <button className="btn primary" type="submit" disabled={assigning}>
-              {assigning ? "Assigning…" : "Assign"}
-            </button>
-          </form>
-        </div>
-
-        <div className="card glass">
-          <div className="card-header">
-            <p className="card-title">AI → Manual playlist</p>
+            <p className="card-title">AI  Manual playlist</p>
             <span className="tag">Resident-specific</span>
           </div>
           <div className="grid" style={{ gap: 12 }}>
@@ -616,7 +589,7 @@ export default function Dashboard() {
                     Use AI suggestion
                   </button>
                   <button className="btn primary" type="button" disabled={savingManual} onClick={saveResidentManual}>
-                    {savingManual ? "Saving…" : "Save manual override"}
+                    {savingManual ? "Saving." : "Save manual override"}
                   </button>
                 </div>
               </div>
@@ -639,7 +612,7 @@ export default function Dashboard() {
                       {p.items.length} item(s)
                     </div>
                   </div>
-                  <div className="tag">{p.id.slice(0, 8)}…</div>
+                  <div className="tag">{p.id.slice(0, 8)}.</div>
                 </div>
               ))}
             </div>
@@ -664,6 +637,36 @@ export default function Dashboard() {
               ))}
             </div>
           </div>
+        </div>
+
+        <div className="card glass">
+          <div className="card-header">
+            <p className="card-title">Send playlist to device</p>
+            <span className="tag">Press &amp; Play Media Button</span>
+          </div>
+          <form className="form-row" onSubmit={onAssignPlaylist}>
+            <input
+              className="input"
+              placeholder="Device ID (e.g., beech_pi_01)"
+              value={deviceId}
+              onChange={(e) => setDeviceId(e.target.value)}
+            />
+            <select
+              className="select"
+              value={playlistId}
+              onChange={(e) => setPlaylistId(e.target.value)}
+            >
+              <option value="">Select playlist</option>
+              {playlists.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <button className="btn primary" type="submit" disabled={assigning}>
+              {assigning ? "Sending." : "Send playlist to Press & Play"}
+            </button>
+          </form>
         </div>
       </main>
     </div>
