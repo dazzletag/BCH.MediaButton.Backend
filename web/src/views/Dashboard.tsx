@@ -389,10 +389,10 @@ export default function Dashboard() {
 
         <div className="hero-right">
           <div className="logo-card glass">
-            <img src="/bch-logo.svg" alt="Bristol Care Homes logo" className="hero-logo" />
+            <img src="/press-play-logo.svg" alt="Press & Play Media Button" className="hero-logo" />
             <p className="hero-mini">
-              Signed in as {accountName}. Each colour tile is a reminder that every playlist should
-              feel personal, safe, and familiar.
+              Signed in as {accountName}. Press &amp; Play keeps playlists familiar, safe, and easy
+              for every resident.
             </p>
           </div>
         </div>

@@ -54,10 +54,9 @@ function Landing() {
 
         <div className="hero-right">
           <div className="logo-card glass">
-            <img src="/bch-logo.svg" alt="Bristol Care Homes logo" className="hero-logo" />
+            <img src="/press-play-logo.svg" alt="Press & Play Media Button" className="hero-logo" />
             <p className="hero-mini">
-              Bristol Care Homes Media Button keeps residents' memories safe, simple, and ready to
-              enjoy.
+              Press &amp; Play Media Button keeps residents' memories safe, simple, and ready to enjoy.
             </p>
           </div>
         </div>
