@@ -44,6 +44,8 @@
   flex-direction: column;
   gap: 4px;
   line-height: 1.05;
+  align-self: flex-start;
+  margin-top: 4px;
 }
 
 .brand-line {
