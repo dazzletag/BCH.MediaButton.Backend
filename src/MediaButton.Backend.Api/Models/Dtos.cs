@@ -2,11 +2,11 @@ using MediaButtonBackend.Models;
 
 namespace MediaButtonBackend.Api.Models;
 
-public record MediaUploadRequest(string FileName, MediaType Type, string? ContentType, int? DurationSeconds);
+public record MediaUploadRequest(string FileName, MediaType Type, string Resident, string? ContentType, int? DurationSeconds);
 
 public record MediaUploadResponse(Uri UploadUrl, string BlobPath, DateTimeOffset ExpiresAtUtc);
 
-public record MediaRegisterRequest(string BlobPath, MediaType Type, string? Name, string? ContentType, int? DurationSeconds);
+public record MediaRegisterRequest(string BlobPath, MediaType Type, string Resident, string? Name, string? ContentType, int? DurationSeconds);
 
 public record PlaylistCreateRequest(string Name, List<PlaylistItemRequest> Items);
 

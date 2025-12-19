@@ -6,7 +6,8 @@ import type { ManualPlaylistResponse, MediaItem, MediaType, Playlist, ResidentLi
 
 type UploadRequest = {
   fileName: string;
-  type: MediaType;
+  type: MediaType | number;
+  resident: string;
   contentType?: string | null;
   durationSeconds?: number | null;
 };
@@ -19,7 +20,8 @@ type UploadResponse = {
 
 type MediaRegisterRequest = {
   blobPath: string;
-  type: MediaType;
+  type: MediaType | number;
+  resident: string;
   name?: string | null;
   contentType?: string | null;
   durationSeconds?: number | null;
@@ -200,6 +202,10 @@ export default function Dashboard() {
   const onUploadMedia = useCallback(
     async (evt: React.FormEvent) => {
       evt.preventDefault();
+      if (!residentQuery.trim()) {
+        setError("Select a resident before uploading media.");
+        return;
+      }
       if (!selectedFile) {
         setError("Select a file to upload.");
         return;
@@ -212,6 +218,7 @@ export default function Dashboard() {
         const uploadBody: UploadRequest = {
           fileName: selectedFile.name,
           type: apiMediaType as unknown as MediaType,
+          resident: residentQuery.trim(),
           contentType: selectedFile.type || null,
           durationSeconds: duration || null,
         };
@@ -234,6 +241,7 @@ export default function Dashboard() {
         const registerBody: MediaRegisterRequest = {
           blobPath: upload.blobPath,
           type: apiMediaType as unknown as MediaType,
+          resident: residentQuery.trim(),
           name: mediaName || selectedFile.name,
           contentType: selectedFile.type || null,
           durationSeconds: duration || null,
@@ -682,10 +690,43 @@ export default function Dashboard() {
                   <div>
                     <div style={{ fontWeight: 700 }}>{m.name || m.blobPath}</div>
                     <div className="muted" style={{ fontSize: 12 }}>
-                      {m.type} â€¢ {formatDate(m.uploadedAt)}
+                      {m.type} • {formatDate(m.uploadedAt)} {m.resident ? `• ${m.resident}` : ""} {m.uploadedBy ? `• ${m.uploadedBy}` : ""}
                     </div>
                   </div>
-                  <span className="tag">{m.type}</span>
+                  <div className="nav-actions" style={{ gap: 6 }}>
+                    <button
+                      className="btn ghost"
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const sas = await call<{ url: string }>({
+                            url: `/api/admin/media/${m.id}/sas`,
+                            method: "GET",
+                          });
+                          window.open(sas.url, "_blank");
+                        } catch (err) {
+                          setError("Could not generate download link.");
+                        }
+                      }}
+                    >
+                      Download
+                    </button>
+                    <button
+                      className="btn ghost"
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await call({ url: `/api/admin/media/${m.id}`, method: "DELETE" });
+                          await loadData();
+                        } catch (err) {
+                          setError("Could not delete media.");
+                        }
+                      }}
+                    >
+                      Delete
+                    </button>
+                    <span className="tag">{m.type}</span>
+                  </div>
                 </div>
               ))}
             </div>

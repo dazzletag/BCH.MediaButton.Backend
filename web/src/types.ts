@@ -8,6 +8,8 @@ export type MediaItem = {
   contentType?: string;
   durationSeconds?: number;
   uploadedAt: string;
+  resident?: string;
+  uploadedBy?: string;
 };
 
 export type PlaylistItem = {
