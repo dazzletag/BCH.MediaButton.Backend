@@ -17,9 +17,9 @@ function Landing() {
     <div className="page">
       <header className="nav">
         <div className="brand">
-          <img src="/press-play-logo.svg" alt="Press & Play" className="press-play-logo" />
+          <img src="/bch-logo.svg" alt="Bristol Care Homes" className="brand-logo" />
           <div className="brand-text">
-            <span className="brand-line">Press &amp; Play</span>
+            <span className="brand-line">Bristol Care Homes</span>
             <span className="brand-subline">Media Button</span>
           </div>
         </div>
@@ -54,10 +54,10 @@ function Landing() {
 
         <div className="hero-right">
           <div className="logo-card glass">
-            <img src="/press-play-logo.svg" alt="Press & Play Media Button" className="hero-logo" />
+            <img src="/bch-logo.svg" alt="Bristol Care Homes logo" className="hero-logo" />
             <p className="hero-mini">
-              Press &amp; Play keeps every resident’s memories safe, simple, and ready to enjoy on
-              the Media Button.
+              Bristol Care Homes Media Button keeps residents' memories safe, simple, and ready to
+              enjoy.
             </p>
           </div>
         </div>
