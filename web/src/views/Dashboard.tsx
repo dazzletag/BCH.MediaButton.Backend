@@ -401,7 +401,7 @@ export default function Dashboard() {
             <span className="tag">Load current playlist first</span>
           </div>
           <div className="form-row">
-            <select className="select" value={residentQuery} onChange={(e) => setresidentQuery(e.target.value)}>
+            <select className="select" value={residentQuery} onChange={(e) => setResidentQuery(e.target.value)}>
               <option value="">Select resident...</option>
               {residentList.map((r) => (
                 <option key={r} value={r}>
@@ -620,7 +620,7 @@ export default function Dashboard() {
             <select
               className="select"
               value={residentQuery}
-              onChange={(e) => setresidentQuery(e.target.value)}
+              onChange={(e) => setResidentQuery(e.target.value)}
             >
               <option value="">Select resident</option>
               {residentList.map((r) => (
