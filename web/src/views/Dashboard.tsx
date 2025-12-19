@@ -352,7 +352,6 @@ export default function Dashboard() {
     <div className="page">
       <header className="nav">
         <div className="brand">
-          <img src="/bch-logo.svg" alt="Bristol Care Homes" className="brand-logo" />
           <img src="/press-play-logo.svg" alt="Press & Play" className="press-play-logo" />
           <div className="brand-text">
             <span className="brand-line">Press &amp; Play</span>
@@ -390,17 +389,11 @@ export default function Dashboard() {
 
         <div className="hero-right">
           <div className="logo-card glass">
-            <img src="/bch-logo.svg" alt="Bristol Care Homes logo" className="hero-logo" />
+            <img src="/press-play-logo.svg" alt="Press & Play Media Button" className="hero-logo" />
             <p className="hero-mini">
-              Signed in as {accountName}. Each colour tile is a reminder that every playlist should
-              feel personal, safe, and familiar.
+              Signed in as {accountName}. Press &amp; Play keeps playlists familiar, safe, and easy
+              for every resident.
             </p>
-            <div className="logo-swatches">
-              <span style={{ background: "var(--teal)" }} />
-              <span style={{ background: "var(--berry)" }} />
-              <span style={{ background: "var(--plum)" }} />
-              <span style={{ background: "var(--olive)" }} />
-            </div>
           </div>
         </div>
       </section>

@@ -17,7 +17,6 @@ function Landing() {
     <div className="page">
       <header className="nav">
         <div className="brand">
-          <img src="/bch-logo.svg" alt="Bristol Care Homes" className="brand-logo" />
           <img src="/press-play-logo.svg" alt="Press & Play" className="press-play-logo" />
           <div className="brand-text">
             <span className="brand-line">Press &amp; Play</span>
@@ -55,17 +54,11 @@ function Landing() {
 
         <div className="hero-right">
           <div className="logo-card glass">
-            <img src="/bch-logo.svg" alt="Bristol Care Homes logo" className="hero-logo" />
+            <img src="/press-play-logo.svg" alt="Press & Play Media Button" className="hero-logo" />
             <p className="hero-mini">
-              Four colours, one promise: calm technology that keeps every resident connected to
-              cherished memories.
+              Press &amp; Play keeps every resident’s memories safe, simple, and ready to enjoy on
+              the Media Button.
             </p>
-            <div className="logo-swatches">
-              <span style={{ background: "var(--teal)" }} />
-              <span style={{ background: "var(--berry)" }} />
-              <span style={{ background: "var(--plum)" }} />
-              <span style={{ background: "var(--olive)" }} />
-            </div>
           </div>
         </div>
       </section>
