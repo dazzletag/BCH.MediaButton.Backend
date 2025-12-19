@@ -72,12 +72,12 @@ export default function Dashboard() {
   const [mediaName, setMediaName] = useState("");
   const [duration, setDuration] = useState<number | undefined>(undefined);
 
-  const [deviceId, setDeviceId] = useState("");
   const [playlistId, setPlaylistId] = useState("");
   const [seasonalTheme, setSeasonalTheme] = useState("");
   const [radioFavorites, setRadioFavorites] = useState<string[]>([]);
   const [urlInput, setUrlInput] = useState("");
   const [playlistUrls, setPlaylistUrls] = useState<string[]>([]);
+  const [residentTarget, setResidentTarget] = useState("");
 
   const accountName = useMemo(() => accounts[0]?.name ?? "Signed-in user", [accounts]);
 
@@ -265,8 +265,8 @@ export default function Dashboard() {
   const onAssignPlaylist = useCallback(
     async (evt: React.FormEvent) => {
       evt.preventDefault();
-      if (!deviceId.trim() || !playlistId.trim()) {
-        setError("Device ID and playlist are required.");
+      if (!residentTarget.trim() || !playlistId.trim()) {
+        setError("Resident and playlist are required.");
         return;
       }
       setAssigning(true);
@@ -277,13 +277,14 @@ export default function Dashboard() {
           radioFavorites,
           playlistUrls,
           seasonalTheme,
+          resident: residentTarget.trim(),
         };
         await call({
-          url: `/api/admin/devices/${encodeURIComponent(deviceId.trim())}/playlist`,
+          url: `/api/admin/residents/${encodeURIComponent(residentTarget.trim())}/playlist`,
           method: "PUT",
           data: payload,
         });
-        setDeviceId("");
+        setResidentTarget("");
         setPlaylistId("");
         setSeasonalTheme("");
         setRadioFavorites([]);
@@ -295,7 +296,7 @@ export default function Dashboard() {
         setAssigning(false);
       }
     },
-    [call, deviceId, playlistId, playlistUrls, radioFavorites, seasonalTheme]
+    [call, playlistId, playlistUrls, radioFavorites, residentTarget, seasonalTheme]
   );
 
   const mediaByType = useMemo(
@@ -645,12 +646,18 @@ export default function Dashboard() {
             <span className="tag">Press &amp; Play Media Button</span>
           </div>
           <form className="form-row" onSubmit={onAssignPlaylist}>
-            <input
-              className="input"
-              placeholder="Device ID (e.g., beech_pi_01)"
-              value={deviceId}
-              onChange={(e) => setDeviceId(e.target.value)}
-            />
+            <select
+              className="select"
+              value={residentTarget}
+              onChange={(e) => setResidentTarget(e.target.value)}
+            >
+              <option value="">Select resident</option>
+              {residentList.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
             <select
               className="select"
               value={playlistId}
