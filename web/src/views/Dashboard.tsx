@@ -84,6 +84,7 @@ export default function Dashboard() {
   const [radioFavorites, setRadioFavorites] = useState<string[]>([]);
   const [urlInput, setUrlInput] = useState("");
   const [playlistUrls, setPlaylistUrls] = useState<string[]>([]);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
   const accountName = useMemo(() => accounts[0]?.name ?? "Signed-in user", [accounts]);
 
@@ -263,30 +264,32 @@ export default function Dashboard() {
   const onAssignPlaylist = useCallback(
     async (evt: React.FormEvent) => {
       evt.preventDefault();
-      if (!residentQuery.trim() || !playlistId.trim()) {
-        setError("Resident and playlist are required.");
-        return;
-      }
-      setAssigning(true);
-      setError(null);
-      try {
-        const payload = {
-          playlistId: playlistId.trim(),
-          radioFavorites,
-          playlistUrls,
-          seasonalTheme,
-          resident: residentQuery.trim(),
-        };
-        await call({
-          url: `/api/admin/residents/${encodeURIComponent(residentQuery.trim())}/playlist`,
-          method: "PUT",
-          data: payload,
-        });
-      } catch (err) {
-        console.error(err);
-        setError("Assignment failed. Confirm the resident and playlist.");
-      } finally {
-        setAssigning(false);
+    if (!residentQuery.trim() || !playlistId.trim()) {
+      setError("Resident and playlist are required.");
+      return;
+    }
+    setAssigning(true);
+    setError(null);
+    setSaveMessage(null);
+    try {
+      const payload = {
+        playlistId: playlistId.trim(),
+        radioFavorites,
+        playlistUrls,
+        seasonalTheme,
+        resident: residentQuery.trim(),
+      };
+      await call({
+        url: `/api/admin/residents/${encodeURIComponent(residentQuery.trim())}/playlist`,
+        method: "PUT",
+        data: payload,
+      });
+      setSaveMessage("Playlist sent to Press & Play. The Pi will pull it down shortly.");
+    } catch (err) {
+      console.error(err);
+      setError("Assignment failed. Confirm the resident and playlist.");
+    } finally {
+      setAssigning(false);
       }
     },
     [call, playlistId, playlistUrls, radioFavorites, residentQuery, seasonalTheme]
@@ -372,6 +375,12 @@ export default function Dashboard() {
             <span className="muted">{error}</span>
           </div>
         )}
+        {saveMessage && (
+          <div className="card glass">
+            <strong style={{ color: "var(--brand-strong)" }}>Saved: </strong>
+            <span className="muted">{saveMessage}</span>
+          </div>
+        )}
 
         <div className="grid c2">
           <StatCard
@@ -392,7 +401,7 @@ export default function Dashboard() {
             <span className="tag">Load current playlist first</span>
           </div>
           <div className="form-row">
-            <select className="select" value={residentQuery} onChange={(e) => setResidentQuery(e.target.value)}>
+            <select className="select" value={residentQuery} onChange={(e) => setresidentQuery(e.target.value)}>
               <option value="">Select resident...</option>
               {residentList.map((r) => (
                 <option key={r} value={r}>
@@ -611,7 +620,7 @@ export default function Dashboard() {
             <select
               className="select"
               value={residentQuery}
-              onChange={(e) => setResidentQuery(e.target.value)}
+              onChange={(e) => setresidentQuery(e.target.value)}
             >
               <option value="">Select resident</option>
               {residentList.map((r) => (
