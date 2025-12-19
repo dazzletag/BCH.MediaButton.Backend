@@ -690,7 +690,7 @@ export default function Dashboard() {
                   <div>
                     <div style={{ fontWeight: 700 }}>{m.name || m.blobPath}</div>
                     <div className="muted" style={{ fontSize: 12 }}>
-                      {m.type} • {formatDate(m.uploadedAt)} {m.resident ? `• ${m.resident}` : ""} {m.uploadedBy ? `• ${m.uploadedBy}` : ""}
+                      {m.type} â€¢ {formatDate(m.uploadedAt)} {m.resident ? `â€¢ ${m.resident}` : ""} {m.uploadedBy ? `â€¢ ${m.uploadedBy}` : ""}
                     </div>
                   </div>
                   <div className="nav-actions" style={{ gap: 6 }}>
@@ -724,6 +724,30 @@ export default function Dashboard() {
                       }}
                     >
                       Delete
+                    </button>
+                    <button
+                      className="btn ghost"
+                      type="button"
+                      disabled={!residentQuery.trim() || (!!m.resident && m.resident !== residentQuery.trim())}
+                      onClick={async () => {
+                        if (!residentQuery.trim()) {
+                          setError("Select a resident first.");
+                          return;
+                        }
+                        if (m.resident && m.resident !== residentQuery.trim()) {
+                          setError("This media belongs to a different resident.");
+                          return;
+                        }
+                        const token = `media:${m.id}`;
+                        const updated = applyOptionsToManual([
+                          ...manualText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean),
+                          token,
+                        ]);
+                        setManualText(updated.join("\n"));
+                        await saveResidentManual(updated);
+                      }}
+                    >
+                      Add to playlist
                     </button>
                     <span className="tag">{m.type}</span>
                   </div>

@@ -31,3 +31,5 @@ public record AiPlaylistPayload(
 public record ManualPlaylistUpdate(List<string> Items);
 
 public record ManualPlaylistResponse(string Resident, IReadOnlyList<string> Items, DateTimeOffset? UpdatedAtUtc, string? UpdatedBy);
+
+public record DeviceManualPlaylistResponse(string Resident, IReadOnlyList<object> Items, DateTimeOffset? UpdatedAtUtc, string? UpdatedBy);

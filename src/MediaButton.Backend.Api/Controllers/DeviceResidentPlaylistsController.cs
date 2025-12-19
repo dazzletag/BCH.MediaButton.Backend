@@ -4,6 +4,8 @@ using MediaButtonBackend.Data;
 using MediaButtonBackend.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using MediaButtonBackend.Services;
+using System.IO;
 
 namespace MediaButtonBackend.Controllers;
 
@@ -12,11 +14,15 @@ namespace MediaButtonBackend.Controllers;
 public class DeviceResidentPlaylistsController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly StorageSasService _sas;
+    private readonly IConfiguration _config;
     private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
 
-    public DeviceResidentPlaylistsController(AppDbContext db)
+    public DeviceResidentPlaylistsController(AppDbContext db, StorageSasService sas, IConfiguration config)
     {
         _db = db;
+        _sas = sas;
+        _config = config;
     }
 
     [HttpPost("ai-playlist")]
@@ -66,7 +72,7 @@ public class DeviceResidentPlaylistsController : ControllerBase
     }
 
     [HttpGet("{resident}/manual-playlist")]
-    public async Task<ActionResult<ManualPlaylistResponse>> GetManual(string deviceId, string resident)
+    public async Task<ActionResult<DeviceManualPlaylistResponse>> GetManual(string deviceId, string resident)
     {
         var authedDevice = HttpContext.Items["DeviceId"] as string;
         if (!string.Equals(authedDevice, deviceId, StringComparison.OrdinalIgnoreCase))
@@ -77,7 +83,8 @@ public class DeviceResidentPlaylistsController : ControllerBase
         var key = NormalizeResident(resident);
         var snapshot = await _db.ResidentPlaylists.FirstOrDefaultAsync(r => r.Resident == key);
         var items = ParseManual(snapshot?.ManualPlaylistJson);
-        return Ok(new ManualPlaylistResponse(key, items, snapshot?.ManualUpdatedAt, snapshot?.ManualUpdatedBy));
+        var resolved = await ResolveMediaAsync(items, key);
+        return Ok(new DeviceManualPlaylistResponse(key, resolved, snapshot?.ManualUpdatedAt, snapshot?.ManualUpdatedBy));
     }
 
     private static string NormalizeResident(string resident) =>
@@ -96,5 +103,48 @@ public class DeviceResidentPlaylistsController : ControllerBase
         {
             return Array.Empty<string>();
         }
+    }
+
+    private async Task<IReadOnlyList<object>> ResolveMediaAsync(IReadOnlyList<string> items, string resident)
+    {
+        var output = new List<object>();
+        foreach (var item in items)
+        {
+            if (item.StartsWith("media:", StringComparison.OrdinalIgnoreCase))
+            {
+                var idPart = item.Substring("media:".Length);
+                if (!Guid.TryParse(idPart, out var mediaId))
+                {
+                    continue;
+                }
+
+                var media = await _db.MediaAssets.FirstOrDefaultAsync(m => m.Id == mediaId);
+                if (media == null) continue;
+
+                // Enforce resident scoping: blob path includes /{resident}/
+                var normalized = NormalizeResident(resident);
+                if (string.IsNullOrWhiteSpace(normalized) || !media.BlobPath.Contains($"/{normalized}/", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var container = media.Type == MediaType.Photo
+                    ? _config["Storage:ContainerPhotos"] ?? "photos"
+                    : _config["Storage:ContainerVideos"] ?? "videos";
+
+                var (uri, _) = _sas.GetReadSasUri(container, media.BlobPath, ttlMinutesOverride: 60);
+                output.Add(new
+                {
+                    url = uri.ToString(),
+                    type = media.Type.ToString().ToLowerInvariant(),
+                    name = media.Name ?? Path.GetFileName(media.BlobPath)
+                });
+                continue;
+            }
+
+            output.Add(item);
+        }
+
+        return output;
     }
 }
