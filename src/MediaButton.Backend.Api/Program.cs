@@ -60,6 +60,7 @@ builder.Services.AddAuthorization(options =>
 });
 
 builder.Services.AddScoped<StorageSasService>();
+builder.Services.AddScoped<StorageCorsInitializer>();
 
 var app = builder.Build();
 
@@ -75,6 +76,13 @@ app.UseMiddleware<DeviceAuthMiddleware>();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Ensure Blob Storage CORS rules allow our frontend origins to PUT via SAS
+using (var scope = app.Services.CreateScope())
+{
+    var corsInit = scope.ServiceProvider.GetRequiredService<StorageCorsInitializer>();
+    corsInit.EnsureCorsAsync().GetAwaiter().GetResult();
+}
 
 app.MapGet("/health", () =>
 {
