@@ -176,15 +176,17 @@ export default function Dashboard() {
     }
   }, [call, residentQuery]);
 
-  const saveResidentManual = useCallback(async () => {
+  const saveResidentManual = useCallback(async (overrideItems?: string[]) => {
     if (!residentQuery.trim()) {
       setError("Resident name is required.");
       return;
     }
-    const items = manualText
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean);
+    const items =
+      overrideItems ??
+      manualText
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean);
     setSavingManual(true);
     setError(null);
     try {
@@ -325,6 +327,24 @@ export default function Dashboard() {
     setUrlInput("");
   };
 
+  const saveOptionsToManual = async () => {
+    if (!residentQuery.trim()) {
+      setError("Resident name is required.");
+      return;
+    }
+    const base = manualText
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const extras: string[] = [];
+    if (seasonalTheme) extras.push(`season:${seasonalTheme}`);
+    radioFavorites.forEach((u) => extras.push(`radio:${u}`));
+    playlistUrls.forEach((u) => extras.push(u));
+    const combined = Array.from(new Set([...base, ...extras]));
+    setManualText(combined.join("\n"));
+    await saveResidentManual(combined);
+  };
+
   return (
     <div className="page">
       <header className="nav">
@@ -459,12 +479,12 @@ export default function Dashboard() {
             </form>
           </div>
 
-          <div className="card glass">
-            <div className="card-header">
-              <p className="card-title">Playlist options</p>
-              <span className="tag">Radio, links, season</span>
-            </div>
-            <div className="grid" style={{ gap: 12 }}>
+            <div className="card glass">
+              <div className="card-header">
+                <p className="card-title">Playlist options</p>
+                <span className="tag">Radio, links, season</span>
+              </div>
+              <div className="grid" style={{ gap: 12 }}>
               <label className="grid">
                 <span className="muted">Seasonal influence</span>
                 <select className="select" value={seasonalTheme} onChange={(e) => setSeasonalTheme(e.target.value)}>
@@ -530,6 +550,11 @@ export default function Dashboard() {
                     ))}
                   </div>
                 )}
+              </div>
+              <div className="nav-actions" style={{ justifyContent: "flex-end" }}>
+                <button className="btn primary" type="button" onClick={saveOptionsToManual} disabled={savingManual}>
+                  {savingManual ? "Saving." : "Save options to manual playlist"}
+                </button>
               </div>
             </div>
           </div>
