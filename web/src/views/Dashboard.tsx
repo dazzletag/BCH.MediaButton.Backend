@@ -79,7 +79,7 @@ export default function Dashboard() {
   const [loadingResident, setLoadingResident] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
 
-  const [playlistId, setPlaylistId] = useState("");
+  const [playlistId, setPlaylistId] = useState("current");
   const [seasonalTheme, setSeasonalTheme] = useState("");
   const [radioFavorites, setRadioFavorites] = useState<string[]>([]);
   const [urlInput, setUrlInput] = useState("");
@@ -113,7 +113,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (playlists.length && !playlistId) {
-      setPlaylistId(playlists[0].id);
+      setPlaylistId(playlists[0].id || "current");
     }
   }, [playlists, playlistId]);
 
@@ -186,6 +186,7 @@ export default function Dashboard() {
           data: { items },
         });
         setManualMeta({ updatedAt: new Date().toISOString(), updatedBy: accountName });
+        setSaveMessage("Manual playlist saved.");
       } catch (err) {
         console.error(err);
         setError("Failed to save manual playlist.");
@@ -264,21 +265,23 @@ export default function Dashboard() {
   const onAssignPlaylist = useCallback(
     async (evt: React.FormEvent) => {
       evt.preventDefault();
-    if (!residentQuery.trim() || !playlistId.trim()) {
-      setError("Resident and playlist are required.");
-      return;
-    }
-    setAssigning(true);
-    setError(null);
-    setSaveMessage(null);
-    try {
-      const payload = {
-        playlistId: playlistId.trim(),
-        radioFavorites,
-        playlistUrls,
-        seasonalTheme,
-        resident: residentQuery.trim(),
-      };
+      if (!residentQuery.trim()) {
+        setError("Resident and playlist are required.");
+        return;
+      }
+      setAssigning(true);
+      setError(null);
+      setSaveMessage(null);
+      try {
+        // Ensure latest manual playlist is saved before sending
+        await saveResidentManual();
+        const payload = {
+          playlistId: (playlistId || "current").trim(),
+          radioFavorites,
+          playlistUrls,
+          seasonalTheme,
+          resident: residentQuery.trim(),
+        };
       await call({
         url: `/api/admin/residents/${encodeURIComponent(residentQuery.trim())}/playlist`,
         method: "PUT",
