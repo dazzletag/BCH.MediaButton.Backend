@@ -207,9 +207,11 @@ export default function Dashboard() {
       setUploading(true);
       setError(null);
       try {
+        // API expects numeric enum (0 Photo, 1 Video)
+        const apiMediaType = selectedMediaType === "Photo" ? 0 : 1;
         const uploadBody: UploadRequest = {
           fileName: selectedFile.name,
-          type: selectedMediaType,
+          type: apiMediaType as unknown as MediaType,
           contentType: selectedFile.type || null,
           durationSeconds: duration || null,
         };
@@ -231,7 +233,7 @@ export default function Dashboard() {
 
         const registerBody: MediaRegisterRequest = {
           blobPath: upload.blobPath,
-          type: selectedMediaType,
+          type: apiMediaType as unknown as MediaType,
           name: mediaName || selectedFile.name,
           contentType: selectedFile.type || null,
           durationSeconds: duration || null,
@@ -252,9 +254,19 @@ export default function Dashboard() {
         setMediaName("");
         setDuration(undefined);
         await loadData();
-      } catch (err) {
+      } catch (err: any) {
         console.error(err);
-        setError("Upload failed. Check storage settings and try again.");
+        const serverMessage =
+          err?.response?.data && typeof err.response.data === "string"
+            ? err.response.data
+            : err?.response?.data?.message ||
+              err?.response?.data?.error ||
+              err?.message;
+        setError(
+          serverMessage
+            ? `Upload failed: ${serverMessage}`
+            : "Upload failed. Check storage settings and try again."
+        );
       } finally {
         setUploading(false);
       }
