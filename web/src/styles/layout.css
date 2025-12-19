@@ -159,13 +159,13 @@
 
 .hero-logo {
   width: 100%;
-  max-width: 260px;
-  max-height: 160px;
+  max-width: 340px;
+  max-height: 220px;
   height: auto;
   display: block;
   object-fit: contain;
   padding: 0;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
 .hero-mini {
