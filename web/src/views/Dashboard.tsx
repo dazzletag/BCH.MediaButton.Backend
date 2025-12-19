@@ -72,23 +72,20 @@ export default function Dashboard() {
   const [mediaName, setMediaName] = useState("");
   const [duration, setDuration] = useState<number | undefined>(undefined);
 
+  const [residentList, setResidentList] = useState<string[]>([]);
+  const [residentQuery, setResidentQuery] = useState("");
+  const [manualText, setManualText] = useState("");
+  const [manualMeta, setManualMeta] = useState<{ updatedAt?: string | null; updatedBy?: string | null }>({});
+  const [loadingResident, setLoadingResident] = useState(false);
+  const [savingManual, setSavingManual] = useState(false);
+
   const [playlistId, setPlaylistId] = useState("");
   const [seasonalTheme, setSeasonalTheme] = useState("");
   const [radioFavorites, setRadioFavorites] = useState<string[]>([]);
   const [urlInput, setUrlInput] = useState("");
   const [playlistUrls, setPlaylistUrls] = useState<string[]>([]);
-  const [residentTarget, setResidentTarget] = useState("");
 
   const accountName = useMemo(() => accounts[0]?.name ?? "Signed-in user", [accounts]);
-
-  // Resident AI/manual editing
-  const [residentQuery, setResidentQuery] = useState("");
-  const [aiSuggestion, setAiSuggestion] = useState<string[]>([]);
-  const [manualText, setManualText] = useState("");
-  const [manualMeta, setManualMeta] = useState<{ updatedAt?: string | null; updatedBy?: string | null }>({});
-  const [loadingResident, setLoadingResident] = useState(false);
-  const [savingManual, setSavingManual] = useState(false);
-  const [residentList, setResidentList] = useState<string[]>([]);
 
   const loadData = useCallback(async () => {
     if (!isAuthed) return;
@@ -125,6 +122,73 @@ export default function Dashboard() {
     fetchResidents();
   }, [call]);
 
+  const applyOptionsToManual = (base: string[]) => {
+    const extras: string[] = [];
+    if (seasonalTheme) extras.push(`season:${seasonalTheme}`);
+    radioFavorites.forEach((u) => extras.push(`radio:${u}`));
+    playlistUrls.forEach((u) => extras.push(u));
+    const combined = Array.from(new Set([...base, ...extras]));
+    setManualText(combined.join("\n"));
+    return combined;
+  };
+
+  const loadResidentManual = useCallback(async () => {
+    if (!residentQuery.trim()) {
+      setError("Enter a resident name to load playlist.");
+      return;
+    }
+    setLoadingResident(true);
+    setError(null);
+    try {
+      const data = await call<ManualPlaylistResponse>({
+        url: `/api/admin/residents/${encodeURIComponent(residentQuery.trim())}/manual-playlist`,
+        method: "GET",
+      });
+      const items = data?.items ?? [];
+      const withOptions = applyOptionsToManual(items);
+      setManualText(withOptions.join("\n"));
+      setManualMeta({ updatedAt: data?.updatedAtUtc, updatedBy: data?.updatedBy });
+    } catch (err) {
+      console.error(err);
+      setManualText("");
+      setManualMeta({});
+      setError("Could not load playlist for that resident.");
+    } finally {
+      setLoadingResident(false);
+    }
+  }, [call, residentQuery, applyOptionsToManual]);
+
+  const saveResidentManual = useCallback(
+    async (overrideItems?: string[]) => {
+      if (!residentQuery.trim()) {
+        setError("Resident name is required.");
+        return;
+      }
+      const items =
+        overrideItems ??
+        manualText
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean);
+      setSavingManual(true);
+      setError(null);
+      try {
+        await call({
+          url: `/api/admin/residents/${encodeURIComponent(residentQuery.trim())}/manual-playlist`,
+          method: "PUT",
+          data: { items },
+        });
+        setManualMeta({ updatedAt: new Date().toISOString(), updatedBy: accountName });
+      } catch (err) {
+        console.error(err);
+        setError("Failed to save manual playlist.");
+      } finally {
+        setSavingManual(false);
+      }
+    },
+    [accountName, call, manualText, residentQuery]
+  );
+
   const loadResidentAi = useCallback(async () => {
     if (!residentQuery.trim()) {
       setError("Enter a resident name to load the AI playlist.");
@@ -138,71 +202,20 @@ export default function Dashboard() {
         method: "GET",
       });
       const suggestion = Array.isArray(data?.payload?.playlist) ? (data.payload.playlist as string[]) : [];
-      setAiSuggestion(suggestion);
-      if (suggestion.length) {
-        setManualText(suggestion.join("\n"));
+      const withOptions = applyOptionsToManual(suggestion);
+      setManualText(withOptions.join("\n"));
+      if (withOptions.length) {
+        await saveResidentManual(withOptions);
       }
-    } catch (err) {
-      console.error(err);
-      setAiSuggestion([]);
-      setError("Could not load AI playlist for that resident.");
-    } finally {
-      setLoadingResident(false);
-    }
-  }, [call, residentQuery]);
-
-  const loadResidentManual = useCallback(async () => {
-    if (!residentQuery.trim()) {
-      setError("Enter a resident name to load manual playlist.");
-      return;
-    }
-    setLoadingResident(true);
-    setError(null);
-    try {
-      const data = await call<ManualPlaylistResponse>({
-        url: `/api/admin/residents/${encodeURIComponent(residentQuery.trim())}/manual-playlist`,
-        method: "GET",
-      });
-      const items = data?.items ?? [];
-      setManualText(items.join("\n"));
-      setManualMeta({ updatedAt: data?.updatedAtUtc, updatedBy: data?.updatedBy });
     } catch (err) {
       console.error(err);
       setManualText("");
       setManualMeta({});
-      setError("Could not load manual playlist for that resident.");
+      setError("Could not load AI playlist for that resident.");
     } finally {
       setLoadingResident(false);
     }
-  }, [call, residentQuery]);
-
-  const saveResidentManual = useCallback(async (overrideItems?: string[]) => {
-    if (!residentQuery.trim()) {
-      setError("Resident name is required.");
-      return;
-    }
-    const items =
-      overrideItems ??
-      manualText
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter(Boolean);
-    setSavingManual(true);
-    setError(null);
-    try {
-      await call({
-        url: `/api/admin/residents/${encodeURIComponent(residentQuery.trim())}/manual-playlist`,
-        method: "PUT",
-        data: { items },
-      });
-      setManualMeta({ updatedAt: new Date().toISOString(), updatedBy: accountName });
-    } catch (err) {
-      console.error(err);
-      setError("Failed to save manual playlist.");
-    } finally {
-      setSavingManual(false);
-    }
-  }, [accountName, call, manualText, residentQuery]);
+  }, [call, residentQuery, applyOptionsToManual, saveResidentManual]);
 
   const onUploadMedia = useCallback(
     async (evt: React.FormEvent) => {
@@ -250,6 +263,11 @@ export default function Dashboard() {
           data: registerBody,
         });
 
+        // Add uploaded item into manual playlist view
+        const updated = applyOptionsToManual([...manualText.split(/\r?\n/).filter(Boolean), mediaName || selectedFile.name]);
+        setManualText(updated.join("\n"));
+        await saveResidentManual(updated);
+
         setSelectedFile(null);
         setMediaName("");
         setDuration(undefined);
@@ -261,13 +279,13 @@ export default function Dashboard() {
         setUploading(false);
       }
     },
-    [call, duration, loadData, mediaName, selectedFile, selectedMediaType]
+    [call, duration, loadData, manualText, mediaName, saveResidentManual, selectedFile, selectedMediaType, applyOptionsToManual]
   );
 
   const onAssignPlaylist = useCallback(
     async (evt: React.FormEvent) => {
       evt.preventDefault();
-      if (!residentTarget.trim() || !playlistId.trim()) {
+      if (!residentQuery.trim() || !playlistId.trim()) {
         setError("Resident and playlist are required.");
         return;
       }
@@ -279,26 +297,21 @@ export default function Dashboard() {
           radioFavorites,
           playlistUrls,
           seasonalTheme,
-          resident: residentTarget.trim(),
+          resident: residentQuery.trim(),
         };
         await call({
-          url: `/api/admin/residents/${encodeURIComponent(residentTarget.trim())}/playlist`,
+          url: `/api/admin/residents/${encodeURIComponent(residentQuery.trim())}/playlist`,
           method: "PUT",
           data: payload,
         });
-        setResidentTarget("");
-        setPlaylistId("");
-        setSeasonalTheme("");
-        setRadioFavorites([]);
-        setPlaylistUrls([]);
       } catch (err) {
         console.error(err);
-        setError("Assignment failed. Confirm the device ID and playlist ID.");
+        setError("Assignment failed. Confirm the resident and playlist.");
       } finally {
         setAssigning(false);
       }
     },
-    [call, playlistId, playlistUrls, radioFavorites, residentTarget, seasonalTheme]
+    [call, playlistId, playlistUrls, radioFavorites, residentQuery, seasonalTheme]
   );
 
   const mediaByType = useMemo(
@@ -312,38 +325,17 @@ export default function Dashboard() {
   const handleLogout = () => instance.logoutRedirect();
 
   const radioPresets = [
+    { name: "BBC Radio 1", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_one" },
     { name: "BBC Radio 2", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_two" },
     { name: "BBC Radio 3", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_three" },
     { name: "BBC Radio 4", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_fourfm" },
-    { name: "BBC 6 Music", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_6music" },
+    { name: "BBC Radio 5 Live", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_five_live_online_nonuk" },
+    { name: "BBC Radio 6 Music", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_6music" },
+    { name: "BBC Radio 7", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_four_extra" },
     { name: "BBC Radio Bristol", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_bristol" },
   ];
 
   const seasonalOptions = ["", "Christmas", "Easter", "Diwali", "Eid", "Hanukkah", "Remembrance", "Summer", "Winter"];
-
-  const addUrl = () => {
-    if (!urlInput.trim()) return;
-    setPlaylistUrls((prev) => (prev.includes(urlInput.trim()) ? prev : [...prev, urlInput.trim()]));
-    setUrlInput("");
-  };
-
-  const saveOptionsToManual = async () => {
-    if (!residentQuery.trim()) {
-      setError("Resident name is required.");
-      return;
-    }
-    const base = manualText
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean);
-    const extras: string[] = [];
-    if (seasonalTheme) extras.push(`season:${seasonalTheme}`);
-    radioFavorites.forEach((u) => extras.push(`radio:${u}`));
-    playlistUrls.forEach((u) => extras.push(u));
-    const combined = Array.from(new Set([...base, ...extras]));
-    setManualText(combined.join("\n"));
-    await saveResidentManual(combined);
-  };
 
   return (
     <div className="page">
@@ -421,6 +413,31 @@ export default function Dashboard() {
           />
         </div>
 
+        <div className="card glass">
+          <div className="card-header">
+            <p className="card-title">Resident playlist</p>
+            <span className="tag">Load current playlist first</span>
+          </div>
+          <div className="form-row">
+            <select className="select" value={residentQuery} onChange={(e) => setResidentQuery(e.target.value)}>
+              <option value="">Select resident...</option>
+              {residentList.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+            <div className="nav-actions" style={{ gap: 8 }}>
+              <button className="btn ghost" type="button" disabled={loadingResident} onClick={loadResidentManual}>
+                {loadingResident ? "Loading..." : "Load current playlist"}
+              </button>
+              <button className="btn ghost" type="button" disabled={loadingResident} onClick={loadResidentAi}>
+                {loadingResident ? "Loading..." : "Load AI playlist"}
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div className="split">
           <div className="card glass">
             <div className="card-header">
@@ -479,148 +496,176 @@ export default function Dashboard() {
             </form>
           </div>
 
-            <div className="card glass">
-              <div className="card-header">
-                <p className="card-title">Playlist options</p>
-                <span className="tag">Radio, links, season</span>
-              </div>
-              <div className="grid" style={{ gap: 12 }}>
-              <label className="grid">
-                <span className="muted">Seasonal influence</span>
-                <select className="select" value={seasonalTheme} onChange={(e) => setSeasonalTheme(e.target.value)}>
-                  {seasonalOptions.map((s) => (
-                    <option key={s || "none"} value={s}>
-                      {s || "No seasonal focus"}
-                    </option>
-                  ))}
-                </select>
-              </label>
+          <div className="card glass">
+            <div className="card-header">
+              <p className="card-title">Radio favourites</p>
+              <span className="tag">BBC stations</span>
+            </div>
+            <div className="list" style={{ gap: 6 }}>
+              {radioPresets.map((r) => {
+                const checked = radioFavorites.includes(r.url);
+                const disabled = !checked && radioFavorites.length >= 3;
+                return (
+                  <label className="row" key={r.url}>
+                    <div style={{ fontWeight: 700 }}>{r.name}</div>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={disabled}
+                      onChange={(e) => {
+                        setRadioFavorites((prev) =>
+                          e.target.checked ? [...prev, r.url] : prev.filter((u) => u !== r.url)
+                        );
+                      }}
+                    />
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        </div>
 
-              <div className="grid">
-                <span className="muted">Pick up to 3 BBC stations</span>
-                <div className="list" style={{ gap: 6 }}>
-                  {radioPresets.map((r) => {
-                    const checked = radioFavorites.includes(r.url);
-                    const disabled = !checked && radioFavorites.length >= 3;
-                    return (
-                      <label className="row" key={r.url}>
-                        <div style={{ fontWeight: 700 }}>{r.name}</div>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={disabled}
-                          onChange={(e) => {
-                            setRadioFavorites((prev) =>
-                              e.target.checked ? [...prev, r.url] : prev.filter((u) => u !== r.url)
-                            );
-                          }}
-                        />
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
+        <div className="split">
+          <div className="card glass">
+            <div className="card-header">
+              <p className="card-title">Seasonal influence</p>
+              <span className="tag">Optional theme</span>
+            </div>
+            <select className="select" value={seasonalTheme} onChange={(e) => setSeasonalTheme(e.target.value)}>
+              {seasonalOptions.map((s) => (
+                <option key={s || "none"} value={s}>
+                  {s || "No seasonal focus"}
+                </option>
+              ))}
+            </select>
+          </div>
 
-              <div className="grid">
-                <span className="muted">Add stream or media URLs to include in playlists</span>
-                <div className="form-row">
-                  <input
-                    className="input"
-                    placeholder="https://example.com/stream.mp3"
-                    value={urlInput}
-                    onChange={(e) => setUrlInput(e.target.value)}
-                  />
-                  <button className="btn ghost" type="button" onClick={addUrl} disabled={!urlInput.trim()}>
-                    Add URL
-                  </button>
-                </div>
-                {!!playlistUrls.length && (
-                  <div className="list">
-                    {playlistUrls.map((u) => (
-                      <div className="row" key={u}>
-                        <span style={{ wordBreak: "break-all" }}>{u}</span>
-                        <button
-                          className="btn ghost"
-                          type="button"
-                          onClick={() => setPlaylistUrls((prev) => prev.filter((x) => x !== u))}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="nav-actions" style={{ justifyContent: "flex-end" }}>
-                <button className="btn primary" type="button" onClick={saveOptionsToManual} disabled={savingManual}>
-                  {savingManual ? "Saving." : "Save options to manual playlist"}
+          <div className="card glass">
+            <div className="card-header">
+              <p className="card-title">Add stream/media URLs</p>
+              <span className="tag">Playlists & radio</span>
+            </div>
+            <div className="grid" style={{ gap: 8 }}>
+              <div className="form-row">
+                <input
+                  className="input"
+                  placeholder="https://example.com/stream.mp3"
+                  value={urlInput}
+                  onChange={(e) => setUrlInput(e.target.value)}
+                />
+                <button className="btn ghost" type="button" onClick={loadResidentManual} disabled={loadingResident}>
+                  Reload playlist
+                </button>
+                <button className="btn ghost" type="button" onClick={() => setUrlInput("")} disabled={!urlInput.trim()}>
+                  Clear
                 </button>
               </div>
+              <button className="btn primary" type="button" onClick={() => {
+                if (!urlInput.trim()) return;
+                const updated = applyOptionsToManual([...manualText.split(/\r?\n/).filter(Boolean), urlInput.trim()]);
+                setManualText(updated.join("\n"));
+                setPlaylistUrls((prev) => (prev.includes(urlInput.trim()) ? prev : [...prev, urlInput.trim()]));
+                saveResidentManual(updated);
+                setUrlInput("");
+              }}>
+                Add URL to playlist
+              </button>
+              {!!playlistUrls.length && (
+                <div className="list">
+                  {playlistUrls.map((u) => (
+                    <div className="row" key={u}>
+                      <span style={{ wordBreak: "break-all" }}>{u}</span>
+                      <button
+                        className="btn ghost"
+                        type="button"
+                        onClick={() => {
+                          setPlaylistUrls((prev) => prev.filter((x) => x !== u));
+                          const updated = manualText
+                            .split(/\r?\n/)
+                            .map((l) => l.trim())
+                            .filter(Boolean)
+                            .filter((line) => line !== u);
+                          setManualText(updated.join("\n"));
+                          saveResidentManual(updated);
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
 
         <div className="card glass">
           <div className="card-header">
-            <p className="card-title">AI  Manual playlist</p>
-            <span className="tag">Resident-specific</span>
+            <p className="card-title">Manual playlist</p>
+            <span className="muted">
+              Auto-saved when options change. Includes uploads by name; device receives blob URLs.
+            </span>
           </div>
-          <div className="grid" style={{ gap: 12 }}>
-            <div className="form-row">
-              <select
-                className="select"
-                value={residentQuery}
-                onChange={(e) => setResidentQuery(e.target.value)}
-              >
-                <option value="">Select resident...</option>
-                {residentList.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-              <div className="nav-actions" style={{ gap: 8 }}>
-                <button className="btn ghost" type="button" disabled={loadingResident} onClick={loadResidentAi}>
-                  {loadingResident ? "Loading..." : "Load AI suggestion"}
-                </button>
-                <button className="btn ghost" type="button" disabled={loadingResident} onClick={loadResidentManual}>
-                  {loadingResident ? "Loading..." : "Load manual"}
-                </button>
-              </div>
+          <textarea
+            className="textarea"
+            style={{ minHeight: 200 }}
+            value={manualText}
+            onChange={(e) => setManualText(e.target.value)}
+            placeholder="Enter titles, URLs or radio: prefixed stations"
+          />
+          <div className="nav-actions" style={{ justifyContent: "space-between", width: "100%" }}>
+            <div className="muted">
+              {manualMeta.updatedAt && (
+                <span>
+                  Last saved {formatDate(manualMeta.updatedAt)} {manualMeta.updatedBy ? `by ${manualMeta.updatedBy}` : ""}
+                </span>
+              )}
             </div>
-            <div className="grid">
-              <span className="muted">Manual playlist (one line per item). Save to send to Pi as manual override.</span>
-              <textarea
-                className="textarea"
-                style={{ minHeight: 160 }}
-                value={manualText}
-                onChange={(e) => setManualText(e.target.value)}
-                placeholder="Enter titles or queries per line..."
-              />
-              <div className="nav-actions" style={{ justifyContent: "space-between", width: "100%" }}>
-                <div className="muted">
-                  {manualMeta.updatedAt && (
-                    <span>
-                      Last saved {formatDate(manualMeta.updatedAt)} {manualMeta.updatedBy ? `by ${manualMeta.updatedBy}` : ""}
-                    </span>
-                  )}
-                </div>
-                <div className="nav-actions" style={{ gap: 8 }}>
-                  <button
-                    className="btn ghost"
-                    type="button"
-                    disabled={!aiSuggestion.length || !residentQuery}
-                    onClick={() => setManualText(aiSuggestion.join("\n"))}
-                  >
-                    Use AI suggestion
-                  </button>
-                  <button className="btn primary" type="button" disabled={savingManual} onClick={saveResidentManual}>
-                    {savingManual ? "Saving." : "Save manual override"}
-                  </button>
-                </div>
-              </div>
+            <div className="nav-actions" style={{ gap: 8 }}>
+              <button className="btn ghost" type="button" disabled={loadingResident} onClick={loadResidentManual}>
+                Reload
+              </button>
+              <button className="btn primary" type="button" disabled={savingManual} onClick={() => saveResidentManual()}>
+                {savingManual ? "Saving." : "Save manual playlist"}
+              </button>
             </div>
           </div>
+        </div>
+
+        <div className="card glass">
+          <div className="card-header">
+            <p className="card-title">Send playlist to device</p>
+            <span className="tag">Press &amp; Play Media Button</span>
+          </div>
+          <form className="form-row" onSubmit={onAssignPlaylist}>
+            <select
+              className="select"
+              value={residentQuery}
+              onChange={(e) => setResidentQuery(e.target.value)}
+            >
+              <option value="">Select resident</option>
+              {residentList.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+            <select
+              className="select"
+              value={playlistId}
+              onChange={(e) => setPlaylistId(e.target.value)}
+            >
+              <option value="">Select playlist</option>
+              {playlists.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <button className="btn primary" type="submit" disabled={assigning}>
+              {assigning ? "Sending." : "Send playlist to Press & Play"}
+            </button>
+          </form>
         </div>
 
         <div className="grid c2">
@@ -663,42 +708,6 @@ export default function Dashboard() {
               ))}
             </div>
           </div>
-        </div>
-
-        <div className="card glass">
-          <div className="card-header">
-            <p className="card-title">Send playlist to device</p>
-            <span className="tag">Press &amp; Play Media Button</span>
-          </div>
-          <form className="form-row" onSubmit={onAssignPlaylist}>
-            <select
-              className="select"
-              value={residentTarget}
-              onChange={(e) => setResidentTarget(e.target.value)}
-            >
-              <option value="">Select resident</option>
-              {residentList.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-            <select
-              className="select"
-              value={playlistId}
-              onChange={(e) => setPlaylistId(e.target.value)}
-            >
-              <option value="">Select playlist</option>
-              {playlists.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <button className="btn primary" type="submit" disabled={assigning}>
-              {assigning ? "Sending." : "Send playlist to Press & Play"}
-            </button>
-          </form>
         </div>
       </main>
     </div>
