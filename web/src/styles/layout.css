@@ -25,12 +25,13 @@
   font-weight: 700;
   color: var(--brand-strong);
   letter-spacing: 0.3px;
+  min-width: 220px;
 }
 
 .brand-logo {
   display: block;
-  height: auto;
-  max-height: 76px;
+  height: 70px;
+  max-height: 78px;
   width: auto;
   object-fit: contain;
   padding: 0;
@@ -154,7 +155,7 @@
 
 .hero-logo {
   width: 100%;
-  max-width: 420px;
+  max-width: 440px;
   height: auto;
   display: block;
   object-fit: contain;
