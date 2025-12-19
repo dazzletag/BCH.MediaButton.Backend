@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import { useApiClient } from "../hooks/useApiClient";
 import { appConfig } from "../config";
-import type { AiPlaylistEnvelope, ManualPlaylistResponse, MediaItem, MediaType, Playlist, ResidentList } from "../types";
+import type { ManualPlaylistResponse, MediaItem, MediaType, Playlist, ResidentList } from "../types";
 
 type UploadRequest = {
   fileName: string;
