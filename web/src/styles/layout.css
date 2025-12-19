@@ -108,10 +108,10 @@
 }
 
 .hero {
-  padding: 56px 32px 24px;
+  padding: 38px 28px 18px;
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr);
-  gap: 32px;
+  gap: 22px;
   align-items: center;
   position: relative;
 }
@@ -136,12 +136,13 @@
   max-width: 740px;
   color: var(--muted);
   font-size: 17px;
-  line-height: 1.7;
+  line-height: 1.6;
+  margin-bottom: 10px;
 }
 
 .hero-left {
   display: grid;
-  gap: 14px;
+  gap: 10px;
 }
 
 .hero-right {
@@ -151,8 +152,8 @@
 
 .logo-card {
   width: min(480px, 100%);
-  padding: 22px 24px;
-  background: linear-gradient(140deg, rgba(255, 255, 255, 0.97), rgba(247, 245, 240, 0.9));
+  padding: 16px 18px;
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.97), rgba(247, 245, 240, 0.92));
 }
 
 .hero-logo {
