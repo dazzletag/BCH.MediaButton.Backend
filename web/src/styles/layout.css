@@ -27,8 +27,12 @@
 }
 
 .brand-logo {
-  height: 48px;
+  height: 56px;
+  max-height: 64px;
   width: auto;
+  display: block;
+  object-fit: contain;
+  padding: 4px 0;
   filter: drop-shadow(0 12px 30px rgba(43, 35, 52, 0.12));
 }
 
@@ -150,6 +154,9 @@
   width: 100%;
   max-width: 360px;
   height: auto;
+  display: block;
+  object-fit: contain;
+  padding: 6px 0;
 }
 
 .hero-mini {
