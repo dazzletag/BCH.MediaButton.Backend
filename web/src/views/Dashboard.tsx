@@ -389,7 +389,7 @@ export default function Dashboard() {
 
         <div className="hero-right">
           <div className="logo-card glass">
-            <img src="/press-play-logo.svg" alt="Press & Play Media Button" className="hero-logo" />
+            <img src="/press-play-hero.svg" alt="Press & Play Media Button" className="hero-logo" />
             <p className="hero-mini">
               Signed in as {accountName}. Press &amp; Play keeps playlists familiar, safe, and easy
               for every resident.

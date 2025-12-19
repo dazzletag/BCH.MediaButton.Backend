@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 520" role="img" aria-labelledby="title desc">
+  <title id="title">Press &amp; Play Media Button</title>
+  <desc id="desc">Gradient button icon with Press &amp; Play Media Button text.</desc>
+  <defs>
+    <linearGradient id="btnGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1ba7ab" />
+      <stop offset="100%" stop-color="#0c6f96" />
+    </linearGradient>
+    <linearGradient id="btnShadow" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#4f5662" />
+      <stop offset="100%" stop-color="#2f3440" />
+    </linearGradient>
+  </defs>
+  <g fill="none" fill-rule="evenodd">
+    <circle cx="190" cy="260" r="160" fill="url(#btnGrad)" />
+    <ellipse cx="190" cy="320" rx="120" ry="38" fill="url(#btnShadow)" />
+    <circle cx="190" cy="234" r="98" fill="#f3f6fa" />
+    <ellipse cx="190" cy="260" rx="110" ry="32" fill="#cfd5df" opacity="0.8" />
+    <g font-family="Arial, Helvetica, sans-serif" font-weight="700" fill="#0c778f">
+      <text font-size="88" x="330" y="240">Press</text>
+      <text font-size="88" x="330" y="330">&amp; Play</text>
+    </g>
+    <g font-family="Arial, Helvetica, sans-serif" font-weight="600" font-size="48" letter-spacing="4" fill="#555a65">
+      <text x="330" y="400">MEDIA BUTTON</text>
+    </g>
+  </g>
+</svg>
