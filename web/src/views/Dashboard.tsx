@@ -111,6 +111,12 @@ export default function Dashboard() {
   }, [loadData]);
 
   useEffect(() => {
+    if (playlists.length && !playlistId) {
+      setPlaylistId(playlists[0].id);
+    }
+  }, [playlists, playlistId]);
+
+  useEffect(() => {
     const fetchResidents = async () => {
       try {
         const residents = await call<ResidentList>({ url: "/api/admin/residents", method: "GET" });
@@ -188,34 +194,6 @@ export default function Dashboard() {
     },
     [accountName, call, manualText, residentQuery]
   );
-
-  const loadResidentAi = useCallback(async () => {
-    if (!residentQuery.trim()) {
-      setError("Enter a resident name to load the AI playlist.");
-      return;
-    }
-    setLoadingResident(true);
-    setError(null);
-    try {
-      const data = await call<AiPlaylistEnvelope>({
-        url: `/api/admin/residents/${encodeURIComponent(residentQuery.trim())}/ai-playlist`,
-        method: "GET",
-      });
-      const suggestion = Array.isArray(data?.payload?.playlist) ? (data.payload.playlist as string[]) : [];
-      const withOptions = applyOptionsToManual(suggestion);
-      setManualText(withOptions.join("\n"));
-      if (withOptions.length) {
-        await saveResidentManual(withOptions);
-      }
-    } catch (err) {
-      console.error(err);
-      setManualText("");
-      setManualMeta({});
-      setError("Could not load AI playlist for that resident.");
-    } finally {
-      setLoadingResident(false);
-    }
-  }, [call, residentQuery, applyOptionsToManual, saveResidentManual]);
 
   const onUploadMedia = useCallback(
     async (evt: React.FormEvent) => {
@@ -395,12 +373,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        <div className="grid c3">
-          <StatCard
-            title="Playlists ready"
-            value={loading ? "-" : `${playlists.length}`}
-            hint="Curated sets you can assign to any device."
-          />
+        <div className="grid c2">
           <StatCard
             title="Photos"
             value={loading ? "-" : `${mediaByType.photo.length}`}
@@ -430,9 +403,6 @@ export default function Dashboard() {
             <div className="nav-actions" style={{ gap: 8 }}>
               <button className="btn ghost" type="button" disabled={loadingResident} onClick={loadResidentManual}>
                 {loadingResident ? "Loading..." : "Load current playlist"}
-              </button>
-              <button className="btn ghost" type="button" disabled={loadingResident} onClick={loadResidentAi}>
-                {loadingResident ? "Loading..." : "Load AI playlist"}
               </button>
             </div>
           </div>
@@ -650,19 +620,7 @@ export default function Dashboard() {
                 </option>
               ))}
             </select>
-            <select
-              className="select"
-              value={playlistId}
-              onChange={(e) => setPlaylistId(e.target.value)}
-            >
-              <option value="">Select playlist</option>
-              {playlists.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <button className="btn primary" type="submit" disabled={assigning}>
+            <button className="btn primary" type="submit" disabled={assigning || !playlistId}>
               {assigning ? "Sending." : "Send playlist to Press & Play"}
             </button>
           </form>
