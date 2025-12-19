@@ -353,6 +353,11 @@ export default function Dashboard() {
       <header className="nav">
         <div className="brand">
           <img src="/bch-logo.svg" alt="Bristol Care Homes" className="brand-logo" />
+          <img src="/press-play-logo.svg" alt="Press & Play" className="press-play-logo" />
+          <div className="brand-text">
+            <span className="brand-line">Press &amp; Play</span>
+            <span className="brand-subline">Media Button</span>
+          </div>
         </div>
         <div className="nav-actions">
           <div className="pill">
