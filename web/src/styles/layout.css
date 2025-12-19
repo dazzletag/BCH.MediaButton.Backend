@@ -108,11 +108,11 @@
 }
 
 .hero {
-  padding: 38px 28px 18px;
+  padding: 32px 24px 16px;
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr);
-  gap: 22px;
-  align-items: center;
+  gap: 18px;
+  align-items: start;
   position: relative;
 }
 
@@ -142,31 +142,34 @@
 
 .hero-left {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .hero-right {
   display: grid;
   justify-items: end;
+  align-items: start;
 }
 
 .logo-card {
   width: min(480px, 100%);
-  padding: 16px 18px;
-  background: linear-gradient(140deg, rgba(255, 255, 255, 0.97), rgba(247, 245, 240, 0.92));
+  padding: 12px 14px;
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.97), rgba(247, 245, 240, 0.94));
 }
 
 .hero-logo {
   width: 100%;
-  max-width: 420px;
+  max-width: 260px;
+  max-height: 160px;
   height: auto;
   display: block;
   object-fit: contain;
   padding: 0;
+  margin-bottom: 6px;
 }
 
 .hero-mini {
-  margin: 12px 0 0;
+  margin: 6px 0 0;
   color: var(--muted);
   line-height: 1.6;
 }
