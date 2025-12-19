@@ -1,24 +1,29 @@
 @import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Playfair+Display:wght@600&display=swap");
 
 :root {
-  --bg: #f2f6f8;
-  --bg-soft: #e5eef3;
-  --card: rgba(255, 255, 255, 0.9);
+  --bg: #f7f4ef;
+  --bg-soft: #ece6dc;
+  --card: rgba(255, 255, 255, 0.95);
   --card-strong: #ffffff;
-  --ink: #0f2438;
-  --muted: #5c6b7a;
-  --brand: #1e6ba8;
-  --brand-strong: #0f4c81;
-  --brand-accent: #f2b544;
-  --success: #2f9e44;
-  --warning: #d9480f;
-  --radius: 16px;
-  --shadow-soft: 0 20px 60px rgba(17, 40, 75, 0.15);
-  --shadow-sharp: 0 15px 45px rgba(17, 40, 75, 0.1);
-  --border: 1px solid rgba(16, 35, 56, 0.08);
-  --gradient: radial-gradient(circle at 20% 20%, rgba(30, 107, 168, 0.15), transparent 40%),
-    radial-gradient(circle at 80% 0%, rgba(242, 181, 68, 0.18), transparent 35%),
-    linear-gradient(145deg, #f7fbff 0%, #f2f6f8 50%, #eef4fb 100%);
+  --ink: #2f2932;
+  --muted: #5d5863;
+  --brand: #0d8ab2;
+  --brand-strong: #4b2f58;
+  --brand-accent: #b02071;
+  --teal: #0d8ab2;
+  --berry: #b02071;
+  --plum: #4b2f58;
+  --olive: #6d7b33;
+  --success: #6d7b33;
+  --warning: #d58b28;
+  --radius: 18px;
+  --shadow-soft: 0 24px 70px rgba(43, 35, 52, 0.15);
+  --shadow-sharp: 0 18px 45px rgba(43, 35, 52, 0.1);
+  --border: 1px solid rgba(75, 47, 88, 0.08);
+  --gradient: radial-gradient(circle at 12% 18%, rgba(176, 32, 113, 0.12), transparent 42%),
+    radial-gradient(circle at 82% 14%, rgba(13, 138, 178, 0.14), transparent 38%),
+    radial-gradient(circle at 48% 82%, rgba(109, 123, 51, 0.12), transparent 40%),
+    linear-gradient(135deg, #fbfaf7 0%, #f5f1ec 46%, #f8f5f1 100%);
 }
 
 *,

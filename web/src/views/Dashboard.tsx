@@ -352,8 +352,11 @@ export default function Dashboard() {
     <div className="page">
       <header className="nav">
         <div className="brand">
-          <div className="brand-mark">B</div>
-          Media Button Studio
+          <img src="/bch-logo.svg" alt="Bristol Care Homes" className="brand-logo" />
+          <div className="brand-text">
+            <span className="brand-line">Bristol Care Homes</span>
+            <span className="brand-subline">Media Button Studio</span>
+          </div>
         </div>
         <div className="nav-actions">
           <div className="pill">
@@ -367,17 +370,36 @@ export default function Dashboard() {
       </header>
 
       <section className="hero">
-        <div className="hero-eyebrow">Bristol Care Homes</div>
-        <h1 className="hero-title">Design soothing playlists for every room.</h1>
-        <p className="hero-copy">
-          Upload photos or videos, arrange them into playlists, and assign them to
-          any Media Button Pi in seconds. Secure sign-in via your home tenant keeps
-          residents’ memories private and staff workflows simple.
-        </p>
-        <div className="nav-actions">
-          <div className="badge">
-            <span className="status-dot" />
-            Home tenant: {appConfig.auth.tenantId || "Configure tenant ID"}
+        <div className="hero-left">
+          <div className="hero-eyebrow">Bristol Care Homes</div>
+          <h1 className="hero-title">Design soothing playlists for every room.</h1>
+          <p className="hero-copy">
+            Upload photos or videos, arrange them into playlists, and assign them to
+            any Media Button Pi in seconds. Secure sign-in via your home tenant keeps
+            residents' memories private and staff workflows simple.
+          </p>
+          <div className="pill brand-pill">Providing top quality, best value, holistic care.</div>
+          <div className="nav-actions">
+            <div className="badge">
+              <span className="status-dot" />
+              Home tenant: {appConfig.auth.tenantId || "Configure tenant ID"}
+            </div>
+          </div>
+        </div>
+
+        <div className="hero-right">
+          <div className="logo-card glass">
+            <img src="/bch-logo.svg" alt="Bristol Care Homes logo" className="hero-logo" />
+            <p className="hero-mini">
+              Signed in as {accountName}. Each colour tile is a reminder that every playlist should
+              feel personal, safe, and familiar.
+            </p>
+            <div className="logo-swatches">
+              <span style={{ background: "var(--teal)" }} />
+              <span style={{ background: "var(--berry)" }} />
+              <span style={{ background: "var(--plum)" }} />
+              <span style={{ background: "var(--olive)" }} />
+            </div>
           </div>
         </div>
       </section>
