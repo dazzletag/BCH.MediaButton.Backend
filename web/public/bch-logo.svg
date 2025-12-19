@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 363 131" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 160" role="img" aria-labelledby="title desc">
   <title id="title">Bristol Care Homes</title>
   <desc id="desc">Four coloured tiles with the Bristol Care Homes wordmark.</desc>
   <g fill="none" fill-rule="evenodd">
@@ -6,11 +6,11 @@
     <rect x="54" y="0" width="44" height="44" rx="8" fill="#B02071" />
     <rect x="0" y="54" width="44" height="44" rx="8" fill="#4B2F58" />
     <rect x="54" y="54" width="44" height="44" rx="8" fill="#6D7B33" />
-    <g fill="#8F9296" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="30">
-      <text x="116" y="42">Bristol</text>
-      <text x="116" y="76">Care Homes</text>
+    <g fill="#8F9296" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="44">
+      <text x="116" y="44">Bristol</text>
+      <text x="116" y="96">Care Homes</text>
     </g>
-    <text fill="#9CA0A5" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="600" x="116" y="104">
+    <text fill="#9CA0A5" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="600" x="0" y="142">
       Providing top quality, best value, holistic care
     </text>
   </g>
