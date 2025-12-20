@@ -180,6 +180,23 @@ def _is_youtube_url(url: str) -> bool:
     return lower.startswith("http") and ("youtube.com" in lower or "youtu.be" in lower)
 
 
+def _maybe_add_scheme(url: str) -> str:
+    """
+    Normalise URLs that are missing a scheme (e.g. 'youtube.com/...' or 'www...').
+    Keeps original value if no change is needed.
+    """
+    try:
+        s = url.strip()
+    except Exception:
+        return url
+    low = s.lower()
+    if low.startswith(("http://", "https://")):
+        return s
+    if low.startswith(("www.", "youtube.com/", "youtu.be/")):
+        return f"https://{s}"
+    return s
+
+
 def _escape_spaces(url: str) -> str:
     """Azure SAS URLs can contain spaces in blob names; VLC needs them percent-encoded."""
     try:
@@ -633,6 +650,7 @@ def normalize_playlist_items(items):
             s = item.strip()
             if not s:
                 continue
+            s = _maybe_add_scheme(s)
             low = s.lower()
             if low.startswith("radio:"):
                 url = s.split(":", 1)[1].strip()
@@ -655,6 +673,10 @@ def normalize_playlist_items(items):
             url = entry.get("url") or entry.get("mediaUrl")
             query = entry.get("query")
             t = (entry.get("type") or entry.get("kind") or "").lower()
+            if isinstance(url, str):
+                url = _maybe_add_scheme(url)
+            if isinstance(query, str):
+                query = _maybe_add_scheme(query)
 
             if isinstance(url, str) and url.lower().startswith("radio:"):
                 url = url.split(":", 1)[1].strip()
@@ -1371,6 +1393,9 @@ class Engine:
                     media_url = q
                     force_radio = bool(sess.get("force_radio"))
                 display_label = str(q)
+
+            if isinstance(media_url, str):
+                media_url = _maybe_add_scheme(media_url)
 
             # Heuristics: if no explicit type, infer from URL/extension
             if media_url:

@@ -22,6 +22,8 @@ import tkinter as tk
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 load_dotenv()
 # ---- Config / theming ----
+BASE_DIR = os.path.dirname(__file__)
+LOADING_GIF_PATH = os.getenv("LOADING_GIF_PATH") or os.path.join(BASE_DIR, "loading_clean.gif")
 USE_OPENAI_IMAGES = bool(os.getenv("OPENAI_API_KEY"))
 OPENAI_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1")  # or "dall-e-3"
 LOGO_DIR = os.getenv("MEDIA_LOGO_DIR", ".data/logos")
@@ -162,9 +164,9 @@ class MediaUI:
         import itertools
         from PIL import Image as PIL_Image, ImageTk
 
-        gif_path = "/opt/media_button/publish/pi/loading_clean.gif"
+        gif_path = LOADING_GIF_PATH
         if not os.path.exists(gif_path):
-            print("[UI] No loading_clean.gif found — skipping loader animation.")
+            print(f"[UI] No loading_clean.gif found at {gif_path}; skipping loader animation.")
             return
 
         print("[UI] Starting loading GIF animation")
