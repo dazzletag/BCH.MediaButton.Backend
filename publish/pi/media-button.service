@@ -13,6 +13,8 @@ ExecStartPre=/usr/bin/git -C /opt/media-button reset --hard origin/main
 ExecStart=/opt/media-button/.venv/bin/python /opt/media-button/publish/pi/media_button_pi.py
 Restart=always
 RestartSec=5
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/dazzletag/.Xauthority
 EnvironmentFile=/etc/media-button/env
 
 [Install]
