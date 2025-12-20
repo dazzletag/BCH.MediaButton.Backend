@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using MediaButtonBackend.Services;
 using System.IO;
+using System.Linq;
 
 namespace MediaButtonBackend.Controllers;
 
@@ -108,6 +109,14 @@ public class DeviceResidentPlaylistsController : ControllerBase
     private async Task<IReadOnlyList<object>> ResolveMediaAsync(IReadOnlyList<string> items, string resident)
     {
         var output = new List<object>();
+        var normalizedResident = NormalizeResident(resident);
+        var residentMedia = string.IsNullOrWhiteSpace(normalizedResident)
+            ? new List<MediaAsset>()
+            : await _db.MediaAssets
+                .Where(m => m.BlobPath.Contains($"/{normalizedResident}/"))
+                .OrderByDescending(m => m.UploadedAt)
+                .ToListAsync();
+
         foreach (var item in items)
         {
             if (item.StartsWith("media:", StringComparison.OrdinalIgnoreCase))
@@ -122,8 +131,7 @@ public class DeviceResidentPlaylistsController : ControllerBase
                 if (media == null) continue;
 
                 // Enforce resident scoping: blob path includes /{resident}/
-                var normalized = NormalizeResident(resident);
-                if (string.IsNullOrWhiteSpace(normalized) || !media.BlobPath.Contains($"/{normalized}/", StringComparison.OrdinalIgnoreCase))
+                if (string.IsNullOrWhiteSpace(normalizedResident) || !media.BlobPath.Contains($"/{normalizedResident}/", StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
@@ -138,6 +146,28 @@ public class DeviceResidentPlaylistsController : ControllerBase
                     url = uri.ToString(),
                     type = media.Type.ToString().ToLowerInvariant(),
                     name = media.Name ?? Path.GetFileName(media.BlobPath)
+                });
+                continue;
+            }
+
+            // Legacy: if the item matches an uploaded media name for this resident, resolve it to the blob
+            var matchedMedia = residentMedia.FirstOrDefault(m =>
+                (!string.IsNullOrWhiteSpace(m.Name) && string.Equals(m.Name, item, StringComparison.OrdinalIgnoreCase)) ||
+                string.Equals(Path.GetFileName(m.BlobPath), item, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(Path.GetFileNameWithoutExtension(m.BlobPath), item, StringComparison.OrdinalIgnoreCase));
+
+            if (matchedMedia != null)
+            {
+                var container = matchedMedia.Type == MediaType.Photo
+                    ? _config["Storage:ContainerPhotos"] ?? "photos"
+                    : _config["Storage:ContainerVideos"] ?? "videos";
+
+                var (uri, _) = _sas.GetReadSasUri(container, matchedMedia.BlobPath, ttlMinutesOverride: 60);
+                output.Add(new
+                {
+                    url = uri.ToString(),
+                    type = matchedMedia.Type.ToString().ToLowerInvariant(),
+                    name = matchedMedia.Name ?? Path.GetFileName(matchedMedia.BlobPath)
                 });
                 continue;
             }

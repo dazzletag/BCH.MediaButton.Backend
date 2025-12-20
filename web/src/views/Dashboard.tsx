@@ -247,14 +247,16 @@ export default function Dashboard() {
           durationSeconds: duration || null,
         };
 
-        await call({
+        const registerResponse = await call<{ mediaId: string }>({
           url: "/api/admin/media",
           method: "POST",
           data: registerBody,
         });
 
         // Add uploaded item into manual playlist view
-        const updated = applyOptionsToManual([...manualText.split(/\r?\n/).filter(Boolean), mediaName || selectedFile.name]);
+        const mediaToken =
+          registerResponse?.mediaId ? `media:${registerResponse.mediaId}` : mediaName || selectedFile.name;
+        const updated = applyOptionsToManual([...manualText.split(/\r?\n/).filter(Boolean), mediaToken]);
         setManualText(updated.join("\n"));
         await saveResidentManual(updated);
 
