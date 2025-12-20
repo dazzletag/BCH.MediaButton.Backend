@@ -124,6 +124,33 @@ namespace MediaButton.Backend.Api.Data.Migrations
                     b.ToTable("PlaylistItems");
                 });
 
+            modelBuilder.Entity("MediaButtonBackend.Models.ResidentPlaylistSnapshot", b =>
+                {
+                    b.Property<string>("Resident")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("AiPlaylistJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset?>("AiUpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ManualPlaylistJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset?>("ManualUpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ManualUpdatedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.HasKey("Resident");
+
+                    b.ToTable("ResidentPlaylists");
+                });
+
             modelBuilder.Entity("MediaButtonBackend.Models.PlaylistItem", b =>
                 {
                     b.HasOne("MediaButtonBackend.Models.MediaAsset", "Media")

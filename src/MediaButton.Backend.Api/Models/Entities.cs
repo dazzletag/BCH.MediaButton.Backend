@@ -82,3 +82,21 @@ public class MediaAsset
 
     public DateTimeOffset UploadedAt { get; set; } = DateTimeOffset.UtcNow;
 }
+
+public class ResidentPlaylistSnapshot
+{
+    [Key]
+    [MaxLength(200)]
+    public string Resident { get; set; } = string.Empty;
+
+    public string? AiPlaylistJson { get; set; }
+
+    public DateTimeOffset? AiUpdatedAt { get; set; }
+
+    public string? ManualPlaylistJson { get; set; }
+
+    public DateTimeOffset? ManualUpdatedAt { get; set; }
+
+    [MaxLength(200)]
+    public string? ManualUpdatedBy { get; set; }
+}

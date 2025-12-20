@@ -1,0 +1,23 @@
+beacons:
+  "eddystone:e5a4a7e5a48f3132333444584c29191a":
+    resident: "Jane Smith"
+
+  "ibeacon:fda50693-a4e2-4fb1-afcf-c6eb07647825-10011-19641":
+    resident: "Nicolas Belcher"
+
+  "ibeacon:fda50693-a4e2-4fb1-afcf-c6eb0764xxxx-10011-19641":
+    resident: "Robbie Freeman"
+
+residents:
+  "Jane Smith":
+    mode: "music"
+    query: "Elvis Presley greatest hits"
+
+  "John Doe":
+    mode: "radio"
+    url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_two"
+
+detection_cooldown: 0.3
+gone_timeout: 1
+stop_grace_misses: 1
+watchdog_interval: 0.2

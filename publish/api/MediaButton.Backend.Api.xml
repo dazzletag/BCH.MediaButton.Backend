@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>MediaButton.Backend.Api</name>
+    </assembly>
+    <members>
+        <member name="P:MediaButtonBackend.Models.Device.ConfigJson">
+            <summary>
+            JSON blob for per-device config overrides (e.g., interval, volume).
+            </summary>
+        </member>
+        <member name="T:MediaButtonBackend.Services.StorageCorsInitializer">
+            <summary>
+            Ensures Blob Storage CORS rules allow our frontend origins to PUT directly using SAS.
+            </summary>
+        </member>
+        <member name="T:MediaButton.Backend.Api.Data.Migrations.InitialCreate">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.InitialCreate.Up(Microsoft.EntityFrameworkCore.Migrations.MigrationBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.InitialCreate.Down(Microsoft.EntityFrameworkCore.Migrations.MigrationBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.InitialCreate.BuildTargetModel(Microsoft.EntityFrameworkCore.ModelBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="T:MediaButton.Backend.Api.Data.Migrations.AddResidentPlaylists">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.AddResidentPlaylists.Up(Microsoft.EntityFrameworkCore.Migrations.MigrationBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.AddResidentPlaylists.Down(Microsoft.EntityFrameworkCore.Migrations.MigrationBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.AddResidentPlaylists.BuildTargetModel(Microsoft.EntityFrameworkCore.ModelBuilder)">
+            <inheritdoc />
+        </member>
+    </members>
+</doc>

@@ -1,0 +1,7 @@
+bleak
+python-dotenv
+pyyaml
+requests
+openai
+python-vlc
+pandas

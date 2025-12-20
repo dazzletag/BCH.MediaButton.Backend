@@ -1,0 +1,55 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Playfair+Display:wght@600&display=swap");
+
+:root {
+  --bg: #f8f5f0;
+  --bg-soft: #eee8df;
+  --card: rgba(255, 255, 255, 0.96);
+  --card-strong: #ffffff;
+  --ink: #2f2932;
+  --muted: #5d5863;
+  --brand: #0d8ab2;
+  --brand-strong: #0b6f93;
+  --brand-accent: #4b2f58;
+  --teal: #0d8ab2;
+  --berry: #a3457d;
+  --plum: #4b2f58;
+  --olive: #6d7b33;
+  --success: #6d7b33;
+  --warning: #c27a1c;
+  --radius: 18px;
+  --shadow-soft: 0 24px 70px rgba(43, 35, 52, 0.12);
+  --shadow-sharp: 0 18px 45px rgba(43, 35, 52, 0.08);
+  --border: 1px solid rgba(43, 35, 52, 0.08);
+  --gradient: radial-gradient(circle at 12% 18%, rgba(13, 138, 178, 0.08), transparent 42%),
+    radial-gradient(circle at 82% 14%, rgba(75, 47, 88, 0.07), transparent 38%),
+    radial-gradient(circle at 70% 82%, rgba(109, 123, 51, 0.06), transparent 40%),
+    linear-gradient(135deg, #fbfaf7 0%, #f3eee7 52%, #f7f3ed 100%);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Manrope", "Inter", system-ui, -apple-system, sans-serif;
+  background: var(--gradient);
+  color: var(--ink);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+}
+
+#root {
+  min-height: 100vh;
+}

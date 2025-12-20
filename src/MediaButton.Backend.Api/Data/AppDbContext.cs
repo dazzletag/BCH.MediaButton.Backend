@@ -13,6 +13,7 @@ public class AppDbContext : DbContext
     public DbSet<Playlist> Playlists => Set<Playlist>();
     public DbSet<PlaylistItem> PlaylistItems => Set<PlaylistItem>();
     public DbSet<MediaAsset> MediaAssets => Set<MediaAsset>();
+    public DbSet<ResidentPlaylistSnapshot> ResidentPlaylists => Set<ResidentPlaylistSnapshot>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -53,6 +54,13 @@ public class AppDbContext : DbContext
                 .OnDelete(DeleteBehavior.Restrict);
 
             b.Property(pi => pi.Order).IsRequired();
+        });
+
+        modelBuilder.Entity<ResidentPlaylistSnapshot>(b =>
+        {
+            b.HasKey(r => r.Resident);
+            b.Property(r => r.Resident).HasMaxLength(200);
+            b.Property(r => r.ManualUpdatedBy).HasMaxLength(200);
         });
     }
 }

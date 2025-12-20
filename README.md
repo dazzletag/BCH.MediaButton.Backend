@@ -4,8 +4,9 @@ Backend for the Media Button system used in care homes. It serves Raspberry Pi d
 
 ## Structure
 
-- `MediaButton.Backend.sln` — solution.
-- `src/MediaButton.Backend.Api` — ASP.NET Core 8 Web API (minimal API).
+- `MediaButton.Backend.sln` - solution.
+- `src/MediaButton.Backend.Api` - ASP.NET Core 8 Web API (minimal API).
+- `web` - Vite + React SPA for staff/relatives to manage media and playlists.
 
 ## Running locally
 
@@ -19,6 +20,17 @@ dotnet run --project src/MediaButton.Backend.Api
 Swagger UI is enabled in Development. Health/info endpoints:
 - `GET /health`
 - `GET /api/info`
+
+## Frontend (SPA)
+
+```bash
+cd web
+cp .env.example .env.local   # fill API base + auth IDs
+npm install
+npm run dev
+```
+
+Auth: MSAL against the home tenant; scope defaults to `api://<API_CLIENT_ID>/access_as_user`. Pages cover media upload (SAS), playlist creation, and device assignment.
 
 ## Deploying
 

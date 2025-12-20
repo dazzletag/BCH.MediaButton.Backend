@@ -51,4 +51,11 @@ public class StorageSasService
         var sas = blobClient.GenerateSasUri(sasBuilder);
         return (sas, expiresAt);
     }
+
+    public async Task<bool> DeleteBlobIfExistsAsync(string container, string blobPath)
+    {
+        var blobClient = _blobServiceClient.GetBlobContainerClient(container).GetBlobClient(blobPath);
+        var resp = await blobClient.DeleteIfExistsAsync();
+        return resp.Value;
+    }
 }
