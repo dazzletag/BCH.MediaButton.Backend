@@ -5,7 +5,7 @@ Suggested layout on the Pi:
 ```
 /opt/media-button          # git clone of this repo
   publish/pi/media_button_pi.py
-  publish/pi/UI_display.py
+  publish/pi/ui_display.py
   publish/pi/requirements.txt
 ```
 
