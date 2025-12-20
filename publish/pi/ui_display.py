@@ -162,7 +162,7 @@ class MediaUI:
         import itertools
         from PIL import Image as PIL_Image, ImageTk
 
-        gif_path = "loading_clean.gif"
+        gif_path = "/opt/media_button/publish/pi/loading_clean.gif"
         if not os.path.exists(gif_path):
             print("[UI] No loading_clean.gif found — skipping loader animation.")
             return
