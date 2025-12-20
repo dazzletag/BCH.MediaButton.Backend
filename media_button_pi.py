@@ -1,0 +1,1118 @@
+#!/usr/bin/env python3
+import asyncio, os, re, shlex, subprocess, sys, time, json, random, threading, hashlib
+from collections import deque
+from datetime import datetime
+
+import pandas as pd
+import yaml
+import requests
+from dotenv import load_dotenv
+from bleak import BleakScanner
+import vlc
+from openai import OpenAI
+
+# UI (from ui_display.py)
+from ui_display import MediaUI, ResidentIdentity
+
+# =========================
+# Environment & constants
+# =========================
+BASE_DIR = os.path.dirname(__file__)
+DATA_DIR = os.path.join(BASE_DIR, ".data")
+PLAYLIST_DIR = os.path.join(DATA_DIR, "playlists")
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(PLAYLIST_DIR, exist_ok=True)
+MANUAL_PLAYLIST_DIR = os.path.join(DATA_DIR, "manual_playlists")
+os.makedirs(MANUAL_PLAYLIST_DIR, exist_ok=True)
+
+RECENT_PATH = os.path.join(DATA_DIR, "recent.json")
+RECENT_DEPTH = 8
+
+load_dotenv()
+AUDIO_DEVICE = os.getenv("AUDIO_DEVICE", "pulse")  # mpv device name, e.g. "pulse" or "pulse/bluez_output.XX_XX_XX..."
+AUDIO_OUT    = os.getenv("AUDIO_OUT", "pulse")     # vlc aout module: "pulse" (recommended)
+
+_openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+TENANT_ID = os.environ.get("TENANT_ID", "")
+CLIENT_ID = os.getenv("CLIENT_ID", "")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET", "")
+DRIVE_ID = os.getenv("DRIVE_ID", "")
+ITEM_ID = os.getenv("ITEM_ID", "")
+ITEM_PATH = os.getenv("ITEM_PATH", "")
+LOCAL_SURVEY_XLSX = os.getenv("LOCAL_SURVEY_XLSX", "/home/dazzletag/media-button/survey.xlsx")
+THIS_IS_ME_XLSX   = os.getenv("THIS_IS_ME_XLSX", "/home/dazzletag/media-button/This_is_Me.xlsx")
+GRAPH_POLL_SECONDS = int(os.getenv("GRAPH_POLL_SECONDS", "600"))
+DEFAULT_RADIO_URL = os.getenv("DEFAULT_RADIO_URL", "")
+VOLUME_PERCENT = int(os.getenv("VOLUME_PERCENT", "80"))
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-mini")
+YT_DLP_BIN = os.getenv("YT_DLP_BIN", "/home/dazzletag/media-button/.venv/bin/yt-dlp")
+CONFIG_PATH = os.path.join(BASE_DIR, "config.yaml")
+
+EDDYSTONE_UUID = "feaa"
+
+# Presence & timing knobs (overridable in config.yaml)
+LAST_SEEN = {}  # resident -> ts
+GONE_TIMEOUT = 6               # seconds unseen before stopping
+DETECTION_COOLDOWN = 20         # seconds between trigger actions per beacon
+AVOID_RECENT_N = 6              # when drawing randomly, avoid last N items
+BIG_PLAYLIST_SIZE = 80          # target size from LLM
+# ----- Pulse sink helpers (auto Bluetooth -> HDMI -> default) -----
+def _pulse_sinks():
+    try:
+        out = subprocess.check_output(["pactl", "list", "short", "sinks"], text=True)
+        # rows: <index>\t<name>\t<driver>\t<state>\t...
+        return [ln.split("\t")[1] for ln in out.strip().splitlines() if "\t" in ln]
+    except Exception:
+        return []
+
+def _first_match(names, patterns):
+    for n in names:
+        for p in patterns:
+            if re.search(p, n, re.IGNORECASE):
+                return n
+    return None
+
+def pick_sink():
+    pref = os.getenv("PREFERRED_SINK", "").strip()
+    fall = os.getenv("FALLBACK_SINK", "").strip()
+    if pref:
+        return pref  # manual demo override
+
+    sinks = _pulse_sinks()
+    bt   = _first_match(sinks, [r"bluez_output", r"bluetooth"])
+    if bt:
+        return bt
+    hdmi = _first_match(sinks, [r"hdmi", r"bcm2835.*hdmi", r"alsa_output.*hdmi"])
+    if hdmi:
+        return hdmi
+    return fall or ""   # empty -> use Pulse default
+
+# =========================
+# Recent memory helpers
+# =========================
+def _load_recent():
+    try:
+        with open(RECENT_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        return {k: deque(v, maxlen=RECENT_DEPTH) for k, v in raw.items()}
+    except Exception:
+        return {}
+
+def _save_recent(recent):
+    try:
+        serial = {k: list(v) for k, v in recent.items()}
+        with open(RECENT_PATH, "w", encoding="utf-8") as f:
+            json.dump(serial, f, indent=2)
+    except Exception as e:
+        print(f"[MEMORY] Failed to save recent: {e}")
+
+RECENT = _load_recent()
+
+def recent_for(resident):
+    return RECENT.setdefault(resident, deque(maxlen=RECENT_DEPTH))
+
+def remember(resident, video_id):
+    dq = recent_for(resident)
+    if video_id in dq:
+        dq.remove(video_id)
+    dq.append(video_id)
+    _save_recent(RECENT)
+
+# =========================
+# Utils
+# =========================
+def pick_random_youtube_id(query, yt_dlp_bin, avoid_ids, max_candidates=20):
+    search = f"ytsearch{max_candidates}:{query}"
+    cmd = f"{shlex.quote(yt_dlp_bin)} --get-id --flat-playlist {shlex.quote(search)}"
+    ids = subprocess.check_output(shlex.split(cmd), text=True).splitlines()
+    ids = [i.strip() for i in ids if i.strip()]
+    random.shuffle(ids)
+    for vid in ids:
+        if vid not in avoid_ids:
+            return vid
+    return random.choice(ids) if ids else None
+
+def sha256_of(obj) -> str:
+    blob = json.dumps(obj, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+# =========================
+# Graph client
+# =========================
+class GraphClient:
+    def __init__(self, tenant_id, client_id, client_secret):
+        self.token = None
+        self.tenant_id = tenant_id
+        self.client_id = client_id
+        self.client_secret = client_secret
+
+    def _token(self):
+        if self.token and self.token.get("expires_on") and int(self.token["expires_on"]) - int(time.time()) > 120:
+            return self.token["access_token"]
+        token_url = f"https://login.microsoftonline.com/{self.tenant_id}/oauth2/v2.0/token"
+        data = {
+            "grant_type": "client_credentials",
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "scope": "https://graph.microsoft.com/.default",
+        }
+        r = requests.post(token_url, data=data, timeout=30)
+        r.raise_for_status()
+        payload = r.json()
+        payload["expires_on"] = int(time.time()) + int(payload.get("expires_in", 3600))
+        self.token = payload
+        return payload["access_token"]
+
+    def _headers(self):
+        return {"Authorization": f"Bearer {self._token()}"}
+
+    def download_excel(self, dest_path, drive_id=None, item_id=None, item_path=None):
+        if item_id:
+            url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}/content"
+        elif item_path:
+            if drive_id:
+                url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:{item_path}:/content"
+            else:
+                url = f"https://graph.microsoft.com/v1.0/me/drive/root:{item_path}:/content"
+        else:
+            raise ValueError("Provide either item_id or item_path.")
+        with requests.get(url, headers=self._headers(), stream=True, timeout=120) as r:
+            r.raise_for_status()
+            with open(dest_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        return dest_path
+
+    def get_item_last_modified(self, drive_id=None, item_id=None, item_path=None):
+        if item_id:
+            meta_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}"
+        elif item_path:
+            if drive_id:
+                meta_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:{item_path}"
+            else:
+                meta_url = f"https://graph.microsoft.com/v1.0/me/drive/root:{item_path}"
+        else:
+            raise ValueError("Provide either item_id or item_path.")
+        r = requests.get(meta_url, headers=self._headers(), timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        return data.get("lastModifiedDateTime")
+
+# =========================
+# Survey (whole-row capture)
+# =========================
+class Survey:
+    def __init__(self, xlsx_path):
+        self.xlsx_path = xlsx_path
+        self._rows = {}      # resident_lower -> raw dict of row
+        self._hashes = {}    # resident_lower -> sha256(row)
+
+    def load(self):
+        xls = pd.ExcelFile(self.xlsx_path)
+        rows = {}
+        for sheet in xls.sheet_names:
+            df = pd.read_excel(self.xlsx_path, sheet_name=sheet)
+            # Normalise headers
+            df.columns = [re.sub(r"\s+", " ", str(c)).strip() for c in df.columns]
+            # Try to find a name column
+            name_col = next((c for c in df.columns if c.lower().startswith("resident") and "name" in c.lower()), None)
+            if not name_col:
+                continue
+            for _, row in df.iterrows():
+                name = str(row.get(name_col, "")).strip()
+                if not name:
+                    continue
+                key = name.lower()
+                raw = {str(k): (None if pd.isna(v) else (str(v) if not isinstance(v, (dict, list)) else v))
+                       for k, v in row.to_dict().items()}
+                rows[key] = raw
+        self._rows = rows
+        self._hashes = {k: sha256_of(v) for k, v in rows.items()}
+        return rows
+
+    def row_for(self, resident_name: str):
+        if not self._rows:
+            self.load()
+        return self._rows.get(resident_name.lower())
+
+    def hash_for(self, resident_name: str) -> str | None:
+        if not self._hashes:
+            self.load()
+        return self._hashes.get(resident_name.lower())
+
+class ThisIsMe:
+    """
+    Load the 'This is Me' profiles and expose them by fullName (case-insensitive).
+    """
+    def __init__(self, xlsx_path):
+        self.xlsx_path = xlsx_path
+        self._rows = {}
+
+    def load(self):
+        try:
+            xls = pd.ExcelFile(self.xlsx_path)
+        except Exception as e:
+            print(f"[THIS_IS_ME] Failed to open {self.xlsx_path}: {e}")
+            self._rows = {}
+            return self._rows
+
+        rows = {}
+        for sheet in xls.sheet_names:
+            df = pd.read_excel(self.xlsx_path, sheet_name=sheet)
+            # Normalise headers
+            df.columns = [re.sub(r"\s+", " ", str(c)).strip() for c in df.columns]
+
+            # Try to find a full name column
+            name_col = next(
+                (
+                    c for c in df.columns
+                    if c.lower() in {"fullname", "full name"} or (
+                        "full" in c.lower() and "name" in c.lower()
+                    )
+                ),
+                None,
+            )
+            # Fallback: column literally called "fullName" in your sample
+            if not name_col and "fullName" in df.columns:
+                name_col = "fullName"
+
+            if not name_col:
+                continue
+
+            for _, row in df.iterrows():
+                name = str(row.get(name_col, "")).strip()
+                if not name:
+                    continue
+                key = name.lower()
+                raw = {
+                    str(k): (
+                        None
+                        if pd.isna(v)
+                        else (str(v) if not isinstance(v, (dict, list)) else v)
+                    )
+                    for k, v in row.to_dict().items()
+                }
+                rows[key] = raw
+
+        self._rows = rows
+        print(f"[THIS_IS_ME] Loaded {len(self._rows)} profiles from {self.xlsx_path}")
+        return self._rows
+
+    def row_for(self, resident_name: str) -> dict | None:
+        if not self._rows:
+            self.load()
+        return self._rows.get(resident_name.lower())
+
+
+# =========================
+# LLM big playlist builder
+# =========================
+BANWORDS = {
+    "meeting", "session", "group", "workshop", "class",
+    "bingo", "gardening club", "exercise class",
+    "shopping trip", "staff meeting", "training"
+}
+
+def llm_build_big_playlist(
+    resident_name: str,
+    survey_row: dict,
+    profile: dict | None = None,
+    want: int = BIG_PLAYLIST_SIZE,
+) -> list[str]:
+
+    """
+    Send the entire survey row to the LLM and ask for a large, mixed playlist.
+    """
+    sys_prompt = (
+        "You are a gentle UK entertainment curator for older adults.\n"
+        "INPUT is JSON with:\n"
+        "  • resident: the person's name\n"
+        "  • survey_row: a care-home interest survey row\n"
+        "  • this_is_me_profile: a detailed life-history and preference profile\n"
+        "  • demographics: { dob, gender, inferred_gender_if_missing, age_hint }\n\n"
+        "OUTPUT strict JSON ONLY:\n"
+        "{ \"playlist\": [\"query1\", \"query2\", ...] }\n\n"
+        "Rules:\n"
+        "• Include some MUSIC (artists, songs, albums, classical works) "
+        "  but also a sprinkling of LIGHT ENTERTAINMENT: nature documentaries, "
+        "  classic comedy sketches, travel shows, cookery clips, animals, arts & crafts, "
+        "  and historical features likely to appeal to the person.\n"
+        "• Use the date of birth (dob) and age_hint to choose age-appropriate, era-appropriate "
+        "  content (e.g. music and TV from their teens/20s, familiar historical events, "
+        "  classic films and shows from their lifetime).\n"
+        "• Use gender where given; if gender is missing, you MAY gently infer likely gender "
+        "  from the name for the purposes of choosing relatable content, but do not mention "
+        "  gender or pronouns in the output.\n"
+        "• Ignore any responses that describe *doing* an activity (e.g., 'I like gardening', "
+        "  'I play bingo') — these are hobbies, not things to *watch*.\n"
+        "• If someone enjoys a hobby such as jigsaws, knitting, or gardening, prefer calm or "
+        "  nostalgic related content (e.g., countryside views, gentle crafts, relaxing background "
+        "  music) rather than tutorials or videos of people doing the activity.\n"
+        "• If someone enjoys reading, offer spoken word materials — audiobooks, classic story "
+        "  readings, radio plays, poetry readings, or adaptations of literary works.\n"
+        "• About 30% music, 70% other entertainment.\n"
+        "• You MUST include episodes of tv shows the person will likely enjoy (e.g. Songs of Praise, Sitcoms and/or game show episodes)\n"
+        "• Prefer recognisable UK references and avoid anything overly modern or noisy.\n"
+        "• 40–120 total items; each <= 60 chars; no quotes; no trailing punctuation.\n"
+        "• Never include generic words like 'coffee', 'exercise class', or 'meeting'.\n"
+        "Respond with JSON only."
+    )
+
+    # Pull out dob/gender if present in the profile
+    dob = None
+    gender = None
+    if profile:
+        # Your This_is_Me.xlsx uses 'dob' and 'gender' columns
+        dob = profile.get("dob") or profile.get("DOB") or profile.get("Dob")
+        gender = profile.get("gender") or profile.get("Gender")
+
+    demographics = {
+        "dob": dob,
+        "gender": gender,
+        # Let the model infer, but give it a hint that it can
+        "inferred_gender_if_missing": None,
+        "age_hint": "Use dob to infer approximate age and life era."
+    }
+
+    payload = {
+        "resident": resident_name,
+        "survey_row": survey_row,
+        "this_is_me_profile": profile or {},
+        "demographics": demographics,
+    }
+
+    user_prompt = json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+    try:
+        resp = _openai.chat.completions.create(
+            model=LLM_MODEL,
+            temperature=0.2,
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+            timeout=30,
+        )
+
+        data = json.loads(resp.choices[0].message.content.strip())
+        items = data.get("playlist") or []
+        cleaned = []
+        for q in items:
+            if not isinstance(q, str):
+                continue
+            s = " ".join(q.strip().split())
+            if not s:
+                continue
+            low = s.lower()
+            if any(b in low for b in BANWORDS):
+                continue
+            if not re.search(r"[a-zA-Z]", s) or " " not in s:
+                continue
+            cleaned.append(s[:60])
+        seen = set(); uniq = []
+        for s in cleaned:
+            key = s.lower()
+            if key not in seen:
+                seen.add(key); uniq.append(s)
+        if len(uniq) > want:
+            uniq = uniq[:want]
+        return uniq
+    except Exception as e:
+        print(f"[LLM] big playlist failed: {e}")
+        return []
+
+# =========================
+# Disk playlist cache
+# =========================
+def playlist_path_for(resident: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_. -]", "_", resident).strip() or "resident"
+    return os.path.join(PLAYLIST_DIR, f"{safe}.json")
+
+def load_cached_playlist(resident: str) -> dict | None:
+    path = playlist_path_for(resident)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"[CACHE] Failed to read {path}: {e}")
+        return None
+
+def save_cached_playlist(resident: str, survey_hash: str, playlist: list[str], meta: dict | None = None):
+    path = playlist_path_for(resident)
+    payload = {
+        "resident": resident,
+        "survey_hash": survey_hash,
+        "built_at": datetime.now().isoformat(timespec="seconds"),
+        "model": LLM_MODEL,
+        "playlist": playlist,
+    }
+    if meta:
+        payload["meta"] = meta
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+        print(f"[CACHE] Saved playlist: {path} ({len(playlist)} items)")
+    except Exception as e:
+        print(f"[CACHE] Failed to write {path}: {e}")
+        
+def manual_playlist_path_for(resident: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_. -]", "_", resident).strip() or "resident"
+    # Simple .txt file, one line per query
+    return os.path.join(MANUAL_PLAYLIST_DIR, f"{safe}.txt")
+
+
+def load_manual_playlist(resident: str) -> list[str] | None:
+    path = manual_playlist_path_for(resident)
+    if not os.path.exists(path):
+        return None
+
+    try:
+        items: list[str] = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                s = line.strip()
+                if not s:
+                    continue
+                if s.startswith("#"):
+                    # allow comments
+                    continue
+                items.append(s)
+
+        if items:
+            print(f"[MANUAL] Loaded manual playlist for {resident}: {len(items)} items")
+            return items
+    except Exception as e:
+        print(f"[MANUAL] Failed to read {path}: {e}")
+
+    return None
+
+# =========================
+# Media player (mpv embedded)
+# =========================
+class MediaPlayer:
+    """
+    VLC-backed media player for Raspberry Pi — fully embeddable in Tk.
+    No mpv, no subprocesses, no GPU-context issues.
+    """
+
+    def __init__(self, volume_percent=80):
+        # Allow VLC to send audio to Pulse sink if you set PULSE_SINK
+        self.instance = vlc.Instance("--aout=pulse")
+        self.player = self.instance.media_player_new()
+        self.set_volume(volume_percent)
+
+        # Track state for Engine compatibility
+        self.current_proc = None     # always None now
+        self._playing = False
+        self._stop_flag = False
+        
+
+
+    # ------------------------------
+    # Embedding helper
+    # ------------------------------
+    
+    
+    def _bind_window(self, wid):
+        """Bind VLC output to our Tk window."""
+        try:
+            self.player.set_xwindow(wid)   # X11 (Linux)
+        except Exception as e:
+            print("[VLC] set_xwindow failed:", e)
+
+    # ------------------------------
+    # Core playback
+    # ------------------------------
+    def _play_media(self, media_url: str, wid: int | None) -> bool:
+        """Shared internal method for radio + YouTube."""
+        try:
+            media = self.instance.media_new(media_url)
+            self.player.set_media(media)
+
+            if wid:
+                self._bind_window(wid)
+
+            self._stop_flag = False
+            self.player.play()
+            self._playing = True
+            return True
+
+        except Exception as e:
+            print("[VLC] Playback failed:", e)
+            return False
+
+    # ------------------------------
+    # Public API
+    # ------------------------------
+    def play_radio(self, url: str, wid: int | None = None) -> bool:
+        print(f"[MEDIA] VLC radio: {url}")
+        self.stop()
+        return self._play_media(url, wid)
+
+    def play_youtube(self, query_or_url: str, resident: str | None = None, wid: int | None = None) -> bool:
+        """
+        Accepts either:
+        - a full YouTube URL (will resolve via yt-dlp)
+        - a user query string (resolved through ytsearch by your engine)
+        """
+        print(f"[MEDIA] VLC YouTube resolve: {query_or_url}")
+        self.stop()
+
+        try:
+            # Resolve using yt-dlp exactly as before
+            fmt = "bv*[ext=mp4][height<=720][fps<=30][vcodec^=avc1]+ba/b"
+
+            # Direct URL?
+            if re.match(r"^https?://", query_or_url):
+                cmd = [YT_DLP_BIN, "-g", "-f", fmt, query_or_url]
+            else:
+                # Assume it's a query → resolve an ID first
+                avoid = set(recent_for(resident)) if resident else set()
+                vid = pick_random_youtube_id(query_or_url, YT_DLP_BIN, avoid_ids=avoid, max_candidates=25)
+                if not vid:
+                    raise RuntimeError("No YouTube candidates")
+                url = f"https://www.youtube.com/watch?v={vid}"
+                cmd = [YT_DLP_BIN, "-g", "-f", fmt, url]
+                if resident:
+                    remember(resident, vid)
+
+            # Run yt-dlp: returns 1–2 stream URLs
+            streams = subprocess.check_output(cmd, text=True).splitlines()
+            if not streams:
+                raise RuntimeError("yt-dlp produced no streams")
+
+            # Prefer first stream (video or muxed)
+            stream_url = streams[0].strip()
+            print("[MEDIA] Using direct stream URL for VLC")
+
+            return self._play_media(stream_url, wid)
+
+        except Exception as e:
+            print("[MEDIA] VLC YouTube playback failed:", e)
+            return False
+
+    # ------------------------------
+    # Stop + lifecycle
+    # ------------------------------
+    def stop(self):
+        """Stops VLC playback."""
+        try:
+            self._stop_flag = True
+            self.player.stop()
+        except Exception:
+            pass
+        self._playing = False
+        self.current_proc = None
+
+    def set_volume(self, percent: int):
+        try:
+            self.player.audio_set_volume(int(percent))
+        except Exception:
+            pass
+
+    # ------------------------------
+    # Track-waiting (Engine-compatible)
+    # ------------------------------
+    def wait_until_track_finishes_or_stop(self, check_interval=0.5):
+        """
+        VLC-style playback waiting, compatible with your existing Engine logic.
+        """
+        while True:
+            if self._stop_flag:
+                return False
+
+            state = self.player.get_state()
+            # Ended / Error / Stopped
+            if state in (vlc.State.Ended, vlc.State.Error, vlc.State.Stopped):
+                return True
+
+            time.sleep(check_interval)
+
+    def wait_for_first_frame(self, timeout=5):
+        """
+        Block until VLC starts actually rendering video frames.
+        Returns True if a frame appeared, False on timeout.
+        """
+        start = time.time()
+        while time.time() - start < timeout:
+            state = self.player.get_state()
+            if state == vlc.State.Playing:
+                # VLC is actively outputting frames
+                return True
+            time.sleep(0.05)
+        return False            
+
+
+
+# =========================
+# Beacon parsing
+# =========================
+class BeaconParser:
+    @staticmethod
+    def eddystone_uid_from_advertisement(data: dict):
+        try:
+            svc_data = data.get("service_data", {})
+            for uuid, payload in svc_data.items():
+                if uuid.lower().replace("-", "") == EDDYSTONE_UUID:
+                    b = bytes(payload)
+                    if len(b) >= 18 and b[0] == 0x00:
+                        ns = b[2:12].hex()
+                        inst = b[12:18].hex()
+                        return f"eddystone:{ns}{inst}"
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def ibeacon_from_manufacturer(data: dict):
+        try:
+            mfg = data.get("manufacturer_data", {})
+            payload = mfg.get(76) or mfg.get(0x004C)
+            if payload and len(payload) >= 23 and payload[0] == 0x02 and payload[1] == 0x15:
+                uuid = payload[2:18].hex()
+                uuid_fmt = f"{uuid[0:8]}-{uuid[8:12]}-{uuid[12:16]}-{uuid[16:20]}-{uuid[20:32]}"
+                major = int.from_bytes(payload[18:20], "big")
+                minor = int.from_bytes(payload[20:22], "big")
+                return f"ibeacon:{uuid_fmt}-{major:04d}-{minor:04d}"
+        except Exception:
+            pass
+        return None
+
+# =========================
+# BLE listener (presence + trigger)
+# =========================
+class BeaconListener:
+    def __init__(self, on_trigger, on_presence, detection_cooldown: int = 20):
+        self.on_trigger = on_trigger
+        self.on_presence = on_presence
+        self._last_trigger = {}
+        self._cooldown = detection_cooldown
+
+    async def run(self):
+        async with BleakScanner(detection_callback=self._callback) as _:
+            print("[BLE] Scanning for beacons… (Ctrl+C to quit)")
+            while True:
+                await asyncio.sleep(0)
+
+    def _callback(self, device, adv_data):
+        parsed = {
+            "service_data": adv_data.service_data,
+            "manufacturer_data": adv_data.manufacturer_data,
+        }
+        key = BeaconParser.eddystone_uid_from_advertisement(parsed) or \
+              BeaconParser.ibeacon_from_manufacturer(parsed)
+        if not key:
+            return
+
+        now = time.time()
+
+        # Always refresh presence
+        try:
+            self.on_presence(key)
+        except Exception as e:
+            print(f"[BLE] on_presence error: {e}")
+
+        # Debounced trigger
+        last = self._last_trigger.get(key, 0)
+        if now - last < self._cooldown:
+            return
+        self._last_trigger[key] = now
+
+        try:
+            self.on_trigger(key)
+        except Exception as e:
+            print(f"[BLE] on_trigger error: {e}")
+
+# =========================
+# Engine with session + cache + UI
+# =========================
+class Engine:
+    
+    def __init__(self, survey: Survey, player: MediaPlayer, config: dict, ui: MediaUI):
+        self._last_trigger = {}
+        self.trigger_cooldown = 5  # seconds
+        self.survey = survey
+        self.player = player
+        self.config = config
+        self.ui = ui
+
+        self.sessions = {}         # resident -> session dict
+        self.session_threads = {}  # resident -> Thread
+        self.session_locks = {}    # resident -> Lock
+        self.stop_grace_misses = self.config.get("stop_grace_misses", 1)
+        self.watchdog_interval = self.config.get("watchdog_interval", 0.5)
+        self._miss_counts = {}  # resident -> consecutive misses
+
+        # apply config overrides
+        global GONE_TIMEOUT, DETECTION_COOLDOWN, AVOID_RECENT_N, BIG_PLAYLIST_SIZE
+        GONE_TIMEOUT = config.get('gone_timeout', GONE_TIMEOUT)
+        DETECTION_COOLDOWN = config.get('detection_cooldown', DETECTION_COOLDOWN)
+        AVOID_RECENT_N = config.get('avoid_recent_n', AVOID_RECENT_N)
+        BIG_PLAYLIST_SIZE = config.get('big_playlist_size', BIG_PLAYLIST_SIZE)
+
+        threading.Thread(target=self._presence_watchdog, daemon=True).start()
+
+    def _resident_for_beacon(self, beacon_key: str):
+        beacons = self.config.get('beacons', {})
+        entry = beacons.get(beacon_key)
+        return entry.get('resident') if entry else None
+
+    def _resident_identity(self, resident_name: str) -> ResidentIdentity:
+        row = self.survey.row_for(resident_name) or {}
+        key = row.get("ResidentGUID") or resident_name
+        return ResidentIdentity(name=resident_name, key=key, survey_blob=row)
+
+    # presence refresh for every advert
+    def refresh_presence(self, beacon_key: str):
+        resident = self._resident_for_beacon(beacon_key)
+        if not resident:
+            return
+
+        # Update presence timestamp
+        LAST_SEEN[resident] = time.time()
+
+        # Show “Ready” when idle
+        if resident not in self.sessions:
+            ident = self._resident_identity(resident)
+            self.ui.show_idle(ident, subtitle="Ready")
+
+
+    def _presence_watchdog(self):
+        """
+        For a switch-powered beacon, absence means OFF.
+        Stop playback within ~1 second of absence.
+        """
+        ABSENCE_TIMEOUT = 1.2  # second without packets = button off
+        CHECK = 0.2            # check 5 times a second
+
+        while True:
+            try:
+                now = time.time()
+
+                for resident in list(LAST_SEEN.keys()):
+                    last_seen = LAST_SEEN.get(resident, 0)
+
+                # Switch turned OFF
+                    if now - last_seen > ABSENCE_TIMEOUT:
+                        print(f"[WATCHDOG] {resident} switch OFF — stopping session.")
+                        self._stop_session(resident, from_thread=False)
+                        LAST_SEEN.pop(resident, None)
+                        self.ui.back_to_idle()
+
+            except Exception as e:
+                print(f"[WATCHDOG] error: {e}")
+
+            time.sleep(CHECK)
+
+
+    def _ensure_lock(self, resident):
+        if resident not in self.session_locks:
+            self.session_locks[resident] = threading.Lock()
+        return self.session_locks[resident]
+
+    def _stop_session(self, resident, from_thread: bool):
+        s = self.sessions.get(resident)
+        if s:
+            s["running"] = False
+
+        self.player.stop()
+
+        t = self.session_threads.get(resident)
+        if t and t.is_alive() and not from_thread and t is not threading.current_thread():
+            try:
+                t.join(timeout=2)
+            except Exception:
+                pass
+
+        self.sessions.pop(resident, None)
+        self.session_threads.pop(resident, None)
+        self.session_locks.pop(resident, None)
+        print(f"[ENGINE] Session stopped for {resident}")
+    
+    def handle_beacon_trigger(self, beacon_key: str):
+        resident = self._resident_for_beacon(beacon_key)
+        if not resident:
+            return
+
+        now = time.time()
+        last = self._last_trigger.get(resident, 0)
+
+    # Debounce to avoid spamming starts
+        if now - last < self.trigger_cooldown:
+            return
+
+        self._last_trigger[resident] = now
+        LAST_SEEN[resident] = now
+
+    # Already playing → ignore
+        if resident in self.sessions:
+            return
+
+        print(f"[ENGINE] Starting session for {resident}")
+
+        with self._ensure_lock(resident):
+            sess = self._make_session(resident)
+            self.sessions[resident] = sess
+
+            t = threading.Thread(target=self._session_loop, args=(resident,), daemon=True)
+            self.session_threads[resident] = t
+            t.start()
+
+    
+    # Playlist building / caching
+    def _make_session(self, resident):
+        sess = {
+            "resident": resident,
+            "running": True,
+            "last_track_end": 0.0,
+            "playlist": [],
+        }
+
+        # Pinned overrides
+        res_cfg = self.config.get('residents', {}).get(resident, {})
+        mode = res_cfg.get('mode')
+        query = res_cfg.get('query')
+        radio = res_cfg.get('url')
+        if mode == "radio" and radio:
+            sess["playlist"] = [radio]
+            sess["force_radio"] = True
+            return sess
+        if mode in {"music", "youtube"} and query:
+            sess["playlist"] = [query]
+            return sess
+
+        # Manual playlist override – takes priority over AI/cache
+        manual = load_manual_playlist(resident)
+        if manual:
+            sess["playlist"] = manual
+            sess["manual_override"] = True
+            return sess
+
+        # LLM cache
+                # LLM cache – now includes both survey row and This_is_Me profile
+        survey_row = self.survey.row_for(resident) or {}
+        profile = THIS_IS_ME.row_for(resident) or {}
+
+        combined = {
+            "survey_row": survey_row,
+            "this_is_me_profile": profile,
+        }
+        sv_hash = sha256_of(combined)
+
+        cache = load_cached_playlist(resident)
+        need_rebuild = True
+        if (
+            cache
+            and cache.get("survey_hash") == sv_hash
+            and isinstance(cache.get("playlist"), list)
+            and cache["playlist"]
+        ):
+            sess["playlist"] = cache["playlist"]
+            need_rebuild = False
+
+        if need_rebuild:
+            plist = llm_build_big_playlist(
+                resident,
+                survey_row=survey_row,
+                profile=profile,
+                want=BIG_PLAYLIST_SIZE,
+            )
+            if not plist:
+                if DEFAULT_RADIO_URL:
+                    plist = [DEFAULT_RADIO_URL]
+                    sess["force_radio"] = True
+                else:
+                    plist = []
+            sess["playlist"] = plist
+            save_cached_playlist(resident, sv_hash, plist, meta={"source": "llm_big_with_profile"})
+
+
+        return sess
+
+    def _pick_next_query_random(self, sess):
+        playlist = sess.get("playlist") or []
+        if not playlist:
+            return None
+        recent_q = sess.setdefault("recent_queries", deque(maxlen=AVOID_RECENT_N))
+        candidates = [q for q in playlist if q not in recent_q] or list(playlist)
+        q = random.choice(candidates)
+        recent_q.append(q)
+        return q
+
+    def _session_loop(self, resident):
+        sess = self.sessions.get(resident)
+        if not sess:
+            return
+
+        print(f"[ENGINE] Session loop running for {resident}")
+        ident = self._resident_identity(resident)
+
+        while sess["running"]:
+            if not sess["running"]:
+                break
+
+            q = self._pick_next_query_random(sess)
+            if not q:
+                break
+
+            print(f"[ENGINE] Next query for {resident}: {q}")
+
+            # 1) Prepare screen
+            self.ui.show_preparing(ident, query=q)
+            
+
+            # Let Tk process the preparing screen before we request player
+            self.ui.root.update_idletasks()
+            self.ui.root.update()
+            
+
+            # Give Tk a moment to process the preparing UI
+            time.sleep(0.05)
+
+            # 2) Create player frame & capture WID
+            wid_holder = {"wid": None}
+
+            def _bind(win_id):
+                wid_holder["wid"] = win_id
+
+            self.ui.show_player(lambda: _bind)
+
+            # 3) Allow Tk to map & assign WID
+            for _ in range(200):  # 0.5s max
+                if wid_holder["wid"] is not None:
+                    break
+                time.sleep(0.01)
+
+            wid = wid_holder["wid"]
+            if wid is None:
+                print("[ENGINE] WARN: No window ID after waiting; skipping this track")
+                continue
+
+
+            print(f"[ENGINE] Got WID: {wid}")
+
+            # 4) Start VLC while keeping loading GIF visible
+            ok = self.player.play_youtube(q, resident=resident, wid=wid)
+            if not ok:
+                print("[ENGINE] VLC start failed")
+                time.sleep(1)
+                continue
+
+            # 5) Wait for VLC to produce the first frame
+            if self.player.wait_for_first_frame(timeout=6):
+                print("[ENGINE] VLC first frame ready")
+                self.ui._stop_prep_animation() 
+            else:
+                print("[ENGINE] WARNING: Video never reported Playing (timeout)")
+
+            # 6) Reveal video — only now remove loading GIF
+            self.ui.reveal_video()
+            print(f"[ENGINE] Now showing {q}")
+
+            # 7) Wait for the track to finish
+            finished = self.player.wait_until_track_finishes_or_stop()
+
+            # 8) Between tracks, show idle briefly
+            if sess["running"]:
+                self.ui.back_to_idle()
+                time.sleep(1)
+
+        # Cleanup after session ends
+        self._stop_session(resident, from_thread=True)
+        self.ui.back_to_idle()
+
+
+# =========================
+# Graph poller
+# =========================
+def graph_poll_task(graph: GraphClient):
+    last_seen = None
+    while True:
+        try:
+            mod = graph.get_item_last_modified(DRIVE_ID, ITEM_ID, ITEM_PATH)
+            if mod != last_seen:
+                print(f"[GRAPH] Change detected ({mod}); downloading Excel…")
+
+                graph.download_excel(LOCAL_SURVEY_XLSX, DRIVE_ID, ITEM_ID, ITEM_PATH)
+                SURVEY.load()
+                last_seen = mod
+            else:
+                print("[GRAPH] No change.")
+        except Exception as e:
+            print(f"[GRAPH] Poll error: {e}")
+        time.sleep(GRAPH_POLL_SECONDS)
+
+# =========================
+# Bootstrap
+# =========================
+with open(CONFIG_PATH, 'r') as f:
+    CONFIG = yaml.safe_load(f) or {}
+
+# apply config
+GONE_TIMEOUT = CONFIG.get('gone_timeout', GONE_TIMEOUT)
+DETECTION_COOLDOWN = CONFIG.get('detection_cooldown', DETECTION_COOLDOWN)
+AVOID_RECENT_N = CONFIG.get('avoid_recent_n', AVOID_RECENT_N)
+BIG_PLAYLIST_SIZE = CONFIG.get('big_playlist_size', BIG_PLAYLIST_SIZE)
+
+GRAPH = GraphClient(TENANT_ID, CLIENT_ID, CLIENT_SECRET)
+SURVEY = Survey(LOCAL_SURVEY_XLSX)
+THIS_IS_ME = ThisIsMe(THIS_IS_ME_XLSX)
+PLAYER = MediaPlayer(volume_percent=VOLUME_PERCENT)
+
+# We'll construct ENGINE in main() once UI exists
+
+def _run_ble_loop(listener: BeaconListener):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(listener.run())
+    finally:
+        loop.close()
+
+def main():
+    global ENGINE
+
+    # initial sync
+    try:
+        print("[BOOT] Syncing survey…")
+        GRAPH.download_excel(LOCAL_SURVEY_XLSX, DRIVE_ID, ITEM_ID, ITEM_PATH)
+        SURVEY.load()
+    except Exception as e:
+        print(f"[BOOT] Sync failed: {e}. Using cached file if present.")
+        if os.path.exists(LOCAL_SURVEY_XLSX):
+            SURVEY.load()
+        # Load This_is_Me profiles (local file)
+    try:
+        THIS_IS_ME.load()
+    except Exception as e:
+        print(f"[BOOT] Failed to load This_is_Me profiles: {e}")
+
+
+    # Start UI on main thread
+    ui = MediaUI()
+
+    # Build engine with UI
+    ENGINE = Engine(SURVEY, PLAYER, CONFIG, ui=ui)
+
+    # Graph poller
+    threading.Thread(target=graph_poll_task, args=(GRAPH,), daemon=True).start()
+
+    # BLE listener using engine handlers
+    def on_trigger(beacon_key: str):
+        ENGINE.handle_beacon_trigger(beacon_key)
+
+    def on_presence(beacon_key: str):
+        ENGINE.refresh_presence(beacon_key)
+
+    listener = BeaconListener(on_trigger=on_trigger, on_presence=on_presence, detection_cooldown=DETECTION_COOLDOWN)
+    threading.Thread(target=_run_ble_loop, args=(listener,), daemon=True).start()
+
+    # Hand over to Tk mainloop
+    ui.mainloop()
+
+if __name__ == "__main__":
+    main()
