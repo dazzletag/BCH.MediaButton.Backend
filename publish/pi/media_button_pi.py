@@ -727,7 +727,15 @@ def fetch_manual_playlist_from_api(resident: str) -> list[str]:
         if r.status_code != 200:
             return []
         data = r.json()
-        items = data.get("items") or []
+
+        # API can respond with either a bare list or { items: [...] }
+        if isinstance(data, list):
+            items = data
+        elif isinstance(data, dict):
+            items = data.get("items") or data.get("playlist") or []
+        else:
+            items = []
+
         parsed: list = []
         for i in items:
             if isinstance(i, dict):
