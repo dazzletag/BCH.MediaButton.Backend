@@ -1531,6 +1531,8 @@ class Engine:
             force_radio = False
             is_photo = False
             is_youtube = False
+            photo_via_ui = False
+            photo_duration = 0
             display_label = None
             radio_hint = None
 
@@ -1639,7 +1641,12 @@ class Engine:
                         dur = int(q.get("durationSeconds") or q.get("duration") or dur)
                     except Exception:
                         pass
-                ok = self.player.show_image(media_url, duration=dur, wid=wid)
+                photo_duration = dur
+                photo_via_ui = True
+                evt = threading.Event()
+                self.ui.show_photo(media_url, on_ready=lambda: evt.set())
+                evt.wait(timeout=3)
+                ok = True
             elif is_youtube:
                 self.player.stop_background_radio()
                 ok = self.player.play_youtube(media_url, resident=resident, wid=wid)
@@ -1667,10 +1674,11 @@ class Engine:
 
             # 7) Wait for the track to finish
             finished = True
-            if is_photo:
-                # show_image already waited; nothing further
+            if is_photo and photo_via_ui:
+                # Already displayed via Tk; just sleep for duration
+                time.sleep(max(1, photo_duration))
                 finished = True
-            else:
+            elif not is_photo:
                 finished = self.player.wait_until_track_finishes_or_stop()
 
             # 8) Between tracks, show idle briefly
