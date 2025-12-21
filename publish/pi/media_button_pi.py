@@ -1604,26 +1604,27 @@ class Engine:
             time.sleep(0.05)
 
             # 2) Create player frame & capture WID
-            wid_holder = {"wid": None}
+            wid = None
+            if not photo_via_ui:
+                wid_holder = {"wid": None}
 
-            def _bind(win_id):
-                wid_holder["wid"] = win_id
+                def _bind(win_id):
+                    wid_holder["wid"] = win_id
 
-            self.ui.show_player(lambda: _bind)
+                self.ui.show_player(lambda: _bind)
 
-            # 3) Allow Tk to map & assign WID
-            for _ in range(200):  # 0.5s max
-                if wid_holder["wid"] is not None:
-                    break
-                time.sleep(0.01)
+                # 3) Allow Tk to map & assign WID
+                for _ in range(200):  # 0.5s max
+                    if wid_holder["wid"] is not None:
+                        break
+                    time.sleep(0.01)
 
-            wid = wid_holder["wid"]
-            if wid is None:
-                print("[ENGINE] WARN: No window ID after waiting; skipping this track")
-                continue
+                wid = wid_holder["wid"]
+                if wid is None:
+                    print("[ENGINE] WARN: No window ID after waiting; skipping this track")
+                    continue
 
-
-            print(f"[ENGINE] Got WID: {wid}")
+                print(f"[ENGINE] Got WID: {wid}")
 
             # 4) Start VLC while keeping loading GIF visible
             if force_radio:
