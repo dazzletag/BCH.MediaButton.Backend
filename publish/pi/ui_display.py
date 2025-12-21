@@ -608,13 +608,16 @@ class MediaUI:
                 pass
 
             photo = ImageTk.PhotoImage(img)
-            if not hasattr(self, "_photo_label"):
-                self._photo_label = tk.Label(self.video_holder, bg="black")
-                self._photo_label.pack(fill="both", expand=True)
-            self._photo_label.configure(image=photo, bg="black")
-            self._photo_label.image = photo  # keep ref
+            # Clear any previous widgets and redraw image on top
+            for child in self.video_holder.winfo_children():
+                child.destroy()
+            lbl = tk.Label(self.video_holder, bg="black")
+            lbl.pack(fill="both", expand=True)
+            lbl.configure(image=photo, bg="black")
+            lbl.image = photo  # keep ref
 
             self._show(self.play_frame)
+            self.root.lift()  # ensure window is on top
             if on_ready:
                 on_ready()
 
