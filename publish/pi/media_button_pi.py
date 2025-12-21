@@ -144,6 +144,24 @@ def remember(resident, video_id):
 # =========================
 # Utils
 # =========================
+def _detect_alsa_device():
+    """
+    Try to pick a sensible ALSA device when AUDIO_OUT=alsa and no AUDIO_DEVICE
+    is provided. Prefers HDMI devices on Raspberry Pi.
+    """
+    try:
+        out = subprocess.check_output(["aplay", "-L"], text=True)
+        lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+        plughw_hdmi = [ln for ln in lines if ln.lower().startswith("plughw:") and ("hdmi" in ln.lower() or "vc4hdmi" in ln.lower())]
+        if plughw_hdmi:
+            return plughw_hdmi[0]
+        plughw_any = [ln for ln in lines if ln.lower().startswith("plughw:")]
+        if plughw_any:
+            return plughw_any[0]
+    except Exception as e:
+        _log(f"[AUDIO] ALSA probe failed: {e}")
+    return None
+
 def pick_random_youtube_id(query, yt_dlp_bin, avoid_ids, max_candidates=20):
     search = f"ytsearch{max_candidates}:{query}"
     cmd = f"{shlex.quote(yt_dlp_bin)} --get-id --flat-playlist {shlex.quote(search)}"
@@ -805,8 +823,13 @@ class MediaPlayer:
         # Force software decode to avoid v4l2m2m failures on some Pis
         aout = AUDIO_OUT or "pulse"
         opts = [f"--aout={aout}", "--avcodec-hw=none"]
-        if aout.startswith("alsa") and AUDIO_DEVICE:
-            opts.append(f"--alsa-audio-device={AUDIO_DEVICE}")
+        chosen_device = AUDIO_DEVICE
+        if aout.startswith("alsa") and not chosen_device:
+            chosen_device = _detect_alsa_device()
+        if aout.startswith("alsa") and chosen_device:
+            opts.append(f"--alsa-audio-device={chosen_device}")
+            _log(f"[AUDIO] Using ALSA device: {chosen_device}")
+        _log(f"[AUDIO] VLC opts: {opts}")
         self.instance = vlc.Instance(*opts)
         self.player = self.instance.media_player_new()
         self.radio_player = self.instance.media_player_new()
