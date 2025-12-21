@@ -238,7 +238,7 @@ public class DeviceResidentPlaylistsController : ControllerBase
             ? _config["Storage:ContainerPhotos"] ?? "photos"
             : _config["Storage:ContainerVideos"] ?? "videos";
 
-        var (uri, _) = _sas.GetReadSasUri(container, media.BlobPath, ttlMinutesOverride: 60);
+                var (uri, _) = _sas.GetReadSasUri(container, media.BlobPath, ttlMinutesOverride: 1440); // 24h TTL for device playback
         return (uri.ToString(), media.Type.ToString().ToLowerInvariant(), media.Name ?? Path.GetFileName(media.BlobPath));
     }
 
@@ -255,7 +255,7 @@ public class DeviceResidentPlaylistsController : ControllerBase
             ? _config["Storage:ContainerPhotos"] ?? "photos"
             : _config["Storage:ContainerVideos"] ?? "videos";
 
-        var (uri, _) = _sas.GetReadSasUri(container, matchedMedia.BlobPath, ttlMinutesOverride: 60);
+        var (uri, _) = _sas.GetReadSasUri(container, matchedMedia.BlobPath, ttlMinutesOverride: 1440); // 24h TTL for device playback
         return (uri.ToString(), matchedMedia.Type.ToString().ToLowerInvariant(), matchedMedia.Name ?? Path.GetFileName(matchedMedia.BlobPath));
     }
 
