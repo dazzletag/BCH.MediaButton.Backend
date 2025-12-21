@@ -19,7 +19,7 @@ from typing import Optional, Callable
 from dotenv import load_dotenv
 
 import tkinter as tk
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageTk
 load_dotenv()
 # ---- Config / theming ----
 BASE_DIR = os.path.dirname(__file__)
@@ -611,6 +611,7 @@ class MediaUI:
             # Replace logo with photo
             self.logo_label.configure(image=photo, bg=BG)
             self.logo_label.image = photo
+            print(f"[UI] Photo rendered ({img.size[0]}x{img.size[1]}) from {url}")
             self._stop_prep_animation()
             self._show(self.idle_frame)
             self.root.update_idletasks()
