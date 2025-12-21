@@ -511,7 +511,7 @@ class MediaUI:
 
         return base
         
-    def show_preparing(self, resident: ResidentIdentity, query: Optional[str] = None):
+    def show_preparing(self, resident: ResidentIdentity, query: Optional[str] = None, allow_loader: bool = True):
         def _do():
                 self.current_resident_key = resident.key
 
@@ -521,16 +521,27 @@ class MediaUI:
                 else:
                         self._set_upnext(None, sticky=True)
 
-                # Start “Preparing…” animation
-                print("[UI] Starting Animation")
-                self._start_prep_animation()
+                # Start “Preparing…” animation (only if loader allowed)
+                if allow_loader:
+                        print("[UI] Starting Animation")
+                        self._start_prep_animation()
+                else:
+                        self._stop_prep_animation()
 
                 # Ensure logo
                 img = self._ensure_logo_async(resident)
                 self._set_logo(img)
 
                 # Start GIF only after 1 second if still waiting
-                self.schedule_loading_gif(delay_ms=1000)
+                if allow_loader:
+                        self.schedule_loading_gif(delay_ms=1000)
+                else:
+                        # Cancel any pending loader
+                        try:
+                                self.root.after_cancel(self._gif_delay_id)
+                        except Exception:
+                                pass
+                        self._gif_delay_id = None
 
 
                 # Stay on idle/preparing frame
