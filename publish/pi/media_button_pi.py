@@ -15,6 +15,14 @@ from openai import OpenAI
 from ui_display import MediaUI, ResidentIdentity
 load_dotenv()
 
+def _log(msg: str):
+    """Lightweight timestamped logger."""
+    try:
+        ts = datetime.now().isoformat(timespec="seconds")
+        print(f"[{ts}] {msg}")
+    except Exception:
+        print(msg)
+
 def _require_env(name: str) -> str:
     val = os.environ.get(name, "")
     if not val:
@@ -851,9 +859,18 @@ class MediaPlayer:
     # Public API
     # ------------------------------
     def play_radio(self, url: str, wid: int | None = None) -> bool:
-        print(f"[MEDIA] VLC radio: {url}")
+        _log(f"[MEDIA] VLC radio start: {url}")
         self.stop()
-        return self._play_media(url, wid)
+        ok = self._play_media(url, wid)
+        if not ok:
+            _log(f"[MEDIA] VLC radio start FAILED: {url}")
+        else:
+            try:
+                state = self.player.get_state()
+                _log(f"[MEDIA] VLC radio state after start: {state}")
+            except Exception as e:
+                _log(f"[MEDIA] VLC radio state check error: {e}")
+        return ok
 
     def play_youtube(self, query_or_url: str, resident: str | None = None, wid: int | None = None) -> bool:
         """
@@ -955,10 +972,14 @@ class MediaPlayer:
             self.radio_player.set_media(media)
             self.radio_player.play()
             self._radio_url = url
-            print(f"[MEDIA] Background radio on: {url}")
+            try:
+                state = self.radio_player.get_state()
+                _log(f"[MEDIA] Background radio state after start: {state} ({url})")
+            except Exception:
+                pass
             return True
         except Exception as e:
-            print("[MEDIA] Background radio failed:", e)
+            _log(f"[MEDIA] Background radio failed: {e}")
             return False
 
     def stop_background_radio(self):
@@ -1520,6 +1541,7 @@ class Engine:
                 if not force_radio and _is_radio_url(media_url):
                     force_radio = True
                     is_photo = False
+                    _log(f"[ENGINE] Treating as radio: {media_url}")
                 # Decide whether to use yt-dlp vs direct stream
                 if not force_radio and not is_photo:
                     if _is_youtube_url(media_url) or not media_url.lower().startswith("http"):
@@ -1527,9 +1549,9 @@ class Engine:
                     else:
                         is_youtube = False
 
-                # Encode any spaces for VLC compatibility (e.g., blob paths with spaces)
-                if isinstance(media_url, str) and media_url.startswith("http"):
-                    media_url = _escape_spaces(media_url)
+                    # Encode any spaces for VLC compatibility (e.g., blob paths with spaces)
+                    if isinstance(media_url, str) and media_url.startswith("http"):
+                        media_url = _escape_spaces(media_url)
 
             if not media_url:
                 continue
