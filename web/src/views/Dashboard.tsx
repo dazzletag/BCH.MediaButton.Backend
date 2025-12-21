@@ -331,14 +331,14 @@ export default function Dashboard() {
   const handleLogout = () => instance.logoutRedirect();
 
   const radioPresets = [
-    { name: "BBC Radio 1", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_one" },
-    { name: "BBC Radio 2", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_two" },
-    { name: "BBC Radio 3", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_three" },
-    { name: "BBC Radio 4", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_fourfm" },
-    { name: "BBC Radio 5 Live", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_five_live_online_nonuk" },
-    { name: "BBC Radio 6 Music", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_6music" },
-    { name: "BBC Radio 7", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_four_extra" },
-    { name: "BBC Radio Bristol", url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_bristol" },
+    { name: "BBC Radio 1", url: "https://lsn.lv/bbcradio.m3u8?station=bbc_radio_one&bitrate=128000" },
+    { name: "BBC Radio 2", url: "https://lsn.lv/bbcradio.m3u8?station=bbc_radio_two&bitrate=128000" },
+    { name: "BBC Radio 3", url: "https://lsn.lv/bbcradio.m3u8?station=bbc_radio_three&bitrate=128000" },
+    { name: "BBC Radio 4", url: "https://lsn.lv/bbcradio.m3u8?station=bbc_radio_fourfm&bitrate=128000" },
+    { name: "BBC Radio 5 Live", url: "https://lsn.lv/bbcradio.m3u8?station=bbc_radio_five_live&bitrate=128000" },
+    { name: "BBC Radio 6 Music", url: "https://lsn.lv/bbcradio.m3u8?station=bbc_6music&bitrate=128000" },
+    { name: "BBC Radio 4 Extra", url: "https://lsn.lv/bbcradio.m3u8?station=bbc_radio_four_extra&bitrate=128000" },
+    { name: "BBC Radio Bristol", url: "https://lsn.lv/bbcradio.m3u8?station=bbc_radio_bristol&bitrate=128000" },
   ];
 
   const seasonalOptions = ["", "Christmas", "Easter", "Diwali", "Eid", "Hanukkah", "Remembrance", "Summer", "Winter"];
