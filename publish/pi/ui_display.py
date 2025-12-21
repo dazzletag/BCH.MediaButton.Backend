@@ -585,7 +585,7 @@ class MediaUI:
             self._gif_delay_id = None
 
     def show_photo(self, url: str, on_ready=None):
-        """Fetch and display a still image directly in Tk (no VLC)."""
+        """Fetch and display a still image directly in Tk (no VLC), reusing the idle/logo frame."""
         def _do():
             try:
                 resp = requests.get(url, timeout=10)
@@ -598,25 +598,22 @@ class MediaUI:
                     on_ready()
                 return
 
-            # Fit to holder
-            self.video_holder.update_idletasks()
-            vw = max(self.video_holder.winfo_width(), 640)
-            vh = max(self.video_holder.winfo_height(), 480)
+            # Fit to idle frame area
+            self.idle_frame.update_idletasks()
+            vw = max(self.idle_frame.winfo_width(), 640)
+            vh = max(self.idle_frame.winfo_height(), 480)
             try:
                 img.thumbnail((vw, vh), Image.LANCZOS)
             except Exception:
                 pass
 
             photo = ImageTk.PhotoImage(img)
-            # Clear any previous widgets and redraw image on top
-            for child in self.video_holder.winfo_children():
-                child.destroy()
-            lbl = tk.Label(self.video_holder, bg="black")
-            lbl.pack(fill="both", expand=True)
-            lbl.configure(image=photo, bg="black")
-            lbl.image = photo  # keep ref
-
-            self._show(self.play_frame)
+            # Replace logo with photo
+            self.logo_label.configure(image=photo, bg=BG)
+            self.logo_label.image = photo
+            self._stop_prep_animation()
+            self._show(self.idle_frame)
+            self.root.update_idletasks()
             self.root.lift()  # ensure window is on top
             if on_ready:
                 on_ready()
