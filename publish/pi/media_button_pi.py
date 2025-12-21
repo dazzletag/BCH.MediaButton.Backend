@@ -49,7 +49,8 @@ RECENT_PATH = os.path.join(DATA_DIR, "recent.json")
 RECENT_DEPTH = 8
 
 AUDIO_DEVICE = os.getenv("AUDIO_DEVICE", "pulse")  # mpv device name, e.g. "pulse" or "pulse/bluez_output.XX_XX_XX..."
-AUDIO_OUT    = os.getenv("AUDIO_OUT", "pulse")     # vlc aout module: "pulse" (recommended)
+# Default to ALSA on Pi; set AUDIO_OUT=pulse manually if PulseAudio is running
+AUDIO_OUT    = os.getenv("AUDIO_OUT", "alsa")
 
 _openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 TENANT_ID = os.environ.get("TENANT_ID", "")
