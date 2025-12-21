@@ -793,7 +793,8 @@ class MediaPlayer:
 
     def __init__(self, volume_percent=80):
         # Allow VLC to send audio to Pulse sink if you set PULSE_SINK
-        self.instance = vlc.Instance("--aout=pulse")
+        # Force software decode to avoid v4l2m2m failures on some Pis
+        self.instance = vlc.Instance("--aout=pulse", "--avcodec-hw=none")
         self.player = self.instance.media_player_new()
         self.radio_player = self.instance.media_player_new()
         self.set_volume(volume_percent)
