@@ -13,7 +13,7 @@ API (unchanged):
   ui.back_to_idle()
 """
 
-import os, io, base64, threading
+import os, io, base64, threading, requests
 from dataclasses import dataclass
 from typing import Optional, Callable
 from dotenv import load_dotenv
@@ -583,6 +583,42 @@ class MediaUI:
             except:
                 pass
             self._gif_delay_id = None
+
+    def show_photo(self, url: str, on_ready=None):
+        """Fetch and display a still image directly in Tk (no VLC)."""
+        def _do():
+            try:
+                resp = requests.get(url, timeout=10)
+                resp.raise_for_status()
+                data = io.BytesIO(resp.content)
+                img = Image.open(data).convert("RGBA")
+            except Exception as e:
+                print(f"[UI] Photo fetch failed: {e}")
+                if on_ready:
+                    on_ready()
+                return
+
+            # Fit to holder
+            self.video_holder.update_idletasks()
+            vw = max(self.video_holder.winfo_width(), 640)
+            vh = max(self.video_holder.winfo_height(), 480)
+            try:
+                img.thumbnail((vw, vh), Image.LANCZOS)
+            except Exception:
+                pass
+
+            photo = ImageTk.PhotoImage(img)
+            if not hasattr(self, "_photo_label"):
+                self._photo_label = tk.Label(self.video_holder, bg="black")
+                self._photo_label.pack(fill="both", expand=True)
+            self._photo_label.configure(image=photo, bg="black")
+            self._photo_label.image = photo  # keep ref
+
+            self._show(self.play_frame)
+            if on_ready:
+                on_ready()
+
+        self.root.after(0, _do)
 
 
 
