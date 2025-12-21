@@ -1157,7 +1157,7 @@ class Engine:
         def _maybe_add(u):
             if not u:
                 return
-            su = str(u).strip()
+            su = _maybe_add_scheme(str(u).strip())
             if not su:
                 return
             urls.append(su)
@@ -1432,6 +1432,11 @@ class Engine:
         # Prefer items that are not in the short-term recent list
         candidates = [q for q in playlist if _key(q) not in recent_q] or list(playlist)
 
+        # If we have photos, bias to show one soon (especially after radio-only stretches)
+        photo_candidates = [q for q in candidates if _classify_kind(q) == "photo"]
+        if photo_candidates:
+            candidates = photo_candidates
+
         # Try to alternate between photos and everything else when we have a mix
         last_kind = sess.get("last_kind")
         if last_kind:
@@ -1457,6 +1462,11 @@ class Engine:
             if not radio_options:
                 return None
             return radio_options[0]
+
+        # Start a gentle radio bed immediately if we have one
+        bed_now = _pick_radio_bed()
+        if bed_now:
+            self.player.play_background_radio(bed_now)
 
         while sess["running"]:
             if not sess["running"]:
