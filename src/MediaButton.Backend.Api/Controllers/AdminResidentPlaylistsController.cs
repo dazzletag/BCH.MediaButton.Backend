@@ -53,7 +53,10 @@ public class AdminResidentPlaylistsController : ControllerBase
     {
         var key = NormalizeResident(resident);
         var snapshot = await _db.ResidentPlaylists.FirstOrDefaultAsync(r => r.Resident == key);
-        var items = ParseManual(snapshot?.ManualPlaylistJson);
+        var items = ParseManual(snapshot?.ManualPlaylistJson)
+            .Select(j => ToClrObject(j))
+            .Where(o => o is not null)
+            .ToList();
         return Ok(new ManualPlaylistResponse(key, items, snapshot?.ManualUpdatedAt, snapshot?.ManualUpdatedBy));
     }
 
@@ -93,18 +96,13 @@ public class AdminResidentPlaylistsController : ControllerBase
     private static string NormalizeResident(string resident) =>
         (resident ?? string.Empty).Trim();
 
-    private static IReadOnlyList<string> ParseManual(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json)) return Array.Empty<string>();
-        try
-        {
-            var items = JsonSerializer.Deserialize<List<string>>(json, _jsonOptions);
-            return items?.Where(i => !string.IsNullOrWhiteSpace(i)).Select(i => i.Trim()).ToList()
-                   ?? new List<string>();
-        }
-        catch
-        {
-            return Array.Empty<string>();
-        }
-    }
+    private static IReadOnlyList<JsonElement> ParseManual(string? json) =>
+        string.IsNullOrWhiteSpace(json)
+            ? Array.Empty<JsonElement>()
+            : JsonSerializer.Deserialize<List<JsonElement>>(json, _jsonOptions) ?? new List<JsonElement>();
+
+    private static object? ToClrObject(JsonElement element) =>
+        element.ValueKind == JsonValueKind.Undefined || element.ValueKind == JsonValueKind.Null
+            ? null
+            : element.Deserialize<object>(_jsonOptions);
 }

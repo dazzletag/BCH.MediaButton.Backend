@@ -670,17 +670,24 @@ def normalize_playlist_items(items):
 
         if isinstance(item, dict):
             entry = dict(item)
-            url = entry.get("url") or entry.get("mediaUrl")
-            query = entry.get("query")
-            t = (entry.get("type") or entry.get("kind") or "").lower()
+            url = entry.get("url") or entry.get("mediaUrl") or entry.get("source") or entry.get("href")
+            query = entry.get("query") or entry.get("search")
+            radio_url = entry.get("radioUrl") or entry.get("radio") or entry.get("station")
+            t = (entry.get("type") or entry.get("kind") or entry.get("mediaType") or entry.get("media_type") or "").lower()
             if isinstance(url, str):
                 url = _maybe_add_scheme(url)
             if isinstance(query, str):
                 query = _maybe_add_scheme(query)
+            if isinstance(radio_url, str):
+                radio_url = _maybe_add_scheme(radio_url)
 
             if isinstance(url, str) and url.lower().startswith("radio:"):
                 url = url.split(":", 1)[1].strip()
                 entry["url"] = url
+                t = t or "radio"
+
+            if not url and radio_url:
+                url = radio_url
                 t = t or "radio"
 
             if not t:
@@ -702,6 +709,8 @@ def normalize_playlist_items(items):
                 entry["url"] = url
             if query is not None and entry.get("query") is None:
                 entry["query"] = query
+            if entry.get("durationSeconds") is None and entry.get("duration") is not None:
+                entry["durationSeconds"] = entry.get("duration")
 
             normalized.append(entry)
             continue
@@ -786,12 +795,14 @@ class MediaPlayer:
         # Allow VLC to send audio to Pulse sink if you set PULSE_SINK
         self.instance = vlc.Instance("--aout=pulse")
         self.player = self.instance.media_player_new()
+        self.radio_player = self.instance.media_player_new()
         self.set_volume(volume_percent)
 
         # Track state for Engine compatibility
         self.current_proc = None     # always None now
         self._playing = False
         self._stop_flag = False
+        self._radio_url = None
         
 
 
@@ -922,6 +933,40 @@ class MediaPlayer:
         self.stop()
         return self._play_media(media_url, wid)
 
+    def play_background_radio(self, url: str) -> bool:
+        """
+        Start or keep a low-footprint radio stream running on a dedicated player.
+        """
+        if not url:
+            return False
+        try:
+            # Already playing the same station
+            if self._radio_url == url and self.radio_player.get_state() == vlc.State.Playing:
+                return True
+
+            media = self.instance.media_new(url)
+            if url.startswith("http"):
+                media.add_option(":http-user-agent=Mozilla/5.0")
+                media.add_option(":network-caching=1500")
+                media.add_option(":live-caching=1500")
+                if YT_FORCE_IPV4:
+                    media.add_option(":ipv4")
+            self.radio_player.set_media(media)
+            self.radio_player.play()
+            self._radio_url = url
+            print(f"[MEDIA] Background radio on: {url}")
+            return True
+        except Exception as e:
+            print("[MEDIA] Background radio failed:", e)
+            return False
+
+    def stop_background_radio(self):
+        try:
+            self.radio_player.stop()
+        except Exception:
+            pass
+        self._radio_url = None
+
     # ------------------------------
     # Stop + lifecycle
     # ------------------------------
@@ -938,6 +983,7 @@ class MediaPlayer:
     def set_volume(self, percent: int):
         try:
             self.player.audio_set_volume(int(percent))
+            self.radio_player.audio_set_volume(int(percent))
         except Exception:
             pass
 
@@ -1105,6 +1151,46 @@ class Engine:
 
         threading.Thread(target=self._presence_watchdog, daemon=True).start()
 
+    def _gather_radio_urls(self, playlist, resident: str):
+        urls = []
+
+        def _maybe_add(u):
+            if not u:
+                return
+            su = str(u).strip()
+            if not su:
+                return
+            urls.append(su)
+
+        for item in playlist or []:
+            if isinstance(item, dict):
+                t = (item.get("type") or item.get("kind") or item.get("mediaType") or item.get("media_type") or "").lower()
+                u = item.get("url") or item.get("radioUrl") or item.get("radio") or item.get("station")
+                if t == "radio" or (u and _is_radio_url(str(u))):
+                    _maybe_add(u)
+            elif isinstance(item, str):
+                if item.lower().startswith("radio:"):
+                    _maybe_add(item.split(":", 1)[1])
+                elif _is_radio_url(item):
+                    _maybe_add(item)
+
+        res_cfg = self.config.get("residents", {}).get(resident, {})
+        if res_cfg.get("mode") == "radio" and res_cfg.get("url"):
+            _maybe_add(res_cfg.get("url"))
+
+        if DEFAULT_RADIO_URL:
+            _maybe_add(DEFAULT_RADIO_URL)
+
+        # Preserve order but drop dups
+        seen = set()
+        uniq = []
+        for u in urls:
+            if u in seen:
+                continue
+            uniq.append(u)
+            seen.add(u)
+        return uniq
+
     def _resident_for_beacon(self, beacon_key: str):
         beacons = self.config.get('beacons', {})
         entry = beacons.get(beacon_key)
@@ -1169,6 +1255,7 @@ class Engine:
             s["running"] = False
 
         self.player.stop()
+        self.player.stop_background_radio()
 
         t = self.session_threads.get(resident)
         if t and t.is_alive() and not from_thread and t is not threading.current_thread():
@@ -1229,9 +1316,11 @@ class Engine:
         if mode == "radio" and radio:
             sess["playlist"] = [radio]
             sess["force_radio"] = True
+            sess["radio_urls"] = self._gather_radio_urls(sess["playlist"], resident)
             return sess
         if mode in {"music", "youtube"} and query:
             sess["playlist"] = [query]
+            sess["radio_urls"] = self._gather_radio_urls(sess["playlist"], resident)
             return sess
 
         # Manual playlist override – takes priority over AI/cache
@@ -1251,6 +1340,7 @@ class Engine:
             sess["manual_override"] = True
             persist_manual_playlist(resident, norm)
             _persist_debug_playlist(resident, norm)
+            sess["radio_urls"] = self._gather_radio_urls(sess["playlist"], resident)
             return sess
 
         # LLM cache
@@ -1297,7 +1387,7 @@ class Engine:
                 print(f"[API] Unable to push AI playlist for {resident}: {e}")
             _persist_debug_playlist(resident, plist)
 
-
+        sess["radio_urls"] = self._gather_radio_urls(sess["playlist"], resident)
         return sess
 
     def _pick_next_query_random(self, sess):
@@ -1313,13 +1403,16 @@ class Engine:
             url = None
             if isinstance(item, dict):
                 url = item.get("url") or item.get("query")
-                t = (item.get("type") or item.get("kind") or "").lower()
+                t = (item.get("type") or item.get("kind") or item.get("mediaType") or item.get("media_type") or "").lower()
                 if t in {"photo", "image", "picture"}:
                     return "photo"
                 if t == "radio":
                     return "radio"
                 if t:
                     return t
+                radio_hint = item.get("radioUrl") or item.get("radio") or item.get("station")
+                if radio_hint:
+                    url = radio_hint
             else:
                 if isinstance(item, str):
                     if item.lower().startswith("radio:"):
@@ -1358,6 +1451,12 @@ class Engine:
 
         print(f"[ENGINE] Session loop running for {resident}")
         ident = self._resident_identity(resident)
+        radio_options = sess.get("radio_urls") or []
+
+        def _pick_radio_bed():
+            if not radio_options:
+                return None
+            return radio_options[0]
 
         while sess["running"]:
             if not sess["running"]:
@@ -1373,16 +1472,21 @@ class Engine:
             is_photo = False
             is_youtube = False
             display_label = None
+            radio_hint = None
 
             # Unpack and classify the item
             if isinstance(q, dict):
-                media_url = q.get("url") or q.get("query")
-                item_type = (q.get("type") or q.get("kind") or "").lower()
+                media_url = q.get("url") or q.get("mediaUrl") or q.get("query")
+                item_type = (q.get("type") or q.get("kind") or q.get("mediaType") or q.get("media_type") or "").lower()
                 force_radio = item_type == "radio"
                 is_photo = item_type in {"photo", "image", "picture"}
+                radio_hint = q.get("radioUrl") or q.get("radio") or q.get("station")
                 # Allow radio: prefix even if type was omitted
                 if media_url and media_url.lower().startswith("radio:"):
                     media_url = media_url.split(":", 1)[1].strip()
+                    force_radio = True
+                if not media_url and radio_hint:
+                    media_url = radio_hint
                     force_radio = True
                 display_label = q.get("name") or q.get("title") or media_url
             else:
@@ -1457,12 +1561,26 @@ class Engine:
 
             # 4) Start VLC while keeping loading GIF visible
             if force_radio:
+                self.player.stop_background_radio()
                 ok = self.player.play_radio(media_url, wid=wid)
             elif is_photo:
-                ok = self.player.show_image(media_url, duration=int(q.get("durationSeconds") or 10), wid=wid)
+                bed = radio_hint or _pick_radio_bed()
+                if bed:
+                    self.player.play_background_radio(bed)
+                else:
+                    self.player.stop_background_radio()
+                dur = 10
+                if isinstance(q, dict):
+                    try:
+                        dur = int(q.get("durationSeconds") or q.get("duration") or dur)
+                    except Exception:
+                        pass
+                ok = self.player.show_image(media_url, duration=dur, wid=wid)
             elif is_youtube:
+                self.player.stop_background_radio()
                 ok = self.player.play_youtube(media_url, resident=resident, wid=wid)
             else:
+                self.player.stop_background_radio()
                 ok = self.player.play_direct(media_url, wid=wid)
             if not ok:
                 print("[ENGINE] VLC start failed")

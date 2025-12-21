@@ -1,3 +1,4 @@
+using System.Text.Json;
 using MediaButtonBackend.Models;
 
 namespace MediaButtonBackend.Api.Models;
@@ -28,8 +29,8 @@ public record AiPlaylistPayload(
     DateTimeOffset? BuiltAt,
     Dictionary<string, object>? Meta);
 
-public record ManualPlaylistUpdate(List<string> Items);
+public record ManualPlaylistUpdate(List<JsonElement> Items);
 
-public record ManualPlaylistResponse(string Resident, IReadOnlyList<string> Items, DateTimeOffset? UpdatedAtUtc, string? UpdatedBy);
+public record ManualPlaylistResponse(string Resident, IReadOnlyList<object?> Items, DateTimeOffset? UpdatedAtUtc, string? UpdatedBy);
 
-public record DeviceManualPlaylistResponse(string Resident, IReadOnlyList<object> Items, DateTimeOffset? UpdatedAtUtc, string? UpdatedBy);
+public record DeviceManualPlaylistResponse(string Resident, IReadOnlyList<object?> Items, DateTimeOffset? UpdatedAtUtc, string? UpdatedBy);
