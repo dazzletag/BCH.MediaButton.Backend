@@ -805,6 +805,8 @@ class MediaPlayer:
         # Force software decode to avoid v4l2m2m failures on some Pis
         aout = AUDIO_OUT or "pulse"
         opts = [f"--aout={aout}", "--avcodec-hw=none"]
+        if aout.startswith("alsa") and AUDIO_DEVICE:
+            opts.append(f"--alsa-audio-device={AUDIO_DEVICE}")
         self.instance = vlc.Instance(*opts)
         self.player = self.instance.media_player_new()
         self.radio_player = self.instance.media_player_new()
@@ -1564,7 +1566,8 @@ class Engine:
             print(f"[ENGINE] Next query for {resident}: {media_url}")
 
             # 1) Prepare screen
-            self.ui.show_preparing(ident, query=display_label or q)
+            allow_loader = not (is_photo or force_radio)
+            self.ui.show_preparing(ident, query=display_label or q, allow_loader=allow_loader)
             
 
             # Let Tk process the preparing screen before we request player
