@@ -793,7 +793,7 @@ def fetch_manual_playlist_from_api(resident: str) -> list[str]:
 # =========================
 class MediaPlayer:
     """
-    VLC-backed media player for Raspberry Pi — fully embeddable in Tk.
+    VLC-backed media player for Raspberry Pi - fully embeddable in Tk.
     No mpv, no subprocesses, no GPU-context issues.
     """
 
@@ -802,7 +802,9 @@ class MediaPlayer:
     def __init__(self, volume_percent=80):
         # Allow VLC to send audio to Pulse sink if you set PULSE_SINK
         # Force software decode to avoid v4l2m2m failures on some Pis
-        self.instance = vlc.Instance("--aout=pulse", "--avcodec-hw=none")
+        aout = AUDIO_OUT or "pulse"
+        opts = [f"--aout={aout}", "--avcodec-hw=none"]
+        self.instance = vlc.Instance(*opts)
         self.player = self.instance.media_player_new()
         self.radio_player = self.instance.media_player_new()
         self.set_volume(volume_percent)
@@ -1535,6 +1537,8 @@ class Engine:
 
             # Heuristics: if no explicit type, infer from URL/extension
             if media_url:
+                if isinstance(media_url, str) and media_url.startswith("http"):
+                    media_url = _escape_spaces(media_url)
                 if not is_photo and _is_image_url(media_url):
                     is_photo = True
                     force_radio = False
