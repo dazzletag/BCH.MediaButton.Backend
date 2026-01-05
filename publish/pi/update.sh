@@ -14,6 +14,11 @@ BRANCH="${BRANCH:-main}"
 REPO_DIR="${REPO_DIR:-/opt/media-button}"
 SERVICE="${SERVICE:-media-button}"
 SKIP_RESTART="${SKIP_RESTART:-0}"
+PY_BIN="${PY_BIN:-$REPO_DIR/.venv/bin/python3}"
+PIP_BIN="${PIP_BIN:-$REPO_DIR/.venv/bin/pip3}"
+# Fallbacks if venv not found
+[ -x "$PY_BIN" ] || PY_BIN="$(command -v python3 || true)"
+[ -x "$PIP_BIN" ] || PIP_BIN="$(command -v pip3 || true)"
 
 cd "$REPO_DIR"
 SNAP="$(mktemp -t config.yaml.XXXXXX)"
@@ -27,10 +32,15 @@ echo "[update] Resetting to origin/$BRANCH..."
 git reset --hard "origin/$BRANCH"
 
 # Restore config values for existing keys (preserve local overrides across resets)
-if [ -f "$REPO_DIR/publish/pi/config.yaml" ] && [ -f "$SNAP" ]; then
+if [ -f "$REPO_DIR/publish/pi/config.yaml" ] && [ -f "$SNAP" ] && [ -n "$PY_BIN" ]; then
   echo "[update] Merging local config values back into config.yaml..."
-  python3 - <<'PY'
-import sys, yaml, os
+  "$PY_BIN" - <<'PY'
+import sys, os
+try:
+    import yaml
+except ImportError:
+    print("[update] PyYAML not available; skipping config merge.")
+    sys.exit(0)
 new_path = os.path.join(os.environ["REPO_DIR"], "publish/pi/config.yaml")
 snap_path = os.path.join(os.environ["SNAP"])
 with open(new_path, "r", encoding="utf-8") as f:
@@ -57,10 +67,10 @@ else
 fi
 
 echo "[update] Installing dependencies..."
-if command -v python3 >/dev/null 2>&1 && command -v pip3 >/dev/null 2>&1; then
-  pip3 install -r publish/pi/requirements.txt --upgrade
+if [ -n "$PIP_BIN" ]; then
+  "$PIP_BIN" install -r publish/pi/requirements.txt --upgrade
 else
-  echo "[update] WARNING: python3/pip3 not found; skipping dependency install."
+  echo "[update] WARNING: pip3 not found; skipping dependency install."
 fi
 
 if [ "$SKIP_RESTART" = "1" ]; then
