@@ -1030,6 +1030,12 @@ class MediaPlayer:
         self._playing = False
         self.current_proc = None
 
+    def toggle_pause(self):
+        try:
+            self.player.pause()
+        except Exception as e:
+            _log(f"[MEDIA] Pause toggle failed: {e}")
+
     def set_volume(self, percent: int):
         try:
             self.player.audio_set_volume(int(percent))
@@ -1190,6 +1196,7 @@ class Engine:
         self.session_locks = {}    # resident -> Lock
         self.stop_grace_misses = self.config.get("stop_grace_misses", 1)
         self.watchdog_interval = self.config.get("watchdog_interval", 0.5)
+        self.control_mode = self.config.get("control_mode", "beacon")
         self._miss_counts = {}  # resident -> consecutive misses
 
         # apply config overrides
@@ -1299,6 +1306,14 @@ class Engine:
             self.session_locks[resident] = threading.Lock()
         return self.session_locks[resident]
 
+    def prepare_session(self, resident: str, *, playlist_override=None, ordered: bool = False, start_index: int = 0):
+        """
+        Build (or rebuild) a session for a resident without needing a beacon trigger.
+        When ordered=True, playback will follow the playlist sequentially starting at start_index.
+        """
+        sess = self._make_session(resident, playlist_override=playlist_override, ordered=ordered, start_index=start_index)
+        return sess
+
     def _stop_session(self, resident, from_thread: bool):
         s = self.sessions.get(resident)
         if s:
@@ -1318,7 +1333,19 @@ class Engine:
         self.session_threads.pop(resident, None)
         self.session_locks.pop(resident, None)
         print(f"[ENGINE] Session stopped for {resident}")
-    
+
+    def start_manual_session(self, resident: str, *, playlist_override=None, start_index: int = 0):
+        """Start an ordered session from a menu selection (no beacon required)."""
+        with self._ensure_lock(resident):
+            self._stop_session(resident, from_thread=False)
+            sess = self._make_session(resident, playlist_override=playlist_override, ordered=True, start_index=start_index)
+            self.sessions[resident] = sess
+            t = threading.Thread(target=self._session_loop, args=(resident,), daemon=True)
+            self.session_threads[resident] = t
+            t.start()
+            ident = self._resident_identity(resident)
+            self.ui.show_preparing(ident, allow_loader=False)
+
     def handle_beacon_trigger(self, beacon_key: str):
         resident = self._resident_for_beacon(beacon_key)
         if not resident:
@@ -1350,13 +1377,20 @@ class Engine:
 
     
     # Playlist building / caching
-    def _make_session(self, resident):
+    def _make_session(self, resident, *, playlist_override=None, ordered: bool = False, start_index: int = 0):
         sess = {
             "resident": resident,
             "running": True,
             "last_track_end": 0.0,
             "playlist": [],
+            "playlist_mode": "ordered" if ordered else "random",
+            "cursor": max(0, start_index),
         }
+
+        if playlist_override is not None:
+            sess["playlist"] = playlist_override or []
+            sess["radio_urls"] = self._gather_radio_urls(sess["playlist"], resident)
+            return sess
 
         # Pinned overrides
         res_cfg = self.config.get('residents', {}).get(resident, {})
@@ -1438,10 +1472,19 @@ class Engine:
             _persist_debug_playlist(resident, plist)
 
         sess["radio_urls"] = self._gather_radio_urls(sess["playlist"], resident)
+        if ordered:
+            sess["playlist_mode"] = "ordered"
+            sess["cursor"] = max(0, start_index)
         return sess
 
     def _pick_next_query_random(self, sess):
         playlist = sess.get("playlist") or []
+        if sess.get("playlist_mode") == "ordered":
+            cursor = sess.setdefault("cursor", 0)
+            if cursor >= len(playlist):
+                return None
+            sess["cursor"] = cursor + 1
+            return playlist[cursor]
         if not playlist:
             return None
         recent_q = sess.setdefault("recent_queries", deque(maxlen=AVOID_RECENT_N))
@@ -1693,6 +1736,130 @@ class Engine:
 
 
 # =========================
+# Remote control (FLIRC / TV remote)
+# =========================
+class RemoteMenuController:
+    def __init__(self, engine: Engine, ui: MediaUI, config: dict):
+        self.engine = engine
+        self.ui = ui
+        self.config = config
+        self.mode = config.get("control_mode", "beacon")
+        self.enabled = self.mode == "remote_menu"
+        self.remote_cfg = config.get("remote_control", {}) if isinstance(config.get("remote_control", {}), dict) else {}
+        self.resident = self.remote_cfg.get("resident") or self._default_resident()
+        self.show_menu_on_start = bool(self.remote_cfg.get("show_menu_on_start", False))
+        defaults = {"menu": "m", "up": "Up", "down": "Down", "select": "Return", "back": "Escape", "pause": "space"}
+        override = self.remote_cfg.get("keymap") or {}
+        self.keymap = {**defaults, **{k: v for k, v in override.items() if v}}
+        self.playlist = []
+        self.labels = []
+        if not self.enabled:
+            return
+        self._bind_keys()
+        if self.show_menu_on_start:
+            self.open_menu()
+
+    def _default_resident(self) -> str | None:
+        try:
+            res_cfg = self.config.get("remote_control", {}).get("resident")
+            if res_cfg:
+                return res_cfg
+            res = self.config.get("residents", {})
+            if isinstance(res, dict) and res:
+                return list(res.keys())[0]
+        except Exception:
+            pass
+        return None
+
+    def _label_for_item(self, item) -> str:
+        try:
+            if isinstance(item, dict):
+                name = item.get("name") or item.get("title") or item.get("query") or item.get("url") or item.get("radio") or item.get("station")
+                t = (item.get("type") or item.get("kind") or item.get("mediaType") or "").lower()
+                return f"[{t or 'media'}] {name}".strip()
+            if isinstance(item, str):
+                return item
+            return str(item)
+        except Exception:
+            return str(item)
+
+    def _ensure_playlist(self):
+        if not self.resident:
+            self.playlist = []
+            self.labels = []
+            return
+        try:
+            sess = self.engine.prepare_session(self.resident, ordered=True, start_index=0)
+            self.playlist = sess.get("playlist") or []
+            self.labels = [self._label_for_item(i) for i in self.playlist]
+        except Exception as e:
+            print(f"[REMOTE] Failed to build playlist: {e}")
+            self.playlist = []
+            self.labels = []
+
+    def open_menu(self):
+        self._ensure_playlist()
+        title = f"{self.resident} • Playlist" if self.resident else "Playlist"
+        if not self.playlist:
+            self.ui.show_idle(ResidentIdentity(name=self.resident or "Guest", key=self.resident or "guest", survey_blob={}), subtitle="No playlist available")
+            return
+        self.ui.show_menu(title, self.labels, selected_index=0, hint="Up/Down to navigate • OK to play • Back to exit")
+
+    def toggle_menu(self, *_):
+        if self.ui.is_menu_visible():
+            self.ui.hide_menu()
+        else:
+            self.open_menu()
+
+    def move_selection(self, delta: int, *_):
+        if not self.ui.is_menu_visible():
+            self.open_menu()
+            return
+        self.ui.highlight_menu(delta)
+
+    def play_selected(self, *_):
+        if not self.playlist:
+            self.open_menu()
+            return
+        if not self.ui.is_menu_visible():
+            self.open_menu()
+            return
+        idx = self.ui.current_menu_index() or 0
+        idx = max(0, min(idx, len(self.playlist) - 1))
+        self.ui.hide_menu()
+        self.engine.start_manual_session(self.resident, playlist_override=self.playlist, start_index=idx)
+
+    def pause_or_resume(self, *_):
+        self.engine.player.toggle_pause()
+
+    def back(self, *_):
+        if self.ui.is_menu_visible():
+            self.ui.hide_menu()
+        else:
+            # Stop all sessions and return to idle
+            for res in list(self.engine.sessions.keys()):
+                self.engine._stop_session(res, from_thread=False)
+            self.ui.back_to_idle()
+
+    def _bind_keys(self):
+        bindings = [
+            ("menu", self.toggle_menu),
+            ("up", lambda e=None: self.move_selection(-1)),
+            ("down", lambda e=None: self.move_selection(1)),
+            ("select", self.play_selected),
+            ("pause", self.pause_or_resume),
+            ("back", self.back),
+        ]
+        for name, handler in bindings:
+            key = self.keymap.get(name)
+            if not key:
+                continue
+            try:
+                self.ui.root.bind(f"<KeyPress-{key}>", handler)
+            except Exception as e:
+                print(f"[REMOTE] Failed to bind key {key}: {e}")
+
+# =========================
 # Graph poller
 # =========================
 def graph_poll_task(graph: GraphClient):
@@ -1741,6 +1908,7 @@ def _run_ble_loop(listener: BeaconListener):
 
 def main():
     global ENGINE
+    control_mode = CONFIG.get("control_mode", "beacon")
 
     # initial sync
     try:
@@ -1763,19 +1931,25 @@ def main():
 
     # Build engine with UI
     ENGINE = Engine(SURVEY, PLAYER, CONFIG, ui=ui)
+    remote_controller = RemoteMenuController(ENGINE, ui, CONFIG)
 
     # Graph poller
     threading.Thread(target=graph_poll_task, args=(GRAPH,), daemon=True).start()
 
-    # BLE listener using engine handlers
-    def on_trigger(beacon_key: str):
-        ENGINE.handle_beacon_trigger(beacon_key)
+    # BLE listener using engine handlers (only when in beacon mode)
+    if control_mode == "beacon":
+        def on_trigger(beacon_key: str):
+            ENGINE.handle_beacon_trigger(beacon_key)
 
-    def on_presence(beacon_key: str):
-        ENGINE.refresh_presence(beacon_key)
+        def on_presence(beacon_key: str):
+            ENGINE.refresh_presence(beacon_key)
 
-    listener = BeaconListener(on_trigger=on_trigger, on_presence=on_presence, detection_cooldown=DETECTION_COOLDOWN)
-    threading.Thread(target=_run_ble_loop, args=(listener,), daemon=True).start()
+        listener = BeaconListener(on_trigger=on_trigger, on_presence=on_presence, detection_cooldown=DETECTION_COOLDOWN)
+        threading.Thread(target=_run_ble_loop, args=(listener,), daemon=True).start()
+    else:
+        print("[BOOT] Beacon listener disabled (remote_menu control_mode)")
+        if remote_controller.enabled and remote_controller.show_menu_on_start:
+            remote_controller.open_menu()
 
     # Hand over to Tk mainloop
     ui.mainloop()

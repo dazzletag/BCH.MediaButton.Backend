@@ -21,3 +21,18 @@ detection_cooldown: 0.3
 gone_timeout: 1
 stop_grace_misses: 1
 watchdog_interval: 0.2
+
+# Control mode:
+# - "beacon" (default): start/stop via beacons as today.
+# - "remote_menu": skip beacon triggers; show a TV-remote-driven menu (FLIRC/USB) to pick items.
+control_mode: beacon
+remote_control:
+  resident: "Jane Smith"          # which resident's playlist to use in remote menu mode
+  show_menu_on_start: true        # show menu immediately on boot when in remote_menu mode
+  keymap:                         # override if your remote sends different keys (Tk key symbols)
+    menu: "m"
+    up: "Up"
+    down: "Down"
+    select: "Return"
+    back: "Escape"
+    pause: "space"

@@ -92,6 +92,26 @@ class MediaUI:
         self.video_holder = tk.Frame(self.play_frame, bg="black")
         self.video_holder.pack(fill="both", expand=True)
 
+        # ----- Remote menu view (optional) -----
+        self.menu_frame = tk.Frame(self.stack, bg=BG)
+        self.menu_title_var = tk.StringVar(value="Select program")
+        self.menu_title = tk.Label(self.menu_frame, textvariable=self.menu_title_var, fg=FG, bg=BG, font=("DejaVu Sans", 28, "bold"))
+        self.menu_title.pack(pady=(24, 12))
+        self.menu_list = tk.Listbox(
+            self.menu_frame,
+            font=("DejaVu Sans", 20),
+            fg=FG,
+            bg="#111118",
+            selectbackground=ACCENT,
+            selectforeground="#000",
+            activestyle="none",
+            highlightthickness=0,
+        )
+        self.menu_list.pack(fill="both", expand=True, padx=40, pady=(0, 12))
+        self.menu_hint_var = tk.StringVar(value="Use remote arrows to navigate, OK to play, Back to exit")
+        self.menu_hint = tk.Label(self.menu_frame, textvariable=self.menu_hint_var, fg="#999", bg=BG, font=("DejaVu Sans", 16))
+        self.menu_hint.pack(pady=(0, 16))
+
         # Footer
         self.footer = tk.Label(self.stack, text="Bristol Care Homes", fg="#999", bg=BG, font=("DejaVu Sans", 14))
         self.footer.place(relx=1.0, rely=1.0, anchor="se", x=-16, y=-12)
@@ -111,6 +131,7 @@ class MediaUI:
         self._logo_target_w = None
         self._upnext_text: str = ""           # sticky Up Next
         self._prep_anim_id: Optional[str] = None
+        self._menu_items: list[str] = []
 
 
         self._show(self.idle_frame)
@@ -306,7 +327,7 @@ class MediaUI:
 
         if self._current_frame is frame:
             return  # already showing; avoid pack thrash (prevents flicker)
-        for child in (self.idle_frame, self.play_frame):
+        for child in (self.idle_frame, self.play_frame, self.menu_frame):
             child.pack_forget()
         frame.pack(fill="both", expand=True)
         self._current_frame = frame
@@ -332,6 +353,59 @@ class MediaUI:
             self._upnext_text = ""
             self.upnext_label.grid_remove()
             self.upnext_value.grid_remove()
+
+    # ----- Menu helpers -----
+    def show_menu(self, title: str, items: list[str], selected_index: int = 0, hint: str | None = None):
+        def _do():
+            self.menu_title_var.set(title or "Select program")
+            self.menu_hint_var.set(hint or "Use arrows to navigate, OK to play, Back to exit")
+            self.menu_list.delete(0, tk.END)
+            self._menu_items = items or []
+            for it in self._menu_items:
+                self.menu_list.insert(tk.END, it)
+            if self._menu_items:
+                safe_idx = max(0, min(selected_index, len(self._menu_items) - 1))
+                try:
+                    self.menu_list.selection_clear(0, tk.END)
+                    self.menu_list.selection_set(safe_idx)
+                    self.menu_list.see(safe_idx)
+                except Exception:
+                    pass
+            self._show(self.menu_frame)
+            self.root.update_idletasks()
+        self.root.after(0, _do)
+
+    def highlight_menu(self, delta: int):
+        def _do():
+            if not self._menu_items:
+                return
+            try:
+                cur = int(self.menu_list.curselection()[0])
+            except Exception:
+                cur = 0
+            new_idx = (cur + delta) % max(len(self._menu_items), 1)
+            try:
+                self.menu_list.selection_clear(0, tk.END)
+                self.menu_list.selection_set(new_idx)
+                self.menu_list.see(new_idx)
+            except Exception:
+                pass
+        self.root.after(0, _do)
+
+    def hide_menu(self):
+        self.root.after(0, lambda: self._show(self.idle_frame))
+
+    def current_menu_index(self) -> int | None:
+        try:
+            sel = self.menu_list.curselection()
+            if sel:
+                return int(sel[0])
+        except Exception:
+            pass
+        return None
+
+    def is_menu_visible(self) -> bool:
+        return self._current_frame is self.menu_frame
 
 # convenience wrappers
     def set_upnext(self, text: str):
