@@ -7,8 +7,18 @@ set -euo pipefail
 # Usage:
 #   sudo /opt/media-button/publish/pi/update.sh          # pull + restart
 #   sudo BRANCH=release-2025-01 /opt/media-button/publish/pi/update.sh
+#   sudo /opt/media-button/publish/pi/update.sh SKIP_RESTART=1  # pull without restart
 #
 # Place this repo at /opt/media-button on the Pi for the paths below.
+
+# Allow key=value overrides as args (e.g., SKIP_RESTART=1)
+for arg in "$@"; do
+  case "$arg" in
+    *=*)
+      eval "export $arg"
+      ;;
+  esac
+done
 
 BRANCH="${BRANCH:-main}"
 REPO_DIR="${REPO_DIR:-/opt/media-button}"
@@ -34,7 +44,7 @@ git reset --hard "origin/$BRANCH"
 # Restore config values for existing keys (preserve local overrides across resets)
 if [ -f "$REPO_DIR/publish/pi/config.yaml" ] && [ -f "$SNAP" ] && [ -n "$PY_BIN" ]; then
   echo "[update] Merging local config values back into config.yaml..."
-  "$PY_BIN" - <<'PY'
+  if "$PY_BIN" - <<'PY'
 import sys, os
 try:
     import yaml
@@ -43,10 +53,14 @@ except ImportError:
     sys.exit(0)
 new_path = os.path.join(os.environ["REPO_DIR"], "publish/pi/config.yaml")
 snap_path = os.path.join(os.environ["SNAP"])
-with open(new_path, "r", encoding="utf-8") as f:
-    new_cfg = yaml.safe_load(f) or {}
-with open(snap_path, "r", encoding="utf-8") as f:
-    old_cfg = yaml.safe_load(f) or {}
+try:
+    with open(new_path, "r", encoding="utf-8") as f:
+        new_cfg = yaml.safe_load(f) or {}
+    with open(snap_path, "r", encoding="utf-8") as f:
+        old_cfg = yaml.safe_load(f) or {}
+except Exception as e:
+    print(f"[update] Unable to parse YAML; skipping merge: {e}")
+    sys.exit(0)
 
 def merge(old, new):
     if isinstance(old, dict) and isinstance(new, dict):
@@ -62,6 +76,11 @@ with open(new_path, "w", encoding="utf-8") as f:
     yaml.safe_dump(merged, f, sort_keys=False)
 print("[update] Config merged.")
 PY
+  then
+    echo "[update] Config merge completed."
+  else
+    echo "[update] Config merge skipped due to errors."
+  fi
 else
   echo "[update] No config merge needed."
 fi
