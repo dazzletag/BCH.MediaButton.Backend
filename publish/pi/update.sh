@@ -13,6 +13,7 @@ set -euo pipefail
 BRANCH="${BRANCH:-main}"
 REPO_DIR="${REPO_DIR:-/opt/media-button}"
 SERVICE="${SERVICE:-media-button}"
+SKIP_RESTART="${SKIP_RESTART:-0}"
 
 cd "$REPO_DIR"
 SNAP="$(mktemp -t config.yaml.XXXXXX)"
@@ -62,7 +63,11 @@ else
   echo "[update] WARNING: python3/pip3 not found; skipping dependency install."
 fi
 
-echo "[update] Restarting service '$SERVICE'..."
-systemctl restart "$SERVICE"
+if [ "$SKIP_RESTART" = "1" ]; then
+  echo "[update] SKIP_RESTART=1 set; not restarting service."
+else
+  echo "[update] Restarting service '$SERVICE'..."
+  systemctl restart "$SERVICE"
+fi
 
 echo "[update] Done."
