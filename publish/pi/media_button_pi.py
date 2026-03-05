@@ -9,7 +9,7 @@ import requests
 from dotenv import load_dotenv
 from bleak import BleakScanner
 import vlc
-from openai import OpenAI
+import anthropic
 
 # UI (from ui_display.py)
 from ui_display import MediaUI, ResidentIdentity
@@ -52,7 +52,7 @@ AUDIO_DEVICE = os.getenv("AUDIO_DEVICE", "pulse")  # mpv device name, e.g. "puls
 # Default to ALSA on Pi; set AUDIO_OUT=pulse manually if PulseAudio is running
 AUDIO_OUT    = os.getenv("AUDIO_OUT", "alsa")
 
-_openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+_anthropic = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 TENANT_ID = os.environ.get("TENANT_ID", "")
 CLIENT_ID = os.getenv("CLIENT_ID", "")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET", "")
@@ -64,7 +64,7 @@ THIS_IS_ME_XLSX   = os.getenv("THIS_IS_ME_XLSX", "/home/dazzletag/media-button/T
 GRAPH_POLL_SECONDS = int(os.getenv("GRAPH_POLL_SECONDS", "600"))
 DEFAULT_RADIO_URL = os.getenv("DEFAULT_RADIO_URL", "")
 VOLUME_PERCENT = int(os.getenv("VOLUME_PERCENT", "80"))
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-mini")
+LLM_MODEL = os.getenv("LLM_MODEL", "claude-haiku-4-5-20251001")
 YT_DLP_BIN = os.getenv("YT_DLP_BIN", "/home/dazzletag/media-button/.venv/bin/yt-dlp")
 YT_EXTRACTOR_ARGS = os.getenv("YT_EXTRACTOR_ARGS", "youtube:player_client=web")
 YT_FORCE_IPV4 = os.getenv("YT_FORCE_IPV4", "0") == "1"
@@ -481,18 +481,17 @@ def llm_build_big_playlist(
 
 
     try:
-        resp = _openai.chat.completions.create(
+        resp = _anthropic.messages.create(
             model=LLM_MODEL,
+            max_tokens=4096,
             temperature=0.2,
+            system=sys_prompt,
             messages=[
-                {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            response_format={"type": "json_object"},
-            timeout=30,
         )
 
-        data = json.loads(resp.choices[0].message.content.strip())
+        data = json.loads(resp.content[0].text.strip())
         items = data.get("playlist") or []
         cleaned = []
         for q in items:
