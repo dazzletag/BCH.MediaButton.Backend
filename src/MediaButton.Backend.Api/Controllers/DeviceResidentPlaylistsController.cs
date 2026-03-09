@@ -85,6 +85,13 @@ public class DeviceResidentPlaylistsController : ControllerBase
         var snapshot = await _db.ResidentPlaylists.FirstOrDefaultAsync(r => r.Resident == key);
         var items = ParseManual(snapshot?.ManualPlaylistJson);
         var resolved = await ResolveMediaAsync(items, key);
+
+        if (snapshot != null)
+        {
+            snapshot.LastPolledAt = DateTimeOffset.UtcNow;
+            await _db.SaveChangesAsync();
+        }
+
         return Ok(new DeviceManualPlaylistResponse(key, resolved, snapshot?.ManualUpdatedAt, snapshot?.ManualUpdatedBy));
     }
 

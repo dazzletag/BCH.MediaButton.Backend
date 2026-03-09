@@ -82,9 +82,12 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-// Ensure Blob Storage CORS rules allow our frontend origins to PUT via SAS
+// Apply any pending EF Core migrations and ensure Blob Storage CORS rules
 using (var scope = app.Services.CreateScope())
 {
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.Migrate();
+
     var corsInit = scope.ServiceProvider.GetRequiredService<StorageCorsInitializer>();
     corsInit.EnsureCorsAsync().GetAwaiter().GetResult();
 }

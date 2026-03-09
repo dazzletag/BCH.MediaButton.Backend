@@ -77,7 +77,7 @@ export default function Dashboard() {
   const [residentList, setResidentList] = useState<string[]>([]);
   const [residentQuery, setResidentQuery] = useState("");
   const [manualText, setManualText] = useState("");
-  const [manualMeta, setManualMeta] = useState<{ updatedAt?: string | null; updatedBy?: string | null }>({});
+  const [manualMeta, setManualMeta] = useState<{ updatedAt?: string | null; updatedBy?: string | null; lastPolledAt?: string | null }>({});
   const [loadingResident, setLoadingResident] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
   const [generatingAi, setGeneratingAi] = useState(false);
@@ -157,7 +157,7 @@ export default function Dashboard() {
       const items = data?.items ?? [];
       const withOptions = applyOptionsToManual(items);
       setManualText(withOptions.join("\n"));
-      setManualMeta({ updatedAt: data?.updatedAtUtc, updatedBy: data?.updatedBy });
+      setManualMeta({ updatedAt: data?.updatedAtUtc, updatedBy: data?.updatedBy, lastPolledAt: data?.lastPolledAt });
     } catch (err) {
       console.error(err);
       setManualText("");
@@ -188,7 +188,7 @@ export default function Dashboard() {
           method: "PUT",
           data: { items },
         });
-        setManualMeta({ updatedAt: new Date().toISOString(), updatedBy: accountName });
+        setManualMeta((prev) => ({ ...prev, updatedAt: new Date().toISOString(), updatedBy: accountName, lastPolledAt: prev.lastPolledAt }));
         setSaveMessage("Manual playlist saved.");
       } catch (err) {
         console.error(err);
@@ -652,12 +652,28 @@ export default function Dashboard() {
             placeholder="Enter titles, URLs or radio: prefixed stations"
           />
           <div className="nav-actions" style={{ justifyContent: "space-between", width: "100%" }}>
-            <div className="muted">
+            <div className="muted" style={{ display: "flex", alignItems: "center", gap: 10 }}>
               {manualMeta.updatedAt && (
                 <span>
                   Last saved {formatDate(manualMeta.updatedAt)} {manualMeta.updatedBy ? `by ${manualMeta.updatedBy}` : ""}
                 </span>
               )}
+              {manualMeta.updatedAt && (() => {
+                const polled = manualMeta.lastPolledAt ? new Date(manualMeta.lastPolledAt) : null;
+                const saved = new Date(manualMeta.updatedAt);
+                const isLive = polled !== null && polled >= saved;
+                return isLive ? (
+                  <span className="pill" style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e", fontSize: 12, gap: 4 }}>
+                    <span className="status-dot" style={{ background: "#22c55e" }} />
+                    Live on device
+                  </span>
+                ) : (
+                  <span className="pill" style={{ background: "rgba(234,179,8,0.15)", color: "#ca8a04", fontSize: 12, gap: 4 }}>
+                    <span className="status-dot" style={{ background: "#ca8a04" }} />
+                    Pending sync
+                  </span>
+                );
+              })()}
             </div>
             <div className="nav-actions" style={{ gap: 8 }}>
               <button

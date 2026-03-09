@@ -57,7 +57,7 @@ public class AdminResidentPlaylistsController : ControllerBase
             .Select(j => ToClrObject(j))
             .Where(o => o is not null)
             .ToList();
-        return Ok(new ManualPlaylistResponse(key, items, snapshot?.ManualUpdatedAt, snapshot?.ManualUpdatedBy));
+        return Ok(new ManualPlaylistResponse(key, items, snapshot?.ManualUpdatedAt, snapshot?.ManualUpdatedBy, snapshot?.LastPolledAt));
     }
 
     // Called by the frontend "Send playlist to device" button.

@@ -39,6 +39,7 @@ export type ManualPlaylistResponse = {
   items: string[];
   updatedAtUtc?: string | null;
   updatedBy?: string | null;
+  lastPolledAt?: string | null;
 };
 
 export type AiPlaylistEnvelope = {

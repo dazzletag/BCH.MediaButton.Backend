@@ -99,4 +99,6 @@ public class ResidentPlaylistSnapshot
 
     [MaxLength(200)]
     public string? ManualUpdatedBy { get; set; }
+
+    public DateTimeOffset? LastPolledAt { get; set; }
 }
