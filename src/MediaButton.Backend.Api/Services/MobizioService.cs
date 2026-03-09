@@ -56,17 +56,38 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
         resp.EnsureSuccessStatusCode();
 
         var json = await resp.Content.ReadFromJsonAsync<JsonObject>();
-        foreach (var item in json?["results"]?.AsArray() ?? [])
-        {
-            var name = item?["customer"]?["fullName"]?.GetValue<string>()?.Trim();
-            if (!string.Equals(name, residentName.Trim(), StringComparison.OrdinalIgnoreCase))
-                continue;
+        var results = json?["results"]?.AsArray() ?? [];
 
-            return (
-                item?["id"]?.ToString(),
-                item?["customer"]?["dob"]?.GetValue<string>(),
-                item?["customer"]?["gender"]?.GetValue<string>()
-            );
+        var search = residentName.Trim();
+        var searchParts = search.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        // Pass 1: exact full name match
+        // Pass 2: all name parts present in full name (handles Nicolas vs Nicholas, middle names, etc.)
+        foreach (var pass in new[] { 1, 2 })
+        {
+            foreach (var item in results)
+            {
+                var customer = item?["customer"];
+                var fullName = customer?["fullName"]?.GetValue<string>()?.Trim() ?? "";
+                var firstName = customer?["firstName"]?.GetValue<string>()?.Trim() ?? "";
+                var lastName = customer?["lastName"]?.GetValue<string>()?.Trim() ?? "";
+                var combined = $"{firstName} {lastName}".Trim();
+
+                bool match = pass == 1
+                    ? string.Equals(fullName, search, StringComparison.OrdinalIgnoreCase)
+                      || string.Equals(combined, search, StringComparison.OrdinalIgnoreCase)
+                    : searchParts.All(p =>
+                        fullName.Contains(p, StringComparison.OrdinalIgnoreCase)
+                        || combined.Contains(p, StringComparison.OrdinalIgnoreCase));
+
+                if (!match) continue;
+
+                return (
+                    item?["id"]?.ToString(),
+                    customer?["dob"]?.GetValue<string>(),
+                    customer?["gender"]?.GetValue<string>()
+                );
+            }
         }
 
         return (null, null, null);
