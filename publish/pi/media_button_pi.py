@@ -1506,11 +1506,6 @@ class Engine:
                 return None
             return radio_options[0]
 
-        # Start a gentle radio bed immediately if we have one
-        bed_now = _pick_radio_bed()
-        if bed_now:
-            self.player.play_background_radio(bed_now)
-
         while sess["running"]:
             if not sess["running"]:
                 break
