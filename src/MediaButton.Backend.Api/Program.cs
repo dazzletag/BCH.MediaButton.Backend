@@ -70,6 +70,9 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseMiddleware<DeviceAuthMiddleware>();
@@ -104,6 +107,8 @@ app.MapGet("/api/info", () =>
 
     return Results.Ok(payload);
 });
+
+app.MapFallbackToFile("index.html");
 
 app.Run();
 
