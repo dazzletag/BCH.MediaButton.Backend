@@ -9,7 +9,6 @@ import requests
 from dotenv import load_dotenv
 from bleak import BleakScanner
 import vlc
-import anthropic
 
 # UI (from ui_display.py)
 from ui_display import MediaUI, ResidentIdentity
@@ -52,7 +51,7 @@ AUDIO_DEVICE = os.getenv("AUDIO_DEVICE", "pulse")  # mpv device name, e.g. "puls
 # Default to ALSA on Pi; set AUDIO_OUT=pulse manually if PulseAudio is running
 AUDIO_OUT    = os.getenv("AUDIO_OUT", "alsa")
 
-_anthropic = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+PLAYLIST_FLOW_URL = os.getenv("PLAYLIST_FLOW_URL", "")
 TENANT_ID = os.environ.get("TENANT_ID", "")
 CLIENT_ID = os.getenv("CLIENT_ID", "")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET", "")
@@ -64,7 +63,7 @@ THIS_IS_ME_XLSX   = os.getenv("THIS_IS_ME_XLSX", "/home/dazzletag/media-button/T
 GRAPH_POLL_SECONDS = int(os.getenv("GRAPH_POLL_SECONDS", "600"))
 DEFAULT_RADIO_URL = os.getenv("DEFAULT_RADIO_URL", "")
 VOLUME_PERCENT = int(os.getenv("VOLUME_PERCENT", "80"))
-LLM_MODEL = os.getenv("LLM_MODEL", "claude-haiku-4-5-20251001")
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-41-mini-2025-04-14")
 YT_DLP_BIN = os.getenv("YT_DLP_BIN", "/home/dazzletag/media-button/.venv/bin/yt-dlp")
 YT_EXTRACTOR_ARGS = os.getenv("YT_EXTRACTOR_ARGS", "youtube:player_client=web")
 YT_FORCE_IPV4 = os.getenv("YT_FORCE_IPV4", "0") == "1"
@@ -417,81 +416,33 @@ def llm_build_big_playlist(
 ) -> list[str]:
 
     """
-    Send the entire survey row to the LLM and ask for a large, mixed playlist.
+    Send the resident data to the Power Automate flow and return a playlist.
     """
-    sys_prompt = (
-        "You are a gentle UK entertainment curator for older adults.\n"
-        "INPUT is JSON with:\n"
-        "  • resident: the person's name\n"
-        "  • survey_row: a care-home interest survey row\n"
-        "  • this_is_me_profile: a detailed life-history and preference profile\n"
-        "  • demographics: { dob, gender, inferred_gender_if_missing, age_hint }\n\n"
-        "OUTPUT strict JSON ONLY:\n"
-        "{ \"playlist\": [\"query1\", \"query2\", ...] }\n\n"
-        "Rules:\n"
-        "• Include some MUSIC (artists, songs, albums, classical works) "
-        "  but also a sprinkling of LIGHT ENTERTAINMENT: nature documentaries, "
-        "  classic comedy sketches, travel shows, cookery clips, animals, arts & crafts, "
-        "  and historical features likely to appeal to the person.\n"
-        "• Use the date of birth (dob) and age_hint to choose age-appropriate, era-appropriate "
-        "  content (e.g. music and TV from their teens/20s, familiar historical events, "
-        "  classic films and shows from their lifetime).\n"
-        "• Use gender where given; if gender is missing, you MAY gently infer likely gender "
-        "  from the name for the purposes of choosing relatable content, but do not mention "
-        "  gender or pronouns in the output.\n"
-        "• Ignore any responses that describe *doing* an activity (e.g., 'I like gardening', "
-        "  'I play bingo') — these are hobbies, not things to *watch*.\n"
-        "• If someone enjoys a hobby such as jigsaws, knitting, or gardening, prefer calm or "
-        "  nostalgic related content (e.g., countryside views, gentle crafts, relaxing background "
-        "  music) rather than tutorials or videos of people doing the activity.\n"
-        "• If someone enjoys reading, offer spoken word materials — audiobooks, classic story "
-        "  readings, radio plays, poetry readings, or adaptations of literary works.\n"
-        "• About 30% music, 70% other entertainment.\n"
-        "• You MUST include episodes of tv shows the person will likely enjoy (e.g. Songs of Praise, Sitcoms and/or game show episodes)\n"
-        "• Prefer recognisable UK references and avoid anything overly modern or noisy.\n"
-        "• 40–120 total items; each <= 60 chars; no quotes; no trailing punctuation.\n"
-        "• Never include generic words like 'coffee', 'exercise class', or 'meeting'.\n"
-        "Respond with JSON only."
-    )
-
-    # Pull out dob/gender if present in the profile
     dob = None
     gender = None
     if profile:
-        # Your This_is_Me.xlsx uses 'dob' and 'gender' columns
         dob = profile.get("dob") or profile.get("DOB") or profile.get("Dob")
         gender = profile.get("gender") or profile.get("Gender")
 
-    demographics = {
-        "dob": dob,
-        "gender": gender,
-        # Let the model infer, but give it a hint that it can
-        "inferred_gender_if_missing": None,
-        "age_hint": "Use dob to infer approximate age and life era."
-    }
-
     payload = {
-        "resident": resident_name,
-        "survey_row": survey_row,
-        "this_is_me_profile": profile or {},
-        "demographics": demographics,
+        "residentName": resident_name,
+        "surveyRow": survey_row,
+        "thisIsMeProfile": profile or {},
+        "demographics": {
+            "dob": dob,
+            "gender": gender,
+            "age_hint": "Use dob to infer approximate age and life era.",
+        },
     }
-
-    user_prompt = json.dumps(payload, ensure_ascii=False, indent=2)
-
 
     try:
-        resp = _anthropic.messages.create(
-            model=LLM_MODEL,
-            max_tokens=4096,
-            temperature=0.2,
-            system=sys_prompt,
-            messages=[
-                {"role": "user", "content": user_prompt},
-            ],
+        resp = requests.post(
+            PLAYLIST_FLOW_URL,
+            json=payload,
+            timeout=120,
         )
-
-        data = json.loads(resp.content[0].text.strip())
+        resp.raise_for_status()
+        data = resp.json()
         items = data.get("playlist") or []
         cleaned = []
         for q in items:
