@@ -31,7 +31,7 @@ public class AdminResidentSuggestionsController(
         }
 
         if (profile is null)
-            return NotFound($"Resident '{resident}' not found in Mobizio.");
+            return StatusCode(422, $"Resident '{resident}' not found in Mobizio. Check the name matches exactly.");
 
         var payload = new
         {

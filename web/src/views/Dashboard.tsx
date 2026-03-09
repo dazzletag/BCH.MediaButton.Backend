@@ -224,9 +224,10 @@ export default function Dashboard() {
       setManualText(updated.join("\n"));
       await saveResidentManual(updated);
       setSaveMessage(`Added ${toAdd.length} AI suggestions to the playlist.`);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError("Failed to generate AI suggestions. Check Mobizio and flow configuration.");
+      const msg = err?.response?.data || err?.message || "Unknown error";
+      setError(`AI suggestions failed: ${msg}`);
     } finally {
       setGeneratingAi(false);
     }
