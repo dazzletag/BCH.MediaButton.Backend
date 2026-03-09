@@ -824,6 +824,9 @@ class MediaPlayer:
             if wid:
                 self._bind_window(wid)
 
+            # If an external stop was requested between _stop_current() and here, honour it.
+            if self._stop_flag:
+                return False
             self._stop_flag = False
             self.player.play()
             self._playing = True
@@ -838,7 +841,7 @@ class MediaPlayer:
     # ------------------------------
     def play_radio(self, url: str, wid: int | None = None) -> bool:
         _log(f"[MEDIA] VLC radio start: {url}")
-        self.stop()
+        self._stop_current()
         ok = self._play_media(url, wid)
         if not ok:
             _log(f"[MEDIA] VLC radio start FAILED: {url}")
@@ -857,7 +860,7 @@ class MediaPlayer:
         - a user query string (resolved through ytsearch by your engine)
         """
         print(f"[MEDIA] VLC YouTube resolve: {query_or_url}")
-        self.stop()
+        self._stop_current()
 
         try:
             # Resolve using yt-dlp; prefer explicit web client to reduce 403s
@@ -926,7 +929,7 @@ class MediaPlayer:
     def play_direct(self, media_url: str, wid: int | None = None) -> bool:
         """Play a direct media URL (e.g. MP4 stream) via VLC without yt-dlp."""
         print(f"[MEDIA] VLC direct: {media_url}")
-        self.stop()
+        self._stop_current()
         return self._play_media(media_url, wid)
 
     def play_background_radio(self, url: str) -> bool:
@@ -970,8 +973,16 @@ class MediaPlayer:
     # ------------------------------
     # Stop + lifecycle
     # ------------------------------
+    def _stop_current(self):
+        """Stop current media without setting the external stop flag (used internally before switching tracks)."""
+        try:
+            self.player.stop()
+        except Exception:
+            pass
+        self._playing = False
+
     def stop(self):
-        """Stops VLC playback."""
+        """External stop — sets the stop flag so _play_media will refuse to start new media."""
         try:
             self._stop_flag = True
             self.player.stop()
@@ -1665,7 +1676,9 @@ class Engine:
             finished = True
             if is_photo and photo_via_ui:
                 # Already displayed via Tk; just sleep for duration
-                time.sleep(max(1, photo_duration))
+                photo_end = time.time() + max(1, photo_duration)
+                while time.time() < photo_end and sess["running"]:
+                    time.sleep(0.2)
                 finished = True
             elif not is_photo:
                 finished = self.player.wait_until_track_finishes_or_stop()
