@@ -61,9 +61,13 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
         var search = residentName.Trim();
         var searchParts = search.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
-        // Pass 1: exact full name match
-        // Pass 2: all name parts present in full name (handles Nicolas vs Nicholas, middle names, etc.)
-        foreach (var pass in new[] { 1, 2 })
+        var searchLast = searchParts.Last();
+        var searchFirst = searchParts.First();
+
+        // Pass 1: exact full name / combined name match
+        // Pass 2: all search parts found as substrings in full name
+        // Pass 3: last name matches exactly + first name starts with same letters (handles Nicolas/Nicholas etc.)
+        foreach (var pass in new[] { 1, 2, 3 })
         {
             foreach (var item in results)
             {
@@ -73,12 +77,17 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
                 var lastName = customer?["lastName"]?.GetValue<string>()?.Trim() ?? "";
                 var combined = $"{firstName} {lastName}".Trim();
 
-                bool match = pass == 1
-                    ? string.Equals(fullName, search, StringComparison.OrdinalIgnoreCase)
-                      || string.Equals(combined, search, StringComparison.OrdinalIgnoreCase)
-                    : searchParts.All(p =>
-                        fullName.Contains(p, StringComparison.OrdinalIgnoreCase)
-                        || combined.Contains(p, StringComparison.OrdinalIgnoreCase));
+                bool match = pass switch
+                {
+                    1 => string.Equals(fullName, search, StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(combined, search, StringComparison.OrdinalIgnoreCase),
+                    2 => searchParts.All(p =>
+                             fullName.Contains(p, StringComparison.OrdinalIgnoreCase)
+                             || combined.Contains(p, StringComparison.OrdinalIgnoreCase)),
+                    _ => string.Equals(lastName, searchLast, StringComparison.OrdinalIgnoreCase)
+                         && (firstName.StartsWith(searchFirst[..Math.Min(4, searchFirst.Length)],
+                             StringComparison.OrdinalIgnoreCase)),
+                };
 
                 if (!match) continue;
 
