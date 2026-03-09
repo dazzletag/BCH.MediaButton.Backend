@@ -85,7 +85,7 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
                              fullName.Contains(p, StringComparison.OrdinalIgnoreCase)
                              || combined.Contains(p, StringComparison.OrdinalIgnoreCase)),
                     _ => string.Equals(lastName, searchLast, StringComparison.OrdinalIgnoreCase)
-                         && (firstName.StartsWith(searchFirst[..Math.Min(4, searchFirst.Length)],
+                         && (firstName.StartsWith(searchFirst[..Math.Min(3, searchFirst.Length)],
                              StringComparison.OrdinalIgnoreCase)),
                 };
 
