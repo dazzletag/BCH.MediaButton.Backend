@@ -60,6 +60,16 @@ public class AdminResidentPlaylistsController : ControllerBase
         return Ok(new ManualPlaylistResponse(key, items, snapshot?.ManualUpdatedAt, snapshot?.ManualUpdatedBy));
     }
 
+    // Called by the frontend "Send playlist to device" button.
+    // The manual playlist (which includes radio/URL items) is already saved before this is called.
+    // This endpoint exists to acknowledge the action; the Pi picks up changes via its own device endpoint.
+    [HttpPut("{resident}/playlist")]
+    public IActionResult AssignPlaylist(string resident, [FromBody] ResidentPlaylistAssignment assignment)
+    {
+        // No-op for now: playlist delivery happens via the manual-playlist snapshot the Pi polls.
+        return NoContent();
+    }
+
     [HttpPut("{resident}/manual-playlist")]
     public async Task<IActionResult> SaveManual(string resident, [FromBody] ManualPlaylistUpdate update)
     {
