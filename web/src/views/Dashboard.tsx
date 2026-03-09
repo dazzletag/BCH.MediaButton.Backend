@@ -80,6 +80,7 @@ export default function Dashboard() {
   const [manualMeta, setManualMeta] = useState<{ updatedAt?: string | null; updatedBy?: string | null }>({});
   const [loadingResident, setLoadingResident] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
+  const [generatingAi, setGeneratingAi] = useState(false);
 
   const [playlistId, setPlaylistId] = useState("current");
   const [seasonalTheme, setSeasonalTheme] = useState("");
@@ -198,6 +199,38 @@ export default function Dashboard() {
     },
     [accountName, call, manualText, residentQuery]
   );
+
+  const onGenerateAiSuggestions = useCallback(async () => {
+    if (!residentQuery.trim()) {
+      setError("Select a resident before generating suggestions.");
+      return;
+    }
+    setGeneratingAi(true);
+    setError(null);
+    try {
+      const result = await call<{ items: string[] }>({
+        url: `/api/admin/residents/${encodeURIComponent(residentQuery.trim())}/ai-suggestions`,
+        method: "POST",
+      });
+      const newItems = result?.items ?? [];
+      if (!newItems.length) {
+        setError("No suggestions returned. The resident may not have a care plan in Mobizio.");
+        return;
+      }
+      const existing = manualText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      const existingSet = new Set(existing.map((s) => s.toLowerCase()));
+      const toAdd = newItems.filter((s) => !existingSet.has(s.toLowerCase()));
+      const updated = [...existing, ...toAdd];
+      setManualText(updated.join("\n"));
+      await saveResidentManual(updated);
+      setSaveMessage(`Added ${toAdd.length} AI suggestions to the playlist.`);
+    } catch (err) {
+      console.error(err);
+      setError("Failed to generate AI suggestions. Check Mobizio and flow configuration.");
+    } finally {
+      setGeneratingAi(false);
+    }
+  }, [call, manualText, residentQuery, saveResidentManual]);
 
   const onUploadMedia = useCallback(
     async (evt: React.FormEvent) => {
@@ -626,6 +659,15 @@ export default function Dashboard() {
               )}
             </div>
             <div className="nav-actions" style={{ gap: 8 }}>
+              <button
+                className="btn ghost"
+                type="button"
+                disabled={generatingAi || !residentQuery.trim()}
+                onClick={onGenerateAiSuggestions}
+                title="Fetch care plan from Mobizio and generate personalised suggestions"
+              >
+                {generatingAi ? "Generating..." : "Generate AI suggestions"}
+              </button>
               <button className="btn ghost" type="button" disabled={loadingResident} onClick={loadResidentManual}>
                 Reload
               </button>
