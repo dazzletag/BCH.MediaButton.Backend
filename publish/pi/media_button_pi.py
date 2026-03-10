@@ -1552,12 +1552,9 @@ class Engine:
         # Prefer items that are not in the short-term recent list
         candidates = [q for q in playlist if _key(q) not in recent_q] or list(playlist)
 
-        # If we have photos, bias to show one soon (especially after radio-only stretches)
-        photo_candidates = [q for q in candidates if _classify_kind(q) == "photo"]
-        if photo_candidates:
-            candidates = photo_candidates
-
-        # Try to alternate between photos and everything else when we have a mix
+        # Alternate between media types (photo / video / radio) so the mix stays varied.
+        # Run this on the full candidate pool — don't pre-filter to photos first, which
+        # would make every session start with a photo (and its background radio bed).
         last_kind = sess.get("last_kind")
         if last_kind:
             alt = [q for q in candidates if _classify_kind(q) != last_kind]
@@ -1780,9 +1777,9 @@ class Engine:
             elif not is_photo:
                 finished = self.player.wait_until_track_finishes_or_stop()
 
-            # 8) Between tracks: stop any slideshow then briefly show idle
-            if force_radio:
-                self.ui.stop_ambient_slideshow()
+            # 8) Between tracks: stop radio bed + slideshow, then briefly show idle
+            self.player.stop_background_radio()
+            self.ui.stop_ambient_slideshow()
             if sess["running"]:
                 self.ui.back_to_idle()
                 time.sleep(1)
