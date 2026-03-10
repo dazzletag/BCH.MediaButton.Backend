@@ -1295,11 +1295,11 @@ class Engine:
         self.session_locks.pop(resident, None)
         print(f"[ENGINE] Session stopped for {resident}")
 
-    def start_manual_session(self, resident: str, *, playlist_override=None, start_index: int = 0):
-        """Start an ordered session from a menu selection (no beacon required)."""
+    def start_manual_session(self, resident: str, *, playlist_override=None, start_index: int = 0, ordered: bool = True):
+        """Start a session from a menu selection (no beacon required). ordered=False for shuffle."""
         with self._ensure_lock(resident):
             self._stop_session(resident, from_thread=False)
-            sess = self._make_session(resident, playlist_override=playlist_override, ordered=True, start_index=start_index)
+            sess = self._make_session(resident, playlist_override=playlist_override, ordered=ordered, start_index=start_index)
             self.sessions[resident] = sess
             t = threading.Thread(target=self._session_loop, args=(resident,), daemon=True)
             self.session_threads[resident] = t
@@ -1711,6 +1711,7 @@ class RemoteMenuController:
         self.keymap = {**defaults, **{k: v for k, v in override.items() if v}}
         self.playlist = []
         self.labels = []
+        self._special_items = ["▶  Play All", "⇄  Shuffle"]
         if not self.enabled:
             return
         self._bind_keys()
@@ -1761,7 +1762,8 @@ class RemoteMenuController:
         if not self.playlist:
             self.ui.show_idle(ResidentIdentity(name=self.resident or "Guest", key=self.resident or "guest", survey_blob={}), subtitle="No playlist available")
             return
-        self.ui.show_menu(title, self.labels, selected_index=0, hint="Up/Down to navigate • OK to play • Back to exit")
+        all_labels = self._special_items + self.labels
+        self.ui.show_menu(title, all_labels, selected_index=0, hint="Up/Down to navigate • OK to play • Back to exit")
 
     def toggle_menu(self, *_):
         if self.ui.is_menu_visible():
@@ -1783,9 +1785,20 @@ class RemoteMenuController:
             self.open_menu()
             return
         idx = self.ui.current_menu_index() or 0
-        idx = max(0, min(idx, len(self.playlist) - 1))
+        n_special = len(self._special_items)
         self.ui.hide_menu()
-        self.engine.start_manual_session(self.resident, playlist_override=self.playlist, start_index=idx)
+        if idx < n_special:
+            # Special top-of-menu actions
+            if idx == 0:  # Play All
+                self.engine.start_manual_session(self.resident, playlist_override=self.playlist, start_index=0, ordered=True)
+            elif idx == 1:  # Shuffle
+                shuffled = list(self.playlist)
+                random.shuffle(shuffled)
+                self.engine.start_manual_session(self.resident, playlist_override=shuffled, start_index=0, ordered=True)
+        else:
+            # Individual playlist item — play from that item in order
+            item_idx = max(0, min(idx - n_special, len(self.playlist) - 1))
+            self.engine.start_manual_session(self.resident, playlist_override=self.playlist, start_index=item_idx, ordered=True)
 
     def pause_or_resume(self, *_):
         self.engine.player.toggle_pause()
