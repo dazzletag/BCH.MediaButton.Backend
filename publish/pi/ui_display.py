@@ -42,6 +42,133 @@ class ResidentIdentity:
     key: str
     survey_blob: dict
 
+
+class AmbientSlideshow:
+    """
+    Gently crossfades a collection of PIL images on a Tk Label.
+    Designed to run as a background visual while radio plays or a video is loading.
+
+    Usage (always thread-safe):
+        slideshow.load(pil_images)   # supply new images
+        slideshow.start()            # begin cycling
+        slideshow.stop()             # freeze and clear timer
+    """
+
+    INTERVAL_MS = 10_000   # ms each photo is on screen
+    FADE_STEPS  = 10       # blend frames per transition
+    FADE_MS     = 60       # ms between frames → 0.6 s total crossfade
+    MAX_DIM     = 960      # cap fitted image dimension (saves RAM / CPU on Pi)
+
+    def __init__(self, root: tk.Tk, label: tk.Label):
+        self.root  = root
+        self.label = label
+        self._fitted: list = []   # pre-fitted PIL RGB images
+        self._idx      = 0
+        self._running  = False
+        self._after_id = None
+        self._tk_ref   = None     # prevents GC of the current PhotoImage
+
+    # ── Public API (all thread-safe) ────────────────────────────────────────
+
+    def load(self, pil_images: list):
+        """Load a new set of images. Fits them on the Tk thread and restarts if running."""
+        self.root.after(0, lambda imgs=pil_images: self._load_on_tk(imgs))
+
+    def start(self):
+        """Start cycling. Thread-safe."""
+        self.root.after(0, self._start_on_tk)
+
+    def stop(self):
+        """Stop cycling. Thread-safe."""
+        self.root.after(0, self._stop_on_tk)
+
+    # ── Internal (Tk thread only) ────────────────────────────────────────────
+
+    def _load_on_tk(self, pil_images: list):
+        try:
+            sw = min(self.root.winfo_screenwidth(),  self.MAX_DIM * 16 // 9)
+            sh = min(self.root.winfo_screenheight(), self.MAX_DIM)
+        except Exception:
+            sw, sh = 1280, 720
+
+        fitted = []
+        for img in pil_images:
+            try:
+                fitted.append(self._fit(img.convert("RGB"), sw, sh))
+            except Exception:
+                pass
+        self._fitted = fitted
+        self._idx = 0
+        if self._running and fitted:
+            self._show_idx(0)
+
+    @staticmethod
+    def _fit(img, w: int, h: int):
+        """Letterbox-fit image into (w, h) with black background."""
+        img = img.copy()
+        img.thumbnail((w, h), Image.LANCZOS)
+        bg = Image.new("RGB", (w, h), (0, 0, 0))
+        bg.paste(img, ((w - img.width) // 2, (h - img.height) // 2))
+        return bg
+
+    def _start_on_tk(self):
+        if self._running or not self._fitted:
+            return
+        self._running = True
+        self._show_idx(self._idx)
+
+    def _stop_on_tk(self):
+        self._running = False
+        if self._after_id:
+            try:
+                self.root.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+
+    def _show_idx(self, idx: int):
+        if not self._running or not self._fitted:
+            return
+        n     = len(self._fitted)
+        img_b = self._fitted[idx % n]
+        if idx == 0 or n == 1:
+            self._set(img_b)
+            self._after_id = self.root.after(self.INTERVAL_MS, self._advance)
+        else:
+            img_a = self._fitted[(idx - 1) % n]
+            self._fade(img_a, img_b, step=0)
+
+    def _fade(self, img_a, img_b, step: int):
+        if not self._running:
+            return
+        try:
+            blended = Image.blend(img_a, img_b, step / self.FADE_STEPS)
+        except Exception:
+            blended = img_b
+        self._set(blended)
+        if step < self.FADE_STEPS:
+            self._after_id = self.root.after(
+                self.FADE_MS, lambda: self._fade(img_a, img_b, step + 1)
+            )
+        else:
+            self._after_id = self.root.after(self.INTERVAL_MS, self._advance)
+
+    def _set(self, pil_img):
+        try:
+            tk_img = ImageTk.PhotoImage(pil_img)
+            self._tk_ref = tk_img
+            self.label.configure(image=tk_img, bg="#000000")
+            self.label.image = tk_img
+        except Exception:
+            pass
+
+    def _advance(self):
+        if not self._running:
+            return
+        self._idx = (self._idx + 1) % max(len(self._fitted), 1)
+        self._show_idx(self._idx)
+
+
 class MediaUI:
     def __init__(self, on_quit: Optional[Callable]=None):
         self.root = tk.Tk()
@@ -152,6 +279,10 @@ class MediaUI:
         self._set_upnext(None)
         self._current_frame: Optional[tk.Frame] = None
         self._search_debounce_id: Optional[str] = None
+
+        # Ambient slideshow (runs on logo_label while radio plays / video loads)
+        self.slideshow = AmbientSlideshow(self.root, self.logo_label)
+
         # Warm-up: prepare idle frame fully before any beacon arrives
         self.root.update_idletasks()
         self.root.update()
@@ -242,8 +373,22 @@ class MediaUI:
 
     # ---------- Public API (thread-safe via `after`) ----------
 
+    # ── Ambient slideshow (thread-safe public API) ───────────────────────────
+
+    def start_ambient_slideshow(self, pil_images: list):
+        """Load photos and begin the ambient crossfade slideshow. Thread-safe."""
+        self.slideshow.load(pil_images)
+        self.slideshow.start()
+
+    def stop_ambient_slideshow(self):
+        """Stop the ambient slideshow and restore normal label behaviour. Thread-safe."""
+        self.slideshow.stop()
+
+    # ────────────────────────────────────────────────────────────────────────
+
     def show_idle(self, resident: ResidentIdentity, subtitle: str = ""):
         def _do():
+            self.slideshow._stop_on_tk()   # restore logo when going idle
             self.current_resident_key = resident.key
             self.subtitle_var.set(subtitle if subtitle else _today_long_date())
             img = self._ensure_logo_async(resident)  # returns immediate (cached or local)
@@ -309,6 +454,7 @@ class MediaUI:
 
     def back_to_idle(self):
         def _do():
+            self.slideshow._stop_on_tk()   # clear any slideshow when returning to idle
             self.subtitle_var.set(_today_long_date())
             self._show(self.idle_frame)
             self.root.focus_force()  # reclaim focus from VLC so FLIRC events are received
@@ -665,6 +811,7 @@ class MediaUI:
     def show_photo(self, url: str, on_ready=None):
         """Fetch and display a still image directly in Tk (no VLC), reusing the idle/logo frame."""
         def _do():
+            self.slideshow._stop_on_tk()   # individual photo takes over from slideshow
             try:
                 resp = requests.get(url, timeout=10)
                 resp.raise_for_status()

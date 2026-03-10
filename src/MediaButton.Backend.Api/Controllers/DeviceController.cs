@@ -4,6 +4,7 @@ using MediaButtonBackend.Models;
 using MediaButtonBackend.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MediaButtonBackend.Controllers;
 
@@ -85,5 +86,29 @@ public class DeviceController : ControllerBase
 
         var device = await _db.Devices.FirstOrDefaultAsync(d => d.DeviceId == deviceId);
         return Ok(new DeviceConfigResponse(deviceId, device?.ConfigJson));
+    }
+
+    /// <summary>
+    /// Returns all active residents from Mobizio care planning.
+    /// Used by the Pi setup wizard to populate the resident selection list.
+    /// </summary>
+    [HttpGet("setup/mobizio-residents")]
+    public async Task<IActionResult> ListMobizioResidents(
+        string deviceId,
+        [FromServices] MobizioService mobizio)
+    {
+        var authedDeviceId = HttpContext.Items["DeviceId"] as string;
+        if (!string.Equals(deviceId, authedDeviceId, StringComparison.OrdinalIgnoreCase))
+            return Unauthorized("Device mismatch.");
+
+        try
+        {
+            var residents = await mobizio.ListActiveResidentsAsync();
+            return Ok(residents);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(502, $"Failed to fetch residents from Mobizio: {ex.Message}");
+        }
     }
 }

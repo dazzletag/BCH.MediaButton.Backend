@@ -43,6 +43,8 @@ os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(PLAYLIST_DIR, exist_ok=True)
 MANUAL_PLAYLIST_DIR = os.path.join(DATA_DIR, "manual_playlists")
 os.makedirs(MANUAL_PLAYLIST_DIR, exist_ok=True)
+PHOTO_CACHE_DIR = os.path.join(DATA_DIR, "photo_cache")
+os.makedirs(PHOTO_CACHE_DIR, exist_ok=True)
 
 RECENT_PATH = os.path.join(DATA_DIR, "recent.json")
 RECENT_DEPTH = 8
@@ -756,6 +758,70 @@ def fetch_manual_playlist_from_api(resident: str) -> list[str]:
     except Exception as e:
         print(f"[API] Failed to fetch manual playlist for {resident}: {e}")
         return []
+
+# =========================
+# Photo cache for ambient slideshow
+# =========================
+
+def _photo_cache_key(url: str) -> str:
+    """Stable cache key derived from the blob path only (ignores SAS expiry tokens)."""
+    try:
+        p = urllib.parse.urlparse(url)
+        return hashlib.sha256((p.netloc + p.path).encode()).hexdigest()
+    except Exception:
+        return hashlib.sha256(url.encode()).hexdigest()
+
+
+def download_photo_to_cache(url: str) -> str | None:
+    """Download a photo URL to the local photo cache. Returns local path or None."""
+    key = _photo_cache_key(url)
+    try:
+        ext = os.path.splitext(urllib.parse.urlparse(url).path)[1].lower() or ".jpg"
+    except Exception:
+        ext = ".jpg"
+    path = os.path.join(PHOTO_CACHE_DIR, key + ext)
+    if os.path.exists(path):
+        return path
+    try:
+        r = requests.get(url, timeout=20)
+        r.raise_for_status()
+        with open(path, "wb") as f:
+            f.write(r.content)
+        print(f"[PHOTO] Cached {os.path.basename(path)} ({len(r.content) // 1024} KB)")
+        return path
+    except Exception as e:
+        print(f"[PHOTO] Cache download failed for {url}: {e}")
+        return None
+
+
+def prefetch_session_photos(playlist: list, max_photos: int = 20) -> list:
+    """
+    Extract all photo items from a playlist, download them to disk cache,
+    and return a list of PIL Image objects ready for the ambient slideshow.
+    """
+    from PIL import Image as PIL_Image
+    photos = []
+    for item in playlist:
+        if len(photos) >= max_photos:
+            break
+        url = None
+        if isinstance(item, dict):
+            t = (item.get("type") or "").lower()
+            if t in {"photo", "image", "picture"}:
+                url = item.get("url")
+        elif isinstance(item, str) and _is_image_url(item):
+            url = item
+        if not url:
+            continue
+        path = download_photo_to_cache(url)
+        if path:
+            try:
+                img = PIL_Image.open(path).convert("RGB")
+                photos.append(img)
+            except Exception as e:
+                print(f"[PHOTO] Failed to open cached image {path}: {e}")
+    return photos
+
 
 # =========================
 # Media player (mpv embedded)
@@ -1512,6 +1578,23 @@ class Engine:
         ident = self._resident_identity(resident)
         radio_options = sess.get("radio_urls") or []
 
+        # Pre-fetch all photos for ambient slideshow (runs in background)
+        sess_photos: list = []
+
+        def _do_photo_prefetch():
+            imgs = prefetch_session_photos(sess.get("playlist") or [])
+            if imgs:
+                sess_photos.extend(imgs)
+                print(f"[PHOTO] {len(imgs)} photo(s) ready for ambient slideshow")
+
+        _has_photos = any(
+            (isinstance(i, dict) and (i.get("type") or "").lower() in {"photo", "image", "picture"})
+            or (isinstance(i, str) and _is_image_url(i))
+            for i in (sess.get("playlist") or [])
+        )
+        if _has_photos:
+            threading.Thread(target=_do_photo_prefetch, daemon=True).start()
+
         def _pick_radio_bed():
             if not radio_options:
                 return None
@@ -1592,7 +1675,10 @@ class Engine:
             # 1) Prepare screen
             allow_loader = not (is_photo or force_radio)
             self.ui.show_preparing(ident, query=display_label or q, allow_loader=allow_loader)
-            
+            # While a video is loading, show ambient photos so the screen isn't blank
+            if not is_photo and not force_radio and sess_photos:
+                self.ui.start_ambient_slideshow(sess_photos)
+
 
             # Let Tk process the preparing screen before we request player
             self.ui.root.update_idletasks()
@@ -1602,9 +1688,9 @@ class Engine:
             # Give Tk a moment to process the preparing UI
             time.sleep(0.05)
 
-            # 2) Create player frame & capture WID
+            # 2) Create player frame & capture WID (radio is audio-only; no window needed)
             wid = None
-            if not photo_via_ui:
+            if not photo_via_ui and not force_radio:
                 wid_holder = {"wid": None}
 
                 def _bind(win_id):
@@ -1628,8 +1714,12 @@ class Engine:
             # 4) Start VLC while keeping loading GIF visible
             if force_radio:
                 self.player.stop_background_radio()
-                ok = self.player.play_radio(media_url, wid=wid)
+                ok = self.player.play_radio(media_url, wid=None)  # audio-only, no window
+                # Stay on idle frame and show photos while radio plays
+                if ok and sess_photos:
+                    self.ui.start_ambient_slideshow(sess_photos)
             elif is_photo:
+                self.ui.stop_ambient_slideshow()   # individual photo takes over
                 bed = radio_hint or _pick_radio_bed()
                 if bed:
                     self.player.play_background_radio(bed)
@@ -1660,16 +1750,23 @@ class Engine:
 
             # 5) Wait for VLC to produce the first frame
             if is_photo:
-                # show_image already waits briefly; we still clear prep immediately
+                # Individual photo shown via Tk; just clear prep spinner
+                self.ui._stop_prep_animation()
+            elif force_radio:
+                # Radio: wait for stream to buffer, stay on idle frame with slideshow
+                self.player.wait_for_first_frame(timeout=6)
                 self.ui._stop_prep_animation()
             elif self.player.wait_for_first_frame(timeout=6):
                 print("[ENGINE] VLC first frame ready")
-                self.ui._stop_prep_animation() 
+                self.ui.stop_ambient_slideshow()   # hand over to video
+                self.ui._stop_prep_animation()
             else:
                 print("[ENGINE] WARNING: Video never reported Playing (timeout)")
+                self.ui.stop_ambient_slideshow()
 
-            # 6) Reveal video — only now remove loading GIF
-            self.ui.reveal_video()
+            # 6) Reveal video — not for radio (stays on idle) or photos (already shown)
+            if not force_radio and not is_photo:
+                self.ui.reveal_video()
             print(f"[ENGINE] Now showing {display_label or q}")
 
             # 7) Wait for the track to finish
@@ -1683,7 +1780,9 @@ class Engine:
             elif not is_photo:
                 finished = self.player.wait_until_track_finishes_or_stop()
 
-            # 8) Between tracks, show idle briefly
+            # 8) Between tracks: stop any slideshow then briefly show idle
+            if force_radio:
+                self.ui.stop_ambient_slideshow()
             if sess["running"]:
                 self.ui.back_to_idle()
                 time.sleep(1)

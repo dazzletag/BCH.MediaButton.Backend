@@ -329,8 +329,11 @@ export default function Dashboard() {
       setError(null);
       setSaveMessage(null);
       try {
-        // Ensure latest manual playlist is saved before sending
-        await saveResidentManual();
+        // Only save if the textarea has content — guard against silently wiping
+        // an existing playlist when the user hasn't loaded it first.
+        if (manualText.trim()) {
+          await saveResidentManual();
+        }
         const payload = {
           playlistId: (playlistId || "current").trim(),
           radioFavorites,
@@ -351,7 +354,7 @@ export default function Dashboard() {
       setAssigning(false);
       }
     },
-    [call, playlistId, playlistUrls, radioFavorites, residentQuery, seasonalTheme]
+    [call, manualText, playlistId, playlistUrls, radioFavorites, residentQuery, saveResidentManual, seasonalTheme]
   );
 
   const mediaByType = useMemo(

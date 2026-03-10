@@ -9,6 +9,8 @@ public record ResidentMobizioProfile(
     string? Gender,
     IReadOnlyDictionary<string, string> FormFields);
 
+public record MobizioResidentSummary(string Name, string CaseId, string? Dob);
+
 public class MobizioService(IConfiguration configuration, IHttpClientFactory httpFactory)
 {
     private const string ApiBase = "https://cloud7.mobizio.com/rest";
@@ -16,6 +18,38 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
     private int FormId => configuration.GetValue("Mobizio:ThisIsMeFormId", 1021596);
     private string Username => configuration["Mobizio:Username"] ?? "";
     private string Password => configuration["Mobizio:Password"] ?? "";
+
+    public async Task<IReadOnlyList<MobizioResidentSummary>> ListActiveResidentsAsync()
+    {
+        var token = await GetTokenAsync();
+
+        using var http = httpFactory.CreateClient();
+        http.Timeout = TimeSpan.FromSeconds(60);
+        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var resp = await http.GetAsync(
+            $"{ApiBase}/v3/cases?start=0&limit=5000&column=id&direction=1&mql=archived%3Dfalse");
+        resp.EnsureSuccessStatusCode();
+
+        var json = await resp.Content.ReadFromJsonAsync<JsonObject>();
+        var results = json?["results"]?.AsArray() ?? [];
+
+        var residents = new List<MobizioResidentSummary>();
+        foreach (var item in results)
+        {
+            var customer = item?["customer"];
+            var firstName = customer?["firstName"]?.GetValue<string>()?.Trim() ?? "";
+            var lastName  = customer?["lastName"]?.GetValue<string>()?.Trim() ?? "";
+            var name = $"{firstName} {lastName}".Trim();
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            var caseId = item?["id"]?.ToString() ?? "";
+            var dob    = customer?["dob"]?.GetValue<string>();
+            residents.Add(new MobizioResidentSummary(name, caseId, dob));
+        }
+
+        return residents.OrderBy(r => r.Name).ToList();
+    }
 
     public async Task<ResidentMobizioProfile?> GetResidentProfileAsync(string residentName)
     {
