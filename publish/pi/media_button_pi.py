@@ -66,7 +66,7 @@ GRAPH_POLL_SECONDS = int(os.getenv("GRAPH_POLL_SECONDS", "600"))
 DEFAULT_RADIO_URL = os.getenv("DEFAULT_RADIO_URL", "")
 VOLUME_PERCENT = int(os.getenv("VOLUME_PERCENT", "80"))
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-41-mini-2025-04-14")
-YT_DLP_BIN = os.getenv("YT_DLP_BIN", "/home/dazzletag/media-button/.venv/bin/yt-dlp")
+YT_DLP_BIN = os.getenv("YT_DLP_BIN", os.path.join(os.path.dirname(sys.executable), "yt-dlp"))
 YT_EXTRACTOR_ARGS = os.getenv("YT_EXTRACTOR_ARGS", "youtube:player_client=web")
 YT_FORCE_IPV4 = os.getenv("YT_FORCE_IPV4", "0") == "1"
 YT_FORMAT = os.getenv("YT_FORMAT", "bv*[ext=mp4][height<=720][fps<=30][vcodec^=avc1]+ba/b")
@@ -935,19 +935,20 @@ class MediaPlayer:
                 self._yt_cache_cleared = True
 
             # Try a couple of extractor args / formats to dodge SABR and image-only failures.
-            # Preference order:
-            #   ios       — no PO Token needed, returns direct MP4 streams
-            #   mweb      — mobile web client, avoids SABR, no PO Token
-            #   tv_embedded — TV client, usually works without extra tokens
-            #   android   — needs GVS PO Token on newer yt-dlp; keep as fallback
-            #   None      — yt-dlp defaults (may hit SABR)
+            # Preference order (as of 2026-03):
+            #   web_creator — web-based, avoids SABR in recent yt-dlp builds
+            #   ios         — may need PO Token but sometimes succeeds without
+            #   mweb        — may need PO Token; keep as second option
+            #   android     — needs GVS PO Token; URL sometimes still plays in VLC
+            #   None        — yt-dlp defaults
+            # tv_embedded excluded: YouTube now returns "not supported in this app"
             extractor_variants = []
             if YT_EXTRACTOR_ARGS:
                 extractor_variants.append(YT_EXTRACTOR_ARGS)
             extractor_variants.extend([
+                "youtube:player_client=web_creator",
                 "youtube:player_client=ios",
                 "youtube:player_client=mweb",
-                "youtube:player_client=tv_embedded",
                 "youtube:player_client=android",
                 None,  # yt-dlp defaults
             ])
