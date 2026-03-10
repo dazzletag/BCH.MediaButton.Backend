@@ -1552,14 +1552,17 @@ class Engine:
         # Prefer items that are not in the short-term recent list
         candidates = [q for q in playlist if _key(q) not in recent_q] or list(playlist)
 
-        # Alternate between media types (photo / video / radio) so the mix stays varied.
-        # Run this on the full candidate pool — don't pre-filter to photos first, which
-        # would make every session start with a photo (and its background radio bed).
+        # Photos and radio are "background" content; videos/YouTube are "foreground".
+        # After any background item, steer back toward foreground so videos aren't
+        # crowded out by photo→radio→photo loops.
+        # After foreground, pick freely — the natural random mix provides variety.
+        _BG = {"photo", "image", "picture", "radio"}
+        _FG = {"media", "video", "youtube"}
         last_kind = sess.get("last_kind")
-        if last_kind:
-            alt = [q for q in candidates if _classify_kind(q) != last_kind]
-            if alt:
-                candidates = alt
+        if last_kind in _BG:
+            fg_candidates = [q for q in candidates if _classify_kind(q) in _FG]
+            if fg_candidates:
+                candidates = fg_candidates
 
         q = random.choice(candidates)
         recent_q.append(_key(q))
