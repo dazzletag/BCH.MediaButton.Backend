@@ -166,13 +166,9 @@ def _detect_alsa_device():
     return None
 
 def pick_random_youtube_id(query, yt_dlp_bin, avoid_ids, max_candidates=20):
+    # Search is public — no auth needed (oauth2/cookies only apply to stream resolution)
     search = f"ytsearch{max_candidates}:{query}"
-    cmd = [yt_dlp_bin, "--get-id", "--flat-playlist"]
-    if YT_OAUTH:
-        cmd += ["--username", "oauth2", "--password", ""]
-    elif YT_COOKIES_FILE and os.path.isfile(YT_COOKIES_FILE):
-        cmd += ["--cookies", YT_COOKIES_FILE]
-    cmd.append(search)
+    cmd = [yt_dlp_bin, "--get-id", "--flat-playlist", search]
     ids = subprocess.check_output(cmd, text=True).splitlines()
     ids = [i.strip() for i in ids if i.strip()]
     random.shuffle(ids)
