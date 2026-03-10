@@ -1056,7 +1056,8 @@ class MediaPlayer:
     # Stop + lifecycle
     # ------------------------------
     def _stop_current(self):
-        """Stop current media without setting the external stop flag (used internally before switching tracks)."""
+        """Stop current media and clear stop flag so the next play can start cleanly."""
+        self._stop_flag = False
         try:
             self.player.stop()
         except Exception:
