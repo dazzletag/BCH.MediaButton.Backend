@@ -934,13 +934,21 @@ class MediaPlayer:
                 subprocess.run([YT_DLP_BIN, "--rm-cache-dir"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self._yt_cache_cleared = True
 
-            # Try a couple of extractor args / formats to dodge SABR and image-only failures
+            # Try a couple of extractor args / formats to dodge SABR and image-only failures.
+            # Preference order:
+            #   ios       — no PO Token needed, returns direct MP4 streams
+            #   mweb      — mobile web client, avoids SABR, no PO Token
+            #   tv_embedded — TV client, usually works without extra tokens
+            #   android   — needs GVS PO Token on newer yt-dlp; keep as fallback
+            #   None      — yt-dlp defaults (may hit SABR)
             extractor_variants = []
             if YT_EXTRACTOR_ARGS:
                 extractor_variants.append(YT_EXTRACTOR_ARGS)
             extractor_variants.extend([
-                "youtube:player_client=android",
+                "youtube:player_client=ios",
+                "youtube:player_client=mweb",
                 "youtube:player_client=tv_embedded",
+                "youtube:player_client=android",
                 None,  # yt-dlp defaults
             ])
 
