@@ -78,6 +78,8 @@ EDDYSTONE_UUID = "feaa"
 
 # Presence & timing knobs (overridable in config.yaml)
 LAST_SEEN = {}  # resident -> ts
+LAST_OFF   = {}  # resident -> ts when session last stopped
+RADIO_FIRST_THRESHOLD = 30  # seconds off before starting with radio + photos
 GONE_TIMEOUT = 6               # seconds unseen before stopping
 DETECTION_COOLDOWN = 20         # seconds between trigger actions per beacon
 AVOID_RECENT_N = 6              # when drawing randomly, avoid last N items
@@ -1337,6 +1339,7 @@ class Engine:
                         print(f"[WATCHDOG] {resident} switch OFF — stopping session.")
                         self._stop_session(resident, from_thread=False)
                         LAST_SEEN.pop(resident, None)
+                        LAST_OFF[resident] = now
                         self.ui.back_to_idle()
 
             except Exception as e:
@@ -1409,10 +1412,15 @@ class Engine:
         if resident in self.sessions:
             return
 
-        print(f"[ENGINE] Starting session for {resident}")
+        off_since = LAST_OFF.get(resident, 0)
+        radio_first = (now - off_since) >= RADIO_FIRST_THRESHOLD
+        if radio_first:
+            print(f"[ENGINE] Starting session for {resident} (radio-first: off for {now - off_since:.0f}s)")
+        else:
+            print(f"[ENGINE] Starting session for {resident}")
 
         with self._ensure_lock(resident):
-            sess = self._make_session(resident)
+            sess = self._make_session(resident, radio_first=radio_first)
             self.sessions[resident] = sess
 
             t = threading.Thread(target=self._session_loop, args=(resident,), daemon=True)
@@ -1421,7 +1429,7 @@ class Engine:
 
     
     # Playlist building / caching
-    def _make_session(self, resident, *, playlist_override=None, ordered: bool = False, start_index: int = 0):
+    def _make_session(self, resident, *, playlist_override=None, ordered: bool = False, start_index: int = 0, radio_first: bool = False):
         sess = {
             "resident": resident,
             "running": True,
@@ -1429,6 +1437,7 @@ class Engine:
             "playlist": [],
             "playlist_mode": "ordered" if ordered else "random",
             "cursor": max(0, start_index),
+            "radio_first": radio_first,
         }
 
         if playlist_override is not None:
@@ -1621,7 +1630,22 @@ class Engine:
             if not sess["running"]:
                 break
 
-            q = self._pick_next_query_random(sess)
+            # If the button was off for ≥30s, start with radio + ambient photos
+            if sess.pop("radio_first", False):
+                playlist = sess.get("playlist") or []
+                radio_items = [x for x in playlist if _classify_kind(x) == "radio"]
+                if radio_items:
+                    q = random.choice(radio_items)
+                    sess["last_kind"] = "radio"
+                    print(f"[ENGINE] Radio-first: starting with radio for {resident}")
+                elif radio_options:
+                    q = radio_options[0]
+                    sess["last_kind"] = "radio"
+                    print(f"[ENGINE] Radio-first: starting with radio bed for {resident}")
+                else:
+                    q = self._pick_next_query_random(sess)
+            else:
+                q = self._pick_next_query_random(sess)
             if not q:
                 break
 
