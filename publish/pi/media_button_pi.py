@@ -1633,7 +1633,19 @@ class Engine:
             # If the button was off for ≥30s, start with radio + ambient photos
             if sess.pop("radio_first", False):
                 playlist = sess.get("playlist") or []
-                radio_items = [x for x in playlist if _classify_kind(x) == "radio"]
+                def _is_radio_item(item):
+                    if isinstance(item, dict):
+                        t = (item.get("type") or item.get("kind") or item.get("mediaType") or item.get("media_type") or "").lower()
+                        if t == "radio":
+                            return True
+                        radio_hint = item.get("radioUrl") or item.get("radio") or item.get("station")
+                        url = item.get("url") or item.get("query") or radio_hint or ""
+                    else:
+                        url = str(item)
+                    if isinstance(url, str) and url.lower().startswith("radio:"):
+                        return True
+                    return bool(url and _is_radio_url(url))
+                radio_items = [x for x in playlist if _is_radio_item(x)]
                 if radio_items:
                     q = random.choice(radio_items)
                     sess["last_kind"] = "radio"
