@@ -81,6 +81,7 @@ export default function Dashboard() {
   const [loadingResident, setLoadingResident] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
   const [generatingAi, setGeneratingAi] = useState(false);
+  const [fetchingPhotos, setFetchingPhotos] = useState(false);
 
   const [playlistId, setPlaylistId] = useState("current");
   const [seasonalTheme, setSeasonalTheme] = useState("");
@@ -230,6 +231,38 @@ export default function Dashboard() {
       setError(`AI suggestions failed: ${msg}`);
     } finally {
       setGeneratingAi(false);
+    }
+  }, [call, manualText, residentQuery, saveResidentManual]);
+
+  const onFetchActivityPhotos = useCallback(async () => {
+    if (!residentQuery.trim()) {
+      setError("Select a resident before fetching activity photos.");
+      return;
+    }
+    setFetchingPhotos(true);
+    setError(null);
+    try {
+      const result = await call<{ count: number; mediaIds: string[] }>({
+        url: `/api/admin/residents/${encodeURIComponent(residentQuery.trim())}/fetch-activity-photos`,
+        method: "POST",
+      });
+      if (!result?.count) {
+        setSaveMessage("No new activity photos found in Mobizio for this resident.");
+        return;
+      }
+      const newTokens = (result.mediaIds ?? []).map((id) => `media:${id}`);
+      const existing = manualText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      const existingSet = new Set(existing);
+      const toAdd = newTokens.filter((t) => !existingSet.has(t));
+      const updated = [...existing, ...toAdd];
+      setManualText(updated.join("\n"));
+      await saveResidentManual(updated);
+      setSaveMessage(`${result.count} activity photo(s) imported from Mobizio and added to playlist.`);
+    } catch (err: any) {
+      console.error(err);
+      setError(`Failed to fetch activity photos: ${err?.message ?? "Unknown error"}`);
+    } finally {
+      setFetchingPhotos(false);
     }
   }, [call, manualText, residentQuery, saveResidentManual]);
 
@@ -679,6 +712,15 @@ export default function Dashboard() {
               })()}
             </div>
             <div className="nav-actions" style={{ gap: 8 }}>
+              <button
+                className="btn ghost"
+                type="button"
+                disabled={fetchingPhotos || !residentQuery.trim()}
+                onClick={onFetchActivityPhotos}
+                title="Import recent activity record photos from Mobizio into the playlist"
+              >
+                {fetchingPhotos ? "Importing..." : "Import activity photos"}
+              </button>
               <button
                 className="btn ghost"
                 type="button"

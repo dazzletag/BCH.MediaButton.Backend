@@ -52,6 +52,15 @@ public class StorageSasService
         return (sas, expiresAt);
     }
 
+    public async Task UploadBlobAsync(string container, string blobPath, Stream content, string contentType)
+    {
+        var blobClient = _blobServiceClient.GetBlobContainerClient(container).GetBlobClient(blobPath);
+        await blobClient.UploadAsync(content, new Azure.Storage.Blobs.Models.BlobUploadOptions
+        {
+            HttpHeaders = new Azure.Storage.Blobs.Models.BlobHttpHeaders { ContentType = contentType }
+        });
+    }
+
     public async Task<bool> DeleteBlobIfExistsAsync(string container, string blobPath)
     {
         var blobClient = _blobServiceClient.GetBlobContainerClient(container).GetBlobClient(blobPath);

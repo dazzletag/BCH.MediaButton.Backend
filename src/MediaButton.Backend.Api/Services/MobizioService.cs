@@ -16,6 +16,8 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
     private const string ApiBase = "https://cloud7.mobizio.com/rest";
 
     private int FormId => configuration.GetValue("Mobizio:ThisIsMeFormId", 1021596);
+    private int ActivityRecordFormId => configuration.GetValue("Mobizio:ActivityRecordFormId", 1024129);
+    private int ActivityPhotoLimit => configuration.GetValue("Mobizio:ActivityPhotoLimit", 5);
     private string Username => configuration["Mobizio:Username"] ?? "";
     private string Password => configuration["Mobizio:Password"] ?? "";
 
@@ -136,6 +138,114 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
         return (null, null, null);
     }
 
+    /// <summary>
+    /// Returns up to <see cref="ActivityPhotoLimit"/> (elementId, downloadUrl) pairs from
+    /// the most recent activity record form submissions for the named resident.
+    /// </summary>
+    public async Task<IReadOnlyList<(int ElementId, string Url)>> GetActivityPhotoUrlsAsync(
+        string residentName, int? maxPhotos = null)
+    {
+        var limit = maxPhotos ?? ActivityPhotoLimit;
+        var token = await GetTokenAsync();
+
+        using var http = httpFactory.CreateClient();
+        http.Timeout = TimeSpan.FromSeconds(60);
+        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var (caseId, _, _) = await FindCaseAsync(http, residentName);
+        if (caseId is null) return [];
+
+        // Get form versions for the activity record form
+        var versionsResp = await http.GetAsync(
+            $"{ApiBase}/v3/forms/{ActivityRecordFormId}/versions?start=0&limit=100&column=id&direction=1");
+        if (!versionsResp.IsSuccessStatusCode) return [];
+
+        var versionsJson = await versionsResp.Content.ReadFromJsonAsync<JsonObject>();
+        var versionIds = (versionsJson?["results"]?.AsArray() ?? [])
+            .Select(v => v?["id"]?.ToString())
+            .OfType<string>()
+            .ToList();
+
+        // Collect element IDs that have a valueBlobRef, across recent submissions
+        var photoElementIds = new List<int>();
+
+        foreach (var versionId in versionIds)
+        {
+            if (photoElementIds.Count >= limit) break;
+
+            var mql = Uri.EscapeDataString($"formVersionId={versionId},caseDataGroupCaseId={caseId}");
+            var formsResp = await http.GetAsync(
+                $"{ApiBase}/v3/submittedForms?start=0&limit=20&column=createdDateTime&direction=-1&mql={mql}");
+            if (!formsResp.IsSuccessStatusCode) continue;
+
+            var formsJson = await formsResp.Content.ReadFromJsonAsync<JsonObject>();
+            foreach (var form in formsJson?["results"]?.AsArray() ?? [])
+            {
+                if (photoElementIds.Count >= limit) break;
+
+                var submittedFormId = form?["id"]?.ToString();
+                if (submittedFormId is null) continue;
+
+                var elemResp = await http.GetAsync(
+                    $"{ApiBase}/v3/submittedForms/{submittedFormId}/elements");
+                if (!elemResp.IsSuccessStatusCode) continue;
+
+                var elemContent = await elemResp.Content.ReadFromJsonAsync<JsonNode>();
+                var elements = elemContent is JsonArray arr
+                    ? arr
+                    : elemContent?["results"]?.AsArray() ?? [];
+
+                foreach (var elem in elements)
+                {
+                    if (photoElementIds.Count >= limit) break;
+                    var blobRef = elem?["valueBlobRef"];
+                    if (blobRef is null || blobRef.GetValueKind() == System.Text.Json.JsonValueKind.Null)
+                        continue;
+                    if (elem?["id"]?.GetValue<int?>() is int elemId)
+                        photoElementIds.Add(elemId);
+                }
+            }
+        }
+
+        if (photoElementIds.Count == 0) return [];
+
+        // Generate download URLs for the collected element IDs
+        var dlResp = await http.PostAsJsonAsync(
+            $"{ApiBase}/v3/mobile-sync/generate-blob-storage-url-for-download",
+            photoElementIds);
+
+        if (!dlResp.IsSuccessStatusCode) return [];
+
+        var dlJson = await dlResp.Content.ReadFromJsonAsync<JsonNode>();
+        var results = dlJson is JsonArray topArr
+            ? topArr
+            : dlJson?["results"]?.AsArray() ?? [];
+
+        var output = new List<(int, string)>();
+        for (int i = 0; i < results.Count && i < photoElementIds.Count; i++)
+        {
+            var item = results[i];
+            string? url = null;
+
+            if (item is JsonValue jv && jv.TryGetValue<string>(out var s))
+            {
+                url = s;
+            }
+            else if (item is JsonObject jo)
+            {
+                url = jo["url"]?.GetValue<string>()
+                      ?? jo["downloadUrl"]?.GetValue<string>()
+                      ?? jo["blobUrl"]?.GetValue<string>()
+                      ?? jo["sasUrl"]?.GetValue<string>();
+            }
+
+            if (!string.IsNullOrWhiteSpace(url))
+                output.Add((photoElementIds[i], url));
+        }
+
+        return output;
+    }
+
     private async Task<IReadOnlyDictionary<string, string>> GetThisIsMeFieldsAsync(
         HttpClient http, string caseId)
     {
@@ -153,7 +263,7 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
 
         foreach (var versionId in versionIds)
         {
-            var mql = Uri.EscapeDataString($"formVersionId={versionId} AND caseDataGroupCaseId={caseId}");
+            var mql = Uri.EscapeDataString($"formVersionId={versionId},caseDataGroupCaseId={caseId}");
             var formsResp = await http.GetAsync(
                 $"{ApiBase}/v3/submittedForms?start=0&limit=100&column=id&direction=1&mql={mql}");
             if (!formsResp.IsSuccessStatusCode) continue;
