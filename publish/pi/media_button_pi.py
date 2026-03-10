@@ -1712,9 +1712,11 @@ class RemoteMenuController:
         self.playlist = []
         self.labels = []
         self._special_items = ["▶  Play All", "⇄  Shuffle"]
+        self._last_key_time: dict = {}
         if not self.enabled:
             return
         self._bind_keys()
+        self._start_focus_maintainer()
         if self.show_menu_on_start:
             self.open_menu()
 
@@ -1812,21 +1814,45 @@ class RemoteMenuController:
                 self.engine._stop_session(res, from_thread=False)
             self.ui.back_to_idle()
 
+    def _debounced(self, name: str, handler, ms: int = 200):
+        """Wrap handler to suppress FLIRC key-repeat events within `ms` milliseconds."""
+        def _wrapper(*args):
+            now = time.monotonic()
+            if now - self._last_key_time.get(name, 0) < ms / 1000.0:
+                return
+            self._last_key_time[name] = now
+            handler(*args)
+        return _wrapper
+
+    def _start_focus_maintainer(self):
+        """Periodically reclaim Tk focus so FLIRC events aren't captured by VLC sub-windows."""
+        def _tick():
+            try:
+                self.ui.root.focus_force()
+            except Exception:
+                pass
+            self.ui.root.after(400, _tick)
+        self.ui.root.after(400, _tick)
+
     def _bind_keys(self):
         bindings = [
-            ("menu", self.toggle_menu),
-            ("up", lambda e=None: self.move_selection(-1)),
-            ("down", lambda e=None: self.move_selection(1)),
+            ("menu",   self.toggle_menu),
+            ("up",     lambda e=None: self.move_selection(-1)),
+            ("down",   lambda e=None: self.move_selection(1)),
             ("select", self.play_selected),
-            ("pause", self.pause_or_resume),
-            ("back", self.back),
+            ("pause",  self.pause_or_resume),
+            ("back",   self.back),
         ]
         for name, handler in bindings:
             key = self.keymap.get(name)
             if not key:
                 continue
             try:
-                self.ui.root.bind(f"<KeyPress-{key}>", handler)
+                # bind_all: captures events regardless of which child widget holds focus.
+                # The Escape binding here also overrides the quit shortcut in MediaUI,
+                # so Back on the remote returns to idle rather than exiting the process.
+                self.ui.root.bind_all(f"<KeyPress-{key}>", self._debounced(name, handler))
+                print(f"[REMOTE] Bound '{name}' → <{key}>")
             except Exception as e:
                 print(f"[REMOTE] Failed to bind key {key}: {e}")
 

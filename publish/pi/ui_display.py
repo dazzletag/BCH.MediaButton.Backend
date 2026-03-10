@@ -50,8 +50,11 @@ class MediaUI:
         self.root.attributes("-fullscreen", True)
         self.root.attributes("-topmost", True)
         self.root.after(300, lambda: self.root.attributes("-fullscreen", True))
-        self.root.bind("<Escape>", lambda e: self._exit())
+        # Quit shortcuts — Escape is intentionally NOT listed here because
+        # RemoteMenuController binds Escape to "Back" via bind_all (which takes
+        # precedence).  Use Ctrl+Q or the 'q' key to exit at the keyboard.
         self.root.bind("<q>", lambda e: self._exit())
+        self.root.bind("<Control-q>", lambda e: self._exit())
         self.on_quit = on_quit
         self._gif_delay_id = None
 
@@ -306,9 +309,9 @@ class MediaUI:
 
     def back_to_idle(self):
         def _do():
-        # Put today’s date back when we’re on the idle screen
             self.subtitle_var.set(_today_long_date())
             self._show(self.idle_frame)
+            self.root.focus_force()  # reclaim focus from VLC so FLIRC events are received
         self.root.after(0, _do)
 
 
@@ -372,6 +375,7 @@ class MediaUI:
                 except Exception:
                     pass
             self._show(self.menu_frame)
+            self.root.focus_force()  # reclaim focus from VLC so FLIRC events are received
             self.root.update_idletasks()
         self.root.after(0, _do)
 
