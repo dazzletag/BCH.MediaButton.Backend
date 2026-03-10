@@ -70,6 +70,7 @@ YT_DLP_BIN = os.getenv("YT_DLP_BIN", os.path.join(os.path.dirname(sys.executable
 YT_EXTRACTOR_ARGS = os.getenv("YT_EXTRACTOR_ARGS", "youtube:player_client=web")
 YT_FORCE_IPV4 = os.getenv("YT_FORCE_IPV4", "0") == "1"
 YT_FORMAT = os.getenv("YT_FORMAT", "bv*[ext=mp4][height<=720][fps<=30][vcodec^=avc1]+ba/b")
+YT_COOKIES_FILE = os.getenv("YT_COOKIES_FILE", "")  # e.g. /etc/media-button/youtube-cookies.txt
 CONFIG_PATH = os.path.join(BASE_DIR, "config.yaml")
 
 EDDYSTONE_UUID = "feaa"
@@ -165,8 +166,11 @@ def _detect_alsa_device():
 
 def pick_random_youtube_id(query, yt_dlp_bin, avoid_ids, max_candidates=20):
     search = f"ytsearch{max_candidates}:{query}"
-    cmd = f"{shlex.quote(yt_dlp_bin)} --get-id --flat-playlist {shlex.quote(search)}"
-    ids = subprocess.check_output(shlex.split(cmd), text=True).splitlines()
+    cmd = [yt_dlp_bin, "--get-id", "--flat-playlist"]
+    if YT_COOKIES_FILE and os.path.isfile(YT_COOKIES_FILE):
+        cmd += ["--cookies", YT_COOKIES_FILE]
+    cmd.append(search)
+    ids = subprocess.check_output(cmd, text=True).splitlines()
     ids = [i.strip() for i in ids if i.strip()]
     random.shuffle(ids)
     for vid in ids:
@@ -965,6 +969,8 @@ class MediaPlayer:
                     cmd += ["--extractor-args", extractor]
                 if YT_FORCE_IPV4:
                     cmd.append("--force-ipv4")
+                if YT_COOKIES_FILE and os.path.isfile(YT_COOKIES_FILE):
+                    cmd += ["--cookies", YT_COOKIES_FILE]
                 cmd.append(url)
                 return subprocess.check_output(cmd, text=True).splitlines()
 
