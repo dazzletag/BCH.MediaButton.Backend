@@ -1612,6 +1612,9 @@ class Engine:
             if imgs:
                 sess_photos.extend(imgs)
                 print(f"[PHOTO] {len(imgs)} photo(s) ready for ambient slideshow")
+                # If radio started before photos finished loading, kick off the slideshow now
+                if sess.get("last_kind") == "radio":
+                    self.ui.start_ambient_slideshow(list(sess_photos))
 
         _has_photos = any(
             (isinstance(i, dict) and (i.get("type") or "").lower() in {"photo", "image", "picture"})
