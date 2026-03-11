@@ -148,6 +148,40 @@ public class AdminMediaController : ControllerBase
         return Ok(new { url = uri, expiresAtUtc = expiresAt });
     }
 
+    [HttpPatch("{id:guid}")]
+    public async Task<IActionResult> PatchMedia(Guid id, [FromBody] MediaButtonBackend.Api.Models.MediaPatchRequest request)
+    {
+        var media = await _db.MediaAssets.FirstOrDefaultAsync(m => m.Id == id);
+        if (media == null) return NotFound();
+
+        var isAdmin = User.IsInRole("Admin");
+        var user = User.Identity?.Name ?? string.Empty;
+        if (!isAdmin && !string.Equals(media.UploadedBy, user, StringComparison.OrdinalIgnoreCase))
+            return Forbid();
+
+        if (request.Name is not null)
+            media.Name = request.Name;
+
+        string? oldBlobPath = null;
+        if (request.BlobPath is not null && request.BlobPath != media.BlobPath)
+        {
+            oldBlobPath = media.BlobPath;
+            media.BlobPath = request.BlobPath;
+        }
+
+        await _db.SaveChangesAsync();
+
+        if (oldBlobPath is not null)
+        {
+            var container = media.Type == MediaType.Photo
+                ? _config["Storage:ContainerPhotos"] ?? "photos"
+                : _config["Storage:ContainerVideos"] ?? "videos";
+            _ = _sasService.DeleteBlobIfExistsAsync(container, oldBlobPath);
+        }
+
+        return NoContent();
+    }
+
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id)
     {

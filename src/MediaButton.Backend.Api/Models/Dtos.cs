@@ -36,3 +36,5 @@ public record ResidentPlaylistAssignment(string? PlaylistId, List<string>? Radio
 public record ManualPlaylistResponse(string Resident, IReadOnlyList<object?> Items, DateTimeOffset? UpdatedAtUtc, string? UpdatedBy, DateTimeOffset? LastPolledAt);
 
 public record DeviceManualPlaylistResponse(string Resident, IReadOnlyList<object?> Items, DateTimeOffset? UpdatedAtUtc, string? UpdatedBy);
+
+public record MediaPatchRequest(string? Name, string? BlobPath);

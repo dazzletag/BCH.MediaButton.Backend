@@ -144,7 +144,7 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
     /// the most recent activity record form submissions for the named resident.
     /// </summary>
     public async Task<IReadOnlyList<(int ElementId, byte[] Data, string ContentType)>> GetActivityPhotoUrlsAsync(
-        string residentName, List<string> diag, int? maxPhotos = null)
+        string residentName, List<string> diag, HashSet<int>? skipElementIds = null, int? maxPhotos = null)
     {
         var limit = maxPhotos ?? ActivityPhotoLimit;
         var token = await GetTokenAsync();
@@ -266,8 +266,13 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
 
                     try
                     {
-                        var bytes = Convert.FromBase64String(encoded);
                         var elemId = elem?["id"]?.GetValue<long?>() ?? 0;
+                        if (skipElementIds?.Contains((int)elemId) == true)
+                        {
+                            diag.Add($"  form {submittedFormId} elem {elemId}: skipping (already imported)");
+                            continue;
+                        }
+                        var bytes = Convert.FromBase64String(encoded);
                         diag.Add($"  form {submittedFormId} elem {elemId}: photo {bytes.Length} bytes, {contentType}");
                         output.Add(((int)elemId, bytes, contentType));
                     }

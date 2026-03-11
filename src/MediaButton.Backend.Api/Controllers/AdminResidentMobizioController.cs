@@ -44,11 +44,29 @@ public class AdminResidentMobizioController : ControllerBase
         _log.LogInformation("[ActivityPhotos] Starting import for resident: {Resident}", residentKey);
         var diag = new List<string>();
 
-        // 1. Fetch photo bytes from Mobizio (decoded from encodedValue in elements)
+        // Collect already-imported element IDs so the service can skip them and fetch the next batch
+        var safeResidentForQuery = residentKey.Replace("/", "-").Replace("\\", "-");
+        var blobPrefix = $"photo/{safeResidentForQuery}/mobizio/elem_";
+        var existingPaths = await _db.MediaAssets
+            .Where(m => m.BlobPath.StartsWith(blobPrefix))
+            .Select(m => m.BlobPath)
+            .ToListAsync();
+        var alreadyImported = existingPaths
+            .Select(p =>
+            {
+                var seg = p[blobPrefix.Length..];
+                var dot = seg.IndexOf('.');
+                return int.TryParse(dot >= 0 ? seg[..dot] : seg, out var id) ? id : -1;
+            })
+            .Where(id => id >= 0)
+            .ToHashSet();
+        diag.Add($"{alreadyImported.Count} element(s) already imported, will skip those");
+
+        // 1. Fetch photo bytes from Access Care Planning (decoded from encodedValue in elements)
         IReadOnlyList<(int ElementId, byte[] Data, string ContentType)> photos;
         try
         {
-            photos = await _mobizio.GetActivityPhotoUrlsAsync(residentKey, diag);
+            photos = await _mobizio.GetActivityPhotoUrlsAsync(residentKey, diag, alreadyImported);
         }
         catch (Exception ex)
         {

@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import { useApiClient } from "../hooks/useApiClient";
 import { appConfig } from "../config";
-import type { ManualPlaylistResponse, MediaItem, MediaType, Playlist, ResidentList } from "../types";
+import type { ManualPlaylistResponse, MediaItem, MediaType, ResidentList } from "../types";
 
 type UploadRequest = {
   fileName: string;
@@ -36,38 +36,15 @@ function formatDate(dateString?: string) {
   }).format(new Date(dateString));
 }
 
-function StatCard({
-  title,
-  value,
-  hint,
-}: {
-  title: string;
-  value: string;
-  hint: string;
-}) {
-  return (
-    <div className="card glass">
-      <div className="card-header">
-        <p className="card-title">{title}</p>
-        <span className="status-dot" />
-      </div>
-      <div className="metric">{value}</div>
-      <div className="muted">{hint}</div>
-    </div>
-  );
-}
-
 export default function Dashboard() {
   const isAuthed = useIsAuthenticated();
   const { instance, accounts } = useMsal();
   const { call } = useApiClient();
 
-  const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [assigning, setAssigning] = useState(false);
 
   const [selectedMediaType, setSelectedMediaType] = useState<MediaType>("Photo");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -83,12 +60,18 @@ export default function Dashboard() {
   const [generatingAi, setGeneratingAi] = useState(false);
   const [fetchingPhotos, setFetchingPhotos] = useState(false);
 
-  const [playlistId, setPlaylistId] = useState("current");
   const [seasonalTheme, setSeasonalTheme] = useState("");
   const [radioFavorites, setRadioFavorites] = useState<string[]>([]);
   const [urlInput, setUrlInput] = useState("");
   const [playlistUrls, setPlaylistUrls] = useState<string[]>([]);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+
+  // Activity photo viewer state
+  const [photoSasUrls, setPhotoSasUrls] = useState<Record<string, string>>({});
+  const [photoRotations, setPhotoRotations] = useState<Record<string, number>>({});
+  const [photoRenameValues, setPhotoRenameValues] = useState<Record<string, string>>({});
+  const [savingPhotoIds, setSavingPhotoIds] = useState<Set<string>>(new Set());
+  const loadingPhotoSasRef = useRef<Set<string>>(new Set());
 
   const accountName = useMemo(() => accounts[0]?.name ?? "Signed-in user", [accounts]);
 
@@ -97,11 +80,7 @@ export default function Dashboard() {
     setLoading(true);
     setError(null);
     try {
-      const [playlistData, mediaData] = await Promise.all([
-        call<Playlist[]>({ url: "/api/admin/playlists", method: "GET" }),
-        call<MediaItem[]>({ url: "/api/admin/media", method: "GET" }),
-      ]);
-      setPlaylists(playlistData);
+      const mediaData = await call<MediaItem[]>({ url: "/api/admin/media", method: "GET" });
       setMedia(mediaData);
     } catch (err) {
       console.error(err);
@@ -116,12 +95,6 @@ export default function Dashboard() {
   }, [loadData]);
 
   useEffect(() => {
-    if (playlists.length && !playlistId) {
-      setPlaylistId(playlists[0].id || "current");
-    }
-  }, [playlists, playlistId]);
-
-  useEffect(() => {
     const fetchResidents = async () => {
       try {
         const residents = await call<ResidentList>({ url: "/api/admin/residents", method: "GET" });
@@ -133,15 +106,33 @@ export default function Dashboard() {
     fetchResidents();
   }, [call]);
 
-  const applyOptionsToManual = (base: string[]) => {
-    const extras: string[] = [];
-    if (seasonalTheme) extras.push(`season:${seasonalTheme}`);
-    radioFavorites.forEach((u) => extras.push(`radio:${u}`));
-    playlistUrls.forEach((u) => extras.push(u));
-    const combined = Array.from(new Set([...base, ...extras]));
-    setManualText(combined.join("\n"));
-    return combined;
-  };
+  const residentMedia = useMemo(
+    () => residentQuery ? media.filter((m) => m.resident === residentQuery) : [],
+    [media, residentQuery]
+  );
+
+  const activityPhotos = useMemo(
+    () => residentMedia.filter((m) => m.blobPath.includes("/mobizio/")),
+    [residentMedia]
+  );
+
+  const loadPhotoSas = useCallback(
+    async (id: string) => {
+      if (loadingPhotoSasRef.current.has(id)) return;
+      loadingPhotoSasRef.current.add(id);
+      try {
+        const sas = await call<{ url: string }>({ url: `/api/admin/media/${id}/sas`, method: "GET" });
+        setPhotoSasUrls((prev) => (prev[id] ? prev : { ...prev, [id]: sas.url }));
+      } catch {
+        loadingPhotoSasRef.current.delete(id);
+      }
+    },
+    [call]
+  );
+
+  useEffect(() => {
+    activityPhotos.forEach((p) => loadPhotoSas(p.id));
+  }, [activityPhotos, loadPhotoSas]);
 
   const loadResidentManual = useCallback(async () => {
     if (!residentQuery.trim()) {
@@ -155,9 +146,9 @@ export default function Dashboard() {
         url: `/api/admin/residents/${encodeURIComponent(residentQuery.trim())}/manual-playlist`,
         method: "GET",
       });
-      const items = data?.items ?? [];
-      const withOptions = applyOptionsToManual(items);
-      setManualText(withOptions.join("\n"));
+      const items = data?.items ?? [] as string[];
+      const combined = Array.from(new Set(items));
+      setManualText(combined.join("\n"));
       setManualMeta({ updatedAt: data?.updatedAtUtc, updatedBy: data?.updatedBy, lastPolledAt: data?.lastPolledAt });
     } catch (err) {
       console.error(err);
@@ -167,7 +158,7 @@ export default function Dashboard() {
     } finally {
       setLoadingResident(false);
     }
-  }, [call, residentQuery, applyOptionsToManual]);
+  }, [call, residentQuery]);
 
   const saveResidentManual = useCallback(
     async (overrideItems?: string[]) => {
@@ -201,6 +192,38 @@ export default function Dashboard() {
     [accountName, call, manualText, residentQuery]
   );
 
+  const saveRadioToPlaylist = useCallback(async () => {
+    if (!residentQuery.trim()) {
+      setError("Select a resident first.");
+      return;
+    }
+    if (!radioFavorites.length) {
+      setError("Select at least one radio station.");
+      return;
+    }
+    const radioLines = radioFavorites.map((u) => `radio:${u}`);
+    const existing = manualText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const existingSet = new Set(existing);
+    const toAdd = radioLines.filter((l) => !existingSet.has(l));
+    const updated = [...existing, ...toAdd];
+    setManualText(updated.join("\n"));
+    await saveResidentManual(updated);
+    setSaveMessage(toAdd.length ? `${toAdd.length} radio station(s) added to playlist.` : "Radio stations already in playlist.");
+  }, [radioFavorites, manualText, residentQuery, saveResidentManual]);
+
+  const applySeasonalToPlaylist = useCallback(async () => {
+    if (!residentQuery.trim()) {
+      setError("Select a resident first.");
+      return;
+    }
+    const existing = manualText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const filtered = existing.filter((l) => !l.startsWith("season:"));
+    const updated = seasonalTheme ? [...filtered, `season:${seasonalTheme}`] : filtered;
+    setManualText(updated.join("\n"));
+    await saveResidentManual(updated);
+    setSaveMessage(seasonalTheme ? `Seasonal focus "${seasonalTheme}" applied to playlist.` : "Seasonal focus cleared from playlist.");
+  }, [seasonalTheme, manualText, residentQuery, saveResidentManual]);
+
   const onGenerateAiSuggestions = useCallback(async () => {
     if (!residentQuery.trim()) {
       setError("Select a resident before generating suggestions.");
@@ -215,7 +238,7 @@ export default function Dashboard() {
       });
       const newItems = result?.items ?? [];
       if (!newItems.length) {
-        setError("No suggestions returned. The resident may not have a care plan in Mobizio.");
+        setError("No suggestions returned. The resident may not have a care plan in Access Care Planning.");
         return;
       }
       const existing = manualText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -247,7 +270,7 @@ export default function Dashboard() {
         method: "POST",
       });
       if (!result?.count) {
-        setSaveMessage("No new activity photos found in Mobizio for this resident.");
+        setSaveMessage("No new activity photos found in Access Care Planning for this resident.");
         return;
       }
       const newTokens = (result.mediaIds ?? []).map((id) => `media:${id}`);
@@ -257,14 +280,15 @@ export default function Dashboard() {
       const updated = [...existing, ...toAdd];
       setManualText(updated.join("\n"));
       await saveResidentManual(updated);
-      setSaveMessage(`${result.count} activity photo(s) imported from Mobizio and added to playlist.`);
+      setSaveMessage(`${result.count} activity photo(s) imported from Access Care Planning and added to playlist.`);
+      await loadData();
     } catch (err: any) {
       console.error(err);
       setError(`Failed to fetch activity photos: ${err?.message ?? "Unknown error"}`);
     } finally {
       setFetchingPhotos(false);
     }
-  }, [call, manualText, residentQuery, saveResidentManual]);
+  }, [call, loadData, manualText, residentQuery, saveResidentManual]);
 
   const onUploadMedia = useCallback(
     async (evt: React.FormEvent) => {
@@ -280,7 +304,6 @@ export default function Dashboard() {
       setUploading(true);
       setError(null);
       try {
-        // API expects numeric enum (0 Photo, 1 Video)
         const apiMediaType = selectedMediaType === "Photo" ? 0 : 1;
         const uploadBody: UploadRequest = {
           fileName: selectedFile.name,
@@ -320,10 +343,10 @@ export default function Dashboard() {
           data: registerBody,
         });
 
-        // Add uploaded item into manual playlist view
         const mediaToken =
           registerResponse?.mediaId ? `media:${registerResponse.mediaId}` : mediaName || selectedFile.name;
-        const updated = applyOptionsToManual([...manualText.split(/\r?\n/).filter(Boolean), mediaToken]);
+        const existing = manualText.split(/\r?\n/).filter(Boolean);
+        const updated = Array.from(new Set([...existing, mediaToken]));
         setManualText(updated.join("\n"));
         await saveResidentManual(updated);
 
@@ -348,54 +371,89 @@ export default function Dashboard() {
         setUploading(false);
       }
     },
-    [call, duration, loadData, manualText, mediaName, saveResidentManual, selectedFile, selectedMediaType, applyOptionsToManual]
+    [call, duration, loadData, manualText, mediaName, saveResidentManual, selectedFile, selectedMediaType]
   );
 
-  const onAssignPlaylist = useCallback(
-    async (evt: React.FormEvent) => {
-      evt.preventDefault();
-      if (!residentQuery.trim()) {
-        setError("Resident and playlist are required.");
-        return;
-      }
-      setAssigning(true);
-      setError(null);
-      setSaveMessage(null);
+  const savePhotoRotation = useCallback(
+    async (photo: MediaItem) => {
+      const angle = photoRotations[photo.id] ?? 0;
+      if (angle === 0) return;
+      const sasUrl = photoSasUrls[photo.id];
+      if (!sasUrl) return;
+
+      setSavingPhotoIds((prev) => new Set(prev).add(photo.id));
       try {
-        // Only save if the textarea has content — guard against silently wiping
-        // an existing playlist when the user hasn't loaded it first.
-        if (manualText.trim()) {
-          await saveResidentManual();
-        }
-        const payload = {
-          playlistId: (playlistId || "current").trim(),
-          radioFavorites,
-          playlistUrls,
-          seasonalTheme,
-          resident: residentQuery.trim(),
-        };
-      await call({
-        url: `/api/admin/residents/${encodeURIComponent(residentQuery.trim())}/playlist`,
-        method: "PUT",
-        data: payload,
-      });
-      setSaveMessage("Playlist sent to Press & Play. The Pi will pull it down shortly.");
-    } catch (err) {
-      console.error(err);
-      setError("Assignment failed. Confirm the resident and playlist.");
-    } finally {
-      setAssigning(false);
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject(new Error("Image load failed"));
+          img.src = sasUrl;
+        });
+
+        const rad = (angle * Math.PI) / 180;
+        const sin = Math.abs(Math.sin(rad));
+        const cos = Math.abs(Math.cos(rad));
+        const w = Math.round(img.width * cos + img.height * sin);
+        const h = Math.round(img.width * sin + img.height * cos);
+
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d")!;
+        ctx.translate(w / 2, h / 2);
+        ctx.rotate(rad);
+        ctx.drawImage(img, -img.width / 2, -img.height / 2);
+
+        const contentType = photo.contentType || "image/jpeg";
+        const blob = await new Promise<Blob>((resolve, reject) =>
+          canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Canvas toBlob failed"))), contentType)
+        );
+
+        const fileName = photo.blobPath.split("/").pop() ?? "rotated.jpg";
+        const upload = await call<UploadResponse>({
+          url: "/api/admin/media/upload-url",
+          method: "POST",
+          data: { fileName, type: 0, resident: photo.resident || residentQuery.trim() },
+        });
+
+        await fetch(upload.uploadUrl, {
+          method: "PUT",
+          headers: { "x-ms-blob-type": "BlockBlob", "Content-Type": contentType },
+          body: blob,
+        });
+
+        await call({ url: `/api/admin/media/${photo.id}`, method: "PATCH", data: { blobPath: upload.blobPath } });
+
+        const newSas = await call<{ url: string }>({ url: `/api/admin/media/${photo.id}/sas`, method: "GET" });
+        setPhotoSasUrls((prev) => ({ ...prev, [photo.id]: newSas.url }));
+        setPhotoRotations((prev) => { const n = { ...prev }; delete n[photo.id]; return n; });
+        setSaveMessage("Photo rotation saved.");
+      } catch (err: any) {
+        setError(`Failed to save rotation: ${err?.message ?? "Unknown error"}`);
+      } finally {
+        setSavingPhotoIds((prev) => { const n = new Set(prev); n.delete(photo.id); return n; });
       }
     },
-    [call, manualText, playlistId, playlistUrls, radioFavorites, residentQuery, saveResidentManual, seasonalTheme]
+    [call, photoRotations, photoSasUrls, residentQuery]
   );
 
-  const mediaByType = useMemo(
-    () => ({
-      photo: media.filter((m) => m.type === "Photo"),
-      video: media.filter((m) => m.type === "Video"),
-    }),
-    [media]
+  const renamePhoto = useCallback(
+    async (id: string) => {
+      const newName = photoRenameValues[id]?.trim();
+      if (!newName) return;
+      setSavingPhotoIds((prev) => new Set(prev).add(id));
+      try {
+        await call({ url: `/api/admin/media/${id}`, method: "PATCH", data: { name: newName } });
+        await loadData();
+        setSaveMessage("Photo renamed.");
+      } catch (err: any) {
+        setError(`Failed to rename: ${err?.message ?? "Unknown error"}`);
+      } finally {
+        setSavingPhotoIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
+      }
+    },
+    [call, loadData, photoRenameValues]
   );
 
   const handleLogout = () => instance.logoutRedirect();
@@ -437,7 +495,7 @@ export default function Dashboard() {
       <section className="hero">
         <div className="hero-left">
           <div className="hero-eyebrow">Bristol Care Homes</div>
-          <h1 className="hero-title">Design soothing playlists for every room.</h1>
+          <h1 className="hero-title">Design soothing playlists for your loved ones.</h1>
           <p className="hero-copy">
             Upload photos or videos, arrange them into playlists, and assign them to
             any Media Button Pi in seconds. Secure sign-in via your home tenant keeps
@@ -476,19 +534,6 @@ export default function Dashboard() {
             <span className="muted">{saveMessage}</span>
           </div>
         )}
-
-        <div className="grid c2">
-          <StatCard
-            title="Photos"
-            value={loading ? "-" : `${mediaByType.photo.length}`}
-            hint="Gentle visuals for residents."
-          />
-          <StatCard
-            title="Videos"
-            value={loading ? "-" : `${mediaByType.video.length}`}
-            hint="Stories that feel familiar."
-          />
-        </div>
 
         <div className="card glass">
           <div className="card-header">
@@ -565,7 +610,7 @@ export default function Dashboard() {
                 </label>
               </div>
               <button className="btn primary" type="submit" disabled={uploading}>
-                {uploading ? "Uploading." : "Upload & register"}
+                {uploading ? "Uploading..." : "Upload & register"}
               </button>
             </form>
           </div>
@@ -596,6 +641,15 @@ export default function Dashboard() {
                 );
               })}
             </div>
+            <button
+              className="btn primary"
+              type="button"
+              style={{ marginTop: 12 }}
+              disabled={!radioFavorites.length || !residentQuery.trim()}
+              onClick={saveRadioToPlaylist}
+            >
+              Save radio to playlist
+            </button>
           </div>
         </div>
 
@@ -612,12 +666,21 @@ export default function Dashboard() {
                 </option>
               ))}
             </select>
+            <button
+              className="btn primary"
+              type="button"
+              style={{ marginTop: 12 }}
+              disabled={!residentQuery.trim()}
+              onClick={applySeasonalToPlaylist}
+            >
+              Apply to playlist
+            </button>
           </div>
 
           <div className="card glass">
             <div className="card-header">
               <p className="card-title">Add stream/media URLs</p>
-              <span className="tag">Playlists & radio</span>
+              <span className="tag">Playlists &amp; radio</span>
             </div>
             <div className="grid" style={{ gap: 8 }}>
               <div className="form-row">
@@ -636,7 +699,8 @@ export default function Dashboard() {
               </div>
               <button className="btn primary" type="button" onClick={() => {
                 if (!urlInput.trim()) return;
-                const updated = applyOptionsToManual([...manualText.split(/\r?\n/).filter(Boolean), urlInput.trim()]);
+                const existing = manualText.split(/\r?\n/).filter(Boolean);
+                const updated = Array.from(new Set([...existing, urlInput.trim()]));
                 setManualText(updated.join("\n"));
                 setPlaylistUrls((prev) => (prev.includes(urlInput.trim()) ? prev : [...prev, urlInput.trim()]));
                 saveResidentManual(updated);
@@ -677,7 +741,7 @@ export default function Dashboard() {
           <div className="card-header">
             <p className="card-title">Manual playlist</p>
             <span className="muted">
-              Auto-saved when options change. Includes uploads by name; device receives blob URLs.
+              One entry per line. Device receives blob URLs at poll time.
             </span>
           </div>
           <textarea
@@ -717,7 +781,7 @@ export default function Dashboard() {
                 type="button"
                 disabled={fetchingPhotos || !residentQuery.trim()}
                 onClick={onFetchActivityPhotos}
-                title="Import recent activity record photos from Mobizio into the playlist"
+                title="Import recent activity record photos from Access Care Planning into the playlist"
               >
                 {fetchingPhotos ? "Importing..." : "Import activity photos"}
               </button>
@@ -726,7 +790,7 @@ export default function Dashboard() {
                 type="button"
                 disabled={generatingAi || !residentQuery.trim()}
                 onClick={onGenerateAiSuggestions}
-                title="Fetch care plan from Mobizio and generate personalised suggestions"
+                title="Fetch care plan from Access Care Planning and generate personalised suggestions"
               >
                 {generatingAi ? "Generating..." : "Generate AI suggestions"}
               </button>
@@ -734,133 +798,205 @@ export default function Dashboard() {
                 Reload
               </button>
               <button className="btn primary" type="button" disabled={savingManual} onClick={() => saveResidentManual()}>
-                {savingManual ? "Saving." : "Save manual playlist"}
+                {savingManual ? "Saving..." : "Save manual playlist"}
               </button>
             </div>
           </div>
         </div>
 
+        {activityPhotos.length > 0 && (
+          <div className="card glass">
+            <div className="card-header">
+              <p className="card-title">Activity photos from Access Care Planning</p>
+              <span className="muted">{activityPhotos.length} photo(s){residentQuery ? ` for ${residentQuery}` : ""}</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
+              {activityPhotos.map((photo) => {
+                const sasUrl = photoSasUrls[photo.id];
+                const rotation = photoRotations[photo.id] ?? 0;
+                const isSaving = savingPhotoIds.has(photo.id);
+                const renameVal = photoRenameValues[photo.id] ?? photo.name ?? "";
+                return (
+                  <div key={photo.id} className="card" style={{ padding: 12, gap: 10 }}>
+                    <div
+                      style={{
+                        height: 180,
+                        background: "rgba(0,0,0,0.1)",
+                        borderRadius: 8,
+                        overflow: "hidden",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      {sasUrl ? (
+                        <img
+                          src={sasUrl}
+                          alt={photo.name ?? "Activity photo"}
+                          style={{
+                            maxWidth: "100%",
+                            maxHeight: "100%",
+                            objectFit: "contain",
+                            transform: `rotate(${rotation}deg)`,
+                            transition: "transform 0.2s",
+                          }}
+                        />
+                      ) : (
+                        <span className="muted" style={{ fontSize: 13 }}>Loading...</span>
+                      )}
+                    </div>
+                    <div className="muted" style={{ fontSize: 12 }}>{formatDate(photo.uploadedAt)}</div>
+                    <div className="form-row" style={{ gap: 6 }}>
+                      <input
+                        className="input"
+                        style={{ flex: 1, fontSize: 13 }}
+                        value={renameVal}
+                        onChange={(e) => setPhotoRenameValues((prev) => ({ ...prev, [photo.id]: e.target.value }))}
+                        placeholder="Enter a name for this photo"
+                        onKeyDown={(e) => { if (e.key === "Enter") renamePhoto(photo.id); }}
+                      />
+                      <button
+                        className="btn ghost"
+                        type="button"
+                        disabled={isSaving || !renameVal.trim() || renameVal.trim() === (photo.name ?? "")}
+                        onClick={() => renamePhoto(photo.id)}
+                        style={{ whiteSpace: "nowrap" }}
+                      >
+                        Rename
+                      </button>
+                    </div>
+                    <div className="nav-actions" style={{ gap: 6, justifyContent: "space-between" }}>
+                      <div className="nav-actions" style={{ gap: 6 }}>
+                        <button
+                          className="btn ghost"
+                          type="button"
+                          disabled={!sasUrl}
+                          onClick={() => setPhotoRotations((prev) => ({ ...prev, [photo.id]: ((prev[photo.id] ?? 0) + 270) % 360 }))}
+                          title="Rotate left"
+                        >
+                          ↺
+                        </button>
+                        <button
+                          className="btn ghost"
+                          type="button"
+                          disabled={!sasUrl}
+                          onClick={() => setPhotoRotations((prev) => ({ ...prev, [photo.id]: ((prev[photo.id] ?? 0) + 90) % 360 }))}
+                          title="Rotate right"
+                        >
+                          ↻
+                        </button>
+                        <button
+                          className="btn primary"
+                          type="button"
+                          disabled={isSaving || !sasUrl || rotation === 0}
+                          onClick={() => savePhotoRotation(photo)}
+                          style={{ fontSize: 12 }}
+                        >
+                          {isSaving ? "Saving..." : "Save rotation"}
+                        </button>
+                      </div>
+                      <button
+                        className="btn ghost"
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await call({ url: `/api/admin/media/${photo.id}`, method: "DELETE" });
+                            await loadData();
+                          } catch {
+                            setError("Could not delete photo.");
+                          }
+                        }}
+                        style={{ fontSize: 12, color: "var(--warning)" }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="card glass">
           <div className="card-header">
-            <p className="card-title">Send playlist to device</p>
-            <span className="tag">Press &amp; Play Media Button</span>
+            <p className="card-title">Media library</p>
+            <span className="muted">
+              {!residentQuery ? "Select a resident to view their media" : loading ? "Loading..." : `${residentMedia.length} asset(s) for ${residentQuery}`}
+            </span>
           </div>
-          <form className="form-row" onSubmit={onAssignPlaylist}>
-            <select
-              className="select"
-              value={residentQuery}
-              onChange={(e) => setResidentQuery(e.target.value)}
-            >
-              <option value="">Select resident</option>
-              {residentList.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-            <button className="btn primary" type="submit" disabled={assigning || !playlistId}>
-              {assigning ? "Sending." : "Send playlist to Press & Play"}
-            </button>
-          </form>
-        </div>
-
-        <div className="grid c2">
-          <div className="card glass">
-            <div className="card-header">
-              <p className="card-title">Playlists</p>
-              <span className="muted">{playlists.length} total</span>
-            </div>
-            <div className="list">
-              {playlists.map((p) => (
-                <div className="row" key={p.id}>
-                  <div>
-                    <div style={{ fontWeight: 800 }}>{p.name}</div>
-                    <div className="muted" style={{ fontSize: 13 }}>
-                      {p.items.length} item(s)
-                    </div>
-                  </div>
-                  <div className="tag">{p.id.slice(0, 8)}.</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="card glass">
-            <div className="card-header">
-              <p className="card-title">Media</p>
-              <span className="muted">{media.length} assets</span>
-            </div>
-            <div className="list" style={{ maxHeight: 420, overflow: "auto" }}>
-              {media.map((m) => (
-                <div className="row" key={m.id}>
-                  <div>
-                    <div style={{ fontWeight: 700 }}>{m.name || m.blobPath}</div>
-                    <div className="muted" style={{ fontSize: 12 }}>
-                      {m.type} • {formatDate(m.uploadedAt)} {m.resident ? `• ${m.resident}` : ""} {m.uploadedBy ? `• ${m.uploadedBy}` : ""}
-                    </div>
-                  </div>
-                  <div className="nav-actions" style={{ gap: 6 }}>
-                    <button
-                      className="btn ghost"
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          const sas = await call<{ url: string }>({
-                            url: `/api/admin/media/${m.id}/sas`,
-                            method: "GET",
-                          });
-                          window.open(sas.url, "_blank");
-                        } catch (err) {
-                          setError("Could not generate download link.");
-                        }
-                      }}
-                    >
-                      Download
-                    </button>
-                    <button
-                      className="btn ghost"
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          await call({ url: `/api/admin/media/${m.id}`, method: "DELETE" });
-                          await loadData();
-                        } catch (err) {
-                          setError("Could not delete media.");
-                        }
-                      }}
-                    >
-                      Delete
-                    </button>
-                    <button
-                      className="btn ghost"
-                      type="button"
-                      disabled={!residentQuery.trim() || (!!m.resident && m.resident !== residentQuery.trim())}
-                      onClick={async () => {
-                        if (!residentQuery.trim()) {
-                          setError("Select a resident first.");
-                          return;
-                        }
-                        if (m.resident && m.resident !== residentQuery.trim()) {
-                          setError("This media belongs to a different resident.");
-                          return;
-                        }
-                        const token = `media:${m.id}`;
-                        const updated = applyOptionsToManual([
-                          ...manualText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean),
-                          token,
-                        ]);
-                        setManualText(updated.join("\n"));
-                        await saveResidentManual(updated);
-                      }}
-                    >
-                      Add to playlist
-                    </button>
-                    <span className="tag">{m.type}</span>
+          {!residentQuery ? (
+            <p className="muted" style={{ padding: "12px 0" }}>Select a resident above to see their uploaded photos and videos.</p>
+          ) : (
+          <div className="list" style={{ maxHeight: 500, overflow: "auto" }}>
+            {residentMedia.map((m) => (
+              <div className="row" key={m.id}>
+                <div>
+                  <div style={{ fontWeight: 700 }}>{m.name || m.blobPath}</div>
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    {m.type} • {formatDate(m.uploadedAt)} {m.resident ? `• ${m.resident}` : ""} {m.uploadedBy ? `• ${m.uploadedBy}` : ""}
                   </div>
                 </div>
-              ))}
-            </div>
+                <div className="nav-actions" style={{ gap: 6 }}>
+                  <button
+                    className="btn ghost"
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const sas = await call<{ url: string }>({
+                          url: `/api/admin/media/${m.id}/sas`,
+                          method: "GET",
+                        });
+                        window.open(sas.url, "_blank");
+                      } catch {
+                        setError("Could not generate download link.");
+                      }
+                    }}
+                  >
+                    Download
+                  </button>
+                  <button
+                    className="btn ghost"
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await call({ url: `/api/admin/media/${m.id}`, method: "DELETE" });
+                        await loadData();
+                      } catch {
+                        setError("Could not delete media.");
+                      }
+                    }}
+                  >
+                    Delete
+                  </button>
+                  <button
+                    className="btn ghost"
+                    type="button"
+                    disabled={!residentQuery.trim() || (!!m.resident && m.resident !== residentQuery.trim())}
+                    onClick={async () => {
+                      if (!residentQuery.trim()) {
+                        setError("Select a resident first.");
+                        return;
+                      }
+                      if (m.resident && m.resident !== residentQuery.trim()) {
+                        setError("This media belongs to a different resident.");
+                        return;
+                      }
+                      const token = `media:${m.id}`;
+                      const existing = manualText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+                      const updated = Array.from(new Set([...existing, token]));
+                      setManualText(updated.join("\n"));
+                      await saveResidentManual(updated);
+                    }}
+                  >
+                    Add to playlist
+                  </button>
+                  <span className="tag">{m.type}</span>
+                </div>
+              </div>
+            ))}
           </div>
+          )}
         </div>
       </main>
     </div>
