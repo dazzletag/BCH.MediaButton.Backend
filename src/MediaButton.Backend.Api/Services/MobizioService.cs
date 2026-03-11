@@ -61,7 +61,7 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
         http.Timeout = TimeSpan.FromSeconds(60);
         http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        var (caseId, dob, gender) = await FindCaseAsync(http, residentName);
+        var (caseId, _, dob, gender) = await FindCaseAsync(http, residentName);
         if (caseId is null) return null;
 
         var fields = await GetThisIsMeFieldsAsync(http, caseId);
@@ -84,7 +84,7 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
                ?? throw new InvalidOperationException("No access_token in Mobizio auth response");
     }
 
-    private static async Task<(string? CaseId, string? Dob, string? Gender)>
+    private static async Task<(string? CaseId, string? TenantCaseId, string? Dob, string? Gender)>
         FindCaseAsync(HttpClient http, string residentName)
     {
         var resp = await http.GetAsync(
@@ -129,21 +129,22 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
 
                 return (
                     item?["id"]?.ToString(),
+                    item?["tenantCaseId"]?.GetValue<string>(),
                     customer?["dob"]?.GetValue<string>(),
                     customer?["gender"]?.GetValue<string>()
                 );
             }
         }
 
-        return (null, null, null);
+        return (null, null, null, null);
     }
 
     /// <summary>
     /// Returns up to <see cref="ActivityPhotoLimit"/> (elementId, downloadUrl) pairs from
     /// the most recent activity record form submissions for the named resident.
     /// </summary>
-    public async Task<IReadOnlyList<(int ElementId, string Url)>> GetActivityPhotoUrlsAsync(
-        string residentName, int? maxPhotos = null)
+    public async Task<IReadOnlyList<(int ElementId, byte[] Data, string ContentType)>> GetActivityPhotoUrlsAsync(
+        string residentName, List<string> diag, int? maxPhotos = null)
     {
         var limit = maxPhotos ?? ActivityPhotoLimit;
         var token = await GetTokenAsync();
@@ -152,21 +153,47 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
         http.Timeout = TimeSpan.FromSeconds(60);
         http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        var (caseId, _, _) = await FindCaseAsync(http, residentName);
-        if (caseId is null)
+        var (caseId, tenantCaseId, _, _) = await FindCaseAsync(http, residentName);
+        if (caseId is null || tenantCaseId is null)
         {
-            logger.LogWarning("[ActivityPhotos] Could not find case ID for resident: {Resident}", residentName);
+            diag.Add($"Could not find Mobizio case for resident '{residentName}'");
             return [];
         }
-        logger.LogInformation("[ActivityPhotos] Found case ID {CaseId} for resident {Resident}", caseId, residentName);
+        // Look up the caseDataGroupId for "Social History/Activities" section
+        var sectionsMql = Uri.EscapeDataString("serviceDataGroupLabel=Social History/Activities");
+        var sectionsResp = await http.GetAsync(
+            $"{ApiBase}/v3/cases/{tenantCaseId}/sections/_lite?start=0&limit=10&column=id&direction=1&mql={sectionsMql}");
+
+        if (!sectionsResp.IsSuccessStatusCode)
+        {
+            // Retry with numeric caseId
+            sectionsResp = await http.GetAsync(
+                $"{ApiBase}/v3/cases/{caseId}/sections/_lite?start=0&limit=10&column=id&direction=1&mql={sectionsMql}");
+        }
+
+        var sectionsBody = await sectionsResp.Content.ReadAsStringAsync();
+        var sectionsJson = System.Text.Json.JsonSerializer.Deserialize<JsonObject>(sectionsBody);
+        var sectionResults = sectionsJson?["results"]?.AsArray() ?? [];
+
+        if (sectionResults.Count == 0)
+        {
+            diag.Add($"No 'Social History/Activities' section found for {tenantCaseId}");
+            return [];
+        }
+
+        var caseDataGroupId = sectionResults[0]?["id"]?.ToString();
+        if (string.IsNullOrWhiteSpace(caseDataGroupId))
+        {
+            diag.Add("caseDataGroupId missing from section result");
+            return [];
+        }
 
         // Get form versions for the activity record form
         var versionsResp = await http.GetAsync(
             $"{ApiBase}/v3/forms/{ActivityRecordFormId}/versions?start=0&limit=100&column=id&direction=1");
         if (!versionsResp.IsSuccessStatusCode)
         {
-            logger.LogWarning("[ActivityPhotos] Failed to get form versions for form {FormId}: {Status}",
-                ActivityRecordFormId, versionsResp.StatusCode);
+            diag.Add($"Failed to get form versions for form {ActivityRecordFormId}: {versionsResp.StatusCode}");
             return [];
         }
 
@@ -175,33 +202,29 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
             .Select(v => v?["id"]?.ToString())
             .OfType<string>()
             .ToList();
-        logger.LogInformation("[ActivityPhotos] Form {FormId} has {Count} version(s): {Ids}",
-            ActivityRecordFormId, versionIds.Count, string.Join(", ", versionIds));
+        diag.Add($"Form {ActivityRecordFormId} has {versionIds.Count} version(s): {string.Join(", ", versionIds)}");
 
-        // Collect element IDs that have a valueBlobRef, across recent submissions
-        var photoElementIds = new List<int>();
+        // Collect photo elements (componentLabel = "Photo"/"Photos" with encodedValue)
+        var output = new List<(int ElementId, byte[] Data, string ContentType)>();
 
         foreach (var versionId in versionIds)
         {
-            if (photoElementIds.Count >= limit) break;
+            if (output.Count >= limit) break;
 
-            var mql = Uri.EscapeDataString($"formVersionId={versionId},caseDataGroupCaseId={caseId}");
-            var formsResp = await http.GetAsync(
-                $"{ApiBase}/v3/submittedForms?start=0&limit=20&column=createdDateTime&direction=-1&mql={mql}");
-            if (!formsResp.IsSuccessStatusCode)
-            {
-                logger.LogWarning("[ActivityPhotos] submittedForms query failed for version {VersionId}: {Status}",
-                    versionId, formsResp.StatusCode);
-                continue;
-            }
+            var mql = Uri.EscapeDataString($"formVersionId={versionId},caseDataGroupId={caseDataGroupId}");
+            var formsUrl = $"{ApiBase}/v3/submittedForms?start=0&limit=20&column=createdDateTime&direction=-1&mql={mql}";
+            var formsResp = await http.GetAsync(formsUrl);
+            var formsBody = await formsResp.Content.ReadAsStringAsync();
+            if (!formsResp.IsSuccessStatusCode) continue;
 
-            var formsJson = await formsResp.Content.ReadFromJsonAsync<JsonObject>();
+            var formsJson = System.Text.Json.JsonSerializer.Deserialize<JsonObject>(formsBody);
             var formResults = formsJson?["results"]?.AsArray() ?? [];
-            logger.LogInformation("[ActivityPhotos] Version {VersionId}: {Count} submitted form(s) found for case {CaseId}",
-                versionId, formResults.Count, caseId);
+            if (formResults.Count > 0)
+                diag.Add($"v{versionId}: {formResults.Count} form(s)");
+
             foreach (var form in formResults)
             {
-                if (photoElementIds.Count >= limit) break;
+                if (output.Count >= limit) break;
 
                 var submittedFormId = form?["id"]?.ToString();
                 if (submittedFormId is null) continue;
@@ -210,69 +233,53 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
                     $"{ApiBase}/v3/submittedForms/{submittedFormId}/elements");
                 if (!elemResp.IsSuccessStatusCode) continue;
 
-                var elemContent = await elemResp.Content.ReadFromJsonAsync<JsonNode>();
+                var elemBody = await elemResp.Content.ReadAsStringAsync();
+                var elemContent = System.Text.Json.JsonSerializer.Deserialize<JsonNode>(elemBody);
                 var elements = elemContent is JsonArray arr
                     ? arr
                     : elemContent?["results"]?.AsArray() ?? [];
 
                 foreach (var elem in elements)
                 {
-                    if (photoElementIds.Count >= limit) break;
-                    var blobRef = elem?["valueBlobRef"];
-                    if (blobRef is null || blobRef.GetValueKind() == System.Text.Json.JsonValueKind.Null)
+                    if (output.Count >= limit) break;
+
+                    var label = elem?["componentLabel"]?.GetValue<string>() ?? "";
+                    if (!label.Equals("Photo", StringComparison.OrdinalIgnoreCase) &&
+                        !label.Equals("Photos", StringComparison.OrdinalIgnoreCase))
                         continue;
-                    if (elem?["id"]?.GetValue<int?>() is int elemId)
-                        photoElementIds.Add(elemId);
+
+                    var encoded = elem?["encodedValue"]?.GetValue<string>();
+                    if (string.IsNullOrWhiteSpace(encoded)) continue;
+
+                    // Strip data URL prefix if present (e.g. "data:image/jpeg;base64,...")
+                    string contentType = "image/jpeg";
+                    if (encoded.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var comma = encoded.IndexOf(',');
+                        if (comma > 0)
+                        {
+                            var header = encoded[5..comma]; // e.g. "image/png;base64"
+                            contentType = header.Split(';')[0];
+                            encoded = encoded[(comma + 1)..];
+                        }
+                    }
+
+                    try
+                    {
+                        var bytes = Convert.FromBase64String(encoded);
+                        var elemId = elem?["id"]?.GetValue<long?>() ?? 0;
+                        diag.Add($"  form {submittedFormId} elem {elemId}: photo {bytes.Length} bytes, {contentType}");
+                        output.Add(((int)elemId, bytes, contentType));
+                    }
+                    catch (FormatException)
+                    {
+                        diag.Add($"  form {submittedFormId}: base64 decode failed");
+                    }
                 }
             }
         }
 
-        logger.LogInformation("[ActivityPhotos] Collected {Count} photo element ID(s) with valueBlobRef", photoElementIds.Count);
-        if (photoElementIds.Count == 0) return [];
-
-        // Generate download URLs for the collected element IDs
-        var dlResp = await http.PostAsJsonAsync(
-            $"{ApiBase}/v3/mobile-sync/generate-blob-storage-url-for-download",
-            photoElementIds);
-
-        if (!dlResp.IsSuccessStatusCode)
-        {
-            var body = await dlResp.Content.ReadAsStringAsync();
-            logger.LogWarning("[ActivityPhotos] generate-blob-storage-url-for-download returned {Status}: {Body}",
-                dlResp.StatusCode, body[..Math.Min(500, body.Length)]);
-            return [];
-        }
-
-        var dlRawBody = await dlResp.Content.ReadAsStringAsync();
-        logger.LogInformation("[ActivityPhotos] generate-blob-storage-url-for-download response: {Body}",
-            dlRawBody[..Math.Min(1000, dlRawBody.Length)]);
-        var dlJson = System.Text.Json.JsonSerializer.Deserialize<JsonNode>(dlRawBody);
-        var results = dlJson is JsonArray topArr
-            ? topArr
-            : dlJson?["results"]?.AsArray() ?? [];
-
-        var output = new List<(int, string)>();
-        for (int i = 0; i < results.Count && i < photoElementIds.Count; i++)
-        {
-            var item = results[i];
-            string? url = null;
-
-            if (item is JsonValue jv && jv.TryGetValue<string>(out var s))
-            {
-                url = s;
-            }
-            else if (item is JsonObject jo)
-            {
-                url = jo["url"]?.GetValue<string>()
-                      ?? jo["downloadUrl"]?.GetValue<string>()
-                      ?? jo["blobUrl"]?.GetValue<string>()
-                      ?? jo["sasUrl"]?.GetValue<string>();
-            }
-
-            if (!string.IsNullOrWhiteSpace(url))
-                output.Add((photoElementIds[i], url));
-        }
-
+        diag.Add($"Collected {output.Count} photo(s) from encodedValue");
         return output;
     }
 

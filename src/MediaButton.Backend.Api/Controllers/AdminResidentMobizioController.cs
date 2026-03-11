@@ -16,19 +16,16 @@ public class AdminResidentMobizioController : ControllerBase
     private readonly MobizioService _mobizio;
     private readonly StorageSasService _sas;
     private readonly IConfiguration _config;
-    private readonly IHttpClientFactory _httpFactory;
     private readonly ILogger<AdminResidentMobizioController> _log;
 
     public AdminResidentMobizioController(
         AppDbContext db, MobizioService mobizio, StorageSasService sas,
-        IConfiguration config, IHttpClientFactory httpFactory,
-        ILogger<AdminResidentMobizioController> log)
+        IConfiguration config, ILogger<AdminResidentMobizioController> log)
     {
         _db = db;
         _mobizio = mobizio;
         _sas = sas;
         _config = config;
-        _httpFactory = httpFactory;
         _log = log;
     }
 
@@ -47,14 +44,11 @@ public class AdminResidentMobizioController : ControllerBase
         _log.LogInformation("[ActivityPhotos] Starting import for resident: {Resident}", residentKey);
         var diag = new List<string>();
 
-        // 1. Ask Mobizio for photo download URLs
-        IReadOnlyList<(int ElementId, string Url)> photoUrls;
+        // 1. Fetch photo bytes from Mobizio (decoded from encodedValue in elements)
+        IReadOnlyList<(int ElementId, byte[] Data, string ContentType)> photos;
         try
         {
-            photoUrls = await _mobizio.GetActivityPhotoUrlsAsync(residentKey);
-            diag.Add($"Mobizio returned {photoUrls.Count} photo URL(s)");
-            _log.LogInformation("[ActivityPhotos] Mobizio returned {Count} photo URL(s) for {Resident}",
-                photoUrls.Count, residentKey);
+            photos = await _mobizio.GetActivityPhotoUrlsAsync(residentKey, diag);
         }
         catch (Exception ex)
         {
@@ -62,22 +56,15 @@ public class AdminResidentMobizioController : ControllerBase
             return StatusCode(500, new { error = $"Failed to query Mobizio: {ex.Message}", diag });
         }
 
-        if (photoUrls.Count == 0)
-        {
-            diag.Add("No photos found — resident may not have activity record submissions with photos, or the case ID could not be matched");
+        if (photos.Count == 0)
             return Ok(new { count = 0, mediaIds = Array.Empty<Guid>(), diag });
-        }
 
-        // 2. Download each photo and upload to Azure Blob Storage
+        // 2. Upload each photo to Azure Blob Storage and register a MediaAsset
         var container = _config["Storage:ContainerPhotos"] ?? "photos";
         var safeResident = residentKey.Replace("/", "-").Replace("\\", "-");
-
-        using var http = _httpFactory.CreateClient();
-        http.Timeout = TimeSpan.FromSeconds(30);
-
         var mediaIds = new List<Guid>();
 
-        foreach (var (elementId, url) in photoUrls)
+        foreach (var (elementId, data, contentType) in photos)
         {
             // Avoid re-importing the same element
             var blobPathPrefix = $"photo/{safeResident}/mobizio/elem_{elementId}";
@@ -88,25 +75,12 @@ public class AdminResidentMobizioController : ControllerBase
                 var existing = await _db.MediaAssets
                     .FirstAsync(m => m.BlobPath.StartsWith(blobPathPrefix));
                 diag.Add($"Element {elementId}: already imported as {existing.Id}");
-                _log.LogInformation("[ActivityPhotos] Element {ElementId} already imported, reusing {MediaId}",
-                    elementId, existing.Id);
                 mediaIds.Add(existing.Id);
                 continue;
             }
 
             try
             {
-                _log.LogInformation("[ActivityPhotos] Downloading element {ElementId} from Mobizio", elementId);
-                var response = await http.GetAsync(url);
-                if (!response.IsSuccessStatusCode)
-                {
-                    diag.Add($"Element {elementId}: download failed ({(int)response.StatusCode} {response.ReasonPhrase})");
-                    _log.LogWarning("[ActivityPhotos] Download failed for element {ElementId}: {Status}",
-                        elementId, response.StatusCode);
-                    continue;
-                }
-
-                var contentType = response.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
                 var ext = contentType switch
                 {
                     "image/png" => ".png",
@@ -116,9 +90,8 @@ public class AdminResidentMobizioController : ControllerBase
                 };
                 var blobPath = $"{blobPathPrefix}{ext}";
 
-                await using var stream = await response.Content.ReadAsStreamAsync();
+                await using var stream = new MemoryStream(data);
                 await _sas.UploadBlobAsync(container, blobPath, stream, contentType);
-                _log.LogInformation("[ActivityPhotos] Uploaded element {ElementId} to {BlobPath}", elementId, blobPath);
 
                 var media = new MediaAsset
                 {
@@ -132,18 +105,12 @@ public class AdminResidentMobizioController : ControllerBase
                 await _db.SaveChangesAsync();
                 mediaIds.Add(media.Id);
                 diag.Add($"Element {elementId}: imported as {media.Id}");
-                _log.LogInformation("[ActivityPhotos] Registered MediaAsset {MediaId} for element {ElementId}",
-                    media.Id, elementId);
             }
             catch (Exception ex)
             {
                 diag.Add($"Element {elementId}: exception — {ex.Message}");
-                _log.LogError(ex, "[ActivityPhotos] Exception processing element {ElementId}", elementId);
             }
         }
-
-        _log.LogInformation("[ActivityPhotos] Completed for {Resident}: {Imported}/{Total} imported",
-            residentKey, mediaIds.Count, photoUrls.Count);
 
         return Ok(new { count = mediaIds.Count, mediaIds, diag });
     }
