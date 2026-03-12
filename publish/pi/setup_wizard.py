@@ -128,9 +128,13 @@ def _write_config(config: dict) -> None:
 def _apply_setup(
     config: dict,
     resident_name: str,
+    control_mode: str,
     beacon_key: str | None,
 ) -> dict:
-    # Beacon → resident mapping
+    # Control mode
+    config["control_mode"] = control_mode
+
+    # Beacon → resident mapping (switch mode)
     if beacon_key:
         config.setdefault("beacons", {})[beacon_key] = {"resident": resident_name}
 
@@ -141,10 +145,11 @@ def _apply_setup(
             "query": "",
         }
 
-    # remote_control resident (only if not already set)
-    rc = config.get("remote_control")
-    if isinstance(rc, dict) and not rc.get("resident"):
-        rc["resident"] = resident_name
+    # Remote control section (remote mode)
+    if control_mode == "remote_menu":
+        rc = config.setdefault("remote_control", {})
+        rc.setdefault("resident", resident_name)
+        rc.setdefault("show_menu_on_start", True)
 
     return config
 
@@ -153,27 +158,69 @@ def _apply_setup(
 
 def _print_banner() -> None:
     print()
-    print("╔══════════════════════════════════════════════╗")
-    print("║   BCH Media Button — New Unit Setup Wizard   ║")
-    print("╚══════════════════════════════════════════════╝")
+    print("=" * 48)
+    print("  BCH Media Button -- New Unit Setup Wizard")
+    print("=" * 48)
     print()
 
 
 def _pick(prompt: str, items: list, display_fn=None) -> int:
-    """Show a numbered list and return the 0-based index of the user's choice."""
-    for i, item in enumerate(items):
-        label = display_fn(item) if display_fn else str(item)
-        print(f"  {i + 1:4}. {label}")
-    print()
-    while True:
-        raw = input(f"{prompt} [1–{len(items)}]: ").strip()
-        try:
-            idx = int(raw) - 1
-            if 0 <= idx < len(items):
-                return idx
-        except ValueError:
-            pass
-        print(f"  Please enter a number between 1 and {len(items)}.")
+    """
+    Show a numbered list and return the 0-based index of the user's choice.
+    If the list is long, shows a search prompt first to filter it down.
+    """
+    # For large lists, offer a search filter
+    if len(items) > 20:
+        while True:
+            search = input("Search (type part of a name, or press Enter to list all): ").strip().lower()
+            if search:
+                filtered = [(i, item) for i, item in enumerate(items)
+                            if search in (display_fn(item) if display_fn else str(item)).lower()]
+            else:
+                filtered = list(enumerate(items))
+
+            if not filtered:
+                print(f"  No matches for '{search}'. Try again.")
+                continue
+
+            print()
+            for rank, (orig_idx, item) in enumerate(filtered):
+                label = display_fn(item) if display_fn else str(item)
+                print(f"  {rank + 1:4}. {label}")
+            print()
+
+            if len(filtered) == 1:
+                confirm = input("Only one match — select it? [Y/n]: ").strip().lower()
+                if confirm in ("", "y"):
+                    return filtered[0][0]
+                continue
+
+            while True:
+                raw = input(f"{prompt} [1-{len(filtered)}] (or 's' to search again): ").strip()
+                if raw.lower() == "s":
+                    break
+                try:
+                    rank = int(raw) - 1
+                    if 0 <= rank < len(filtered):
+                        return filtered[rank][0]
+                except ValueError:
+                    pass
+                print(f"  Please enter a number between 1 and {len(filtered)}, or 's' to search again.")
+            # 's' — loop back to search prompt
+    else:
+        for i, item in enumerate(items):
+            label = display_fn(item) if display_fn else str(item)
+            print(f"  {i + 1:4}. {label}")
+        print()
+        while True:
+            raw = input(f"{prompt} [1-{len(items)}]: ").strip()
+            try:
+                idx = int(raw) - 1
+                if 0 <= idx < len(items):
+                    return idx
+            except ValueError:
+                pass
+            print(f"  Please enter a number between 1 and {len(items)}.")
 
 
 def _read_env_file(path: Path) -> dict[str, str]:
@@ -218,12 +265,10 @@ def main() -> None:
         device_key = input("Device key: ").strip()
 
     # ── Load current config ───────────────────────────────────────────────────
-    config       = _load_config()
-    control_mode = config.get("control_mode", "beacon")
+    config = _load_config()
 
-    print(f"  Device ID    : {device_id}")
-    print(f"  Control mode : {control_mode}")
-    print(f"  Config file  : {CONFIG_PATH}")
+    print(f"  Device ID   : {device_id}")
+    print(f"  Config file : {CONFIG_PATH}")
     print()
 
     # ── Fetch residents from Mobizio ──────────────────────────────────────────
@@ -248,7 +293,20 @@ def main() -> None:
     case_id       = chosen["caseId"]
     print(f"\n  ✓ Selected: {resident_name}  (Case ID: {case_id})\n")
 
-    # ── Beacon scan ───────────────────────────────────────────────────────────
+    # ── Control mode ──────────────────────────────────────────────────────────
+    print("How is this Media Button activated?")
+    print("  1. Switch  — a physical switch triggers via a nearby BLE beacon")
+    print("  2. Remote  — a TV remote control (FLIRC/USB) drives a menu\n")
+    while True:
+        mode_choice = input("Select control type [1/2]: ").strip()
+        if mode_choice in ("1", "2"):
+            break
+        print("  Please enter 1 or 2.")
+
+    control_mode = "beacon" if mode_choice == "1" else "remote_menu"
+    print(f"\n  ✓ Control mode: {control_mode}\n")
+
+    # ── Beacon scan (switch mode only) ────────────────────────────────────────
     beacon_key: str | None = None
 
     if control_mode == "beacon":
@@ -263,7 +321,6 @@ def main() -> None:
                 "to config.yaml later.\n"
             )
         else:
-            # Strongest RSSI first
             sorted_beacons = sorted(beacons.items(), key=lambda x: x[1], reverse=True)
             print(f"\n  Found {len(sorted_beacons)} beacon(s):\n")
             beacon_idx = _pick(
@@ -273,23 +330,19 @@ def main() -> None:
             )
             beacon_key = sorted_beacons[beacon_idx][0]
             print(f"\n  ✓ Selected beacon: {beacon_key}\n")
-    else:
-        print(
-            "[INFO] control_mode is not 'beacon' — skipping beacon scan.\n"
-            "       Set control_mode: beacon in config.yaml if you need beacon support.\n"
-        )
 
     # ── Confirm ───────────────────────────────────────────────────────────────
     print("─" * 60)
     print("Summary")
     print("─" * 60)
-    print(f"  Resident  : {resident_name}")
-    print(f"  Case ID   : {case_id}")
+    print(f"  Resident     : {resident_name}")
+    print(f"  Case ID      : {case_id}")
+    print(f"  Control mode : {control_mode}")
     if beacon_key:
-        print(f"  Beacon    : {beacon_key}")
-    else:
-        print(f"  Beacon    : (none — add manually if needed)")
-    print(f"  Config    : {CONFIG_PATH}")
+        print(f"  Beacon       : {beacon_key}")
+    elif control_mode == "beacon":
+        print(f"  Beacon       : (none — add manually to config.yaml)")
+    print(f"  Config       : {CONFIG_PATH}")
     print("─" * 60)
 
     confirm = input("\nWrite to config.yaml? [y/N]: ").strip().lower()
@@ -298,7 +351,7 @@ def main() -> None:
         sys.exit(0)
 
     # ── Write ─────────────────────────────────────────────────────────────────
-    config = _apply_setup(config, resident_name, beacon_key)
+    config = _apply_setup(config, resident_name, control_mode, beacon_key)
     _write_config(config)
 
     print(f"\n  ✓ Config written to {CONFIG_PATH}\n")

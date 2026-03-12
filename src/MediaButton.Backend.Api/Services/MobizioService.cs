@@ -30,7 +30,7 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
         http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         var resp = await http.GetAsync(
-            $"{ApiBase}/v3/cases?start=0&limit=5000&column=id&direction=1&mql=archived%3Dfalse");
+            $"{ApiBase}/v3/cases?start=0&limit=5000&column=id&direction=1&mql=status%3Dactive");
         resp.EnsureSuccessStatusCode();
 
         var json = await resp.Content.ReadFromJsonAsync<JsonObject>();

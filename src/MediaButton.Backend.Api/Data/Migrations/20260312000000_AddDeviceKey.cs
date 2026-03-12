@@ -1,10 +1,13 @@
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using MediaButtonBackend.Data;
 
 #nullable disable
 
 namespace MediaButton.Backend.Api.Data.Migrations
 {
-    /// <inheritdoc />
+    [DbContext(typeof(AppDbContext))]
+    [Migration("20260312000000_AddDeviceKey")]
     public partial class AddDeviceKey : Migration
     {
         /// <inheritdoc />

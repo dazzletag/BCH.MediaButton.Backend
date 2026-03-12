@@ -2,11 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useApiClient } from "../hooks/useApiClient";
 import type { Device } from "../types";
 
-const INSTALL_BASE =
-  "https://raw.githubusercontent.com/dazzletag/BCH.MediaButton.Backend/main/publish/pi/install.sh";
-
-function buildInstallCommand(apiBase: string, key: string) {
-  return `curl -sSL ${INSTALL_BASE} \\\n  | sudo bash -s -- \\\n      --api ${apiBase} \\\n      --key "${key}"`;
+function buildInstallCommand(apiBase: string, deviceId: string, key: string) {
+  return `curl -sSL ${apiBase}/install.sh \\\n  | sudo bash -s -- \\\n      --api ${apiBase} \\\n      --device "${deviceId}" \\\n      --key "${key}"`;
 }
 
 export default function Devices() {
@@ -80,7 +77,7 @@ export default function Devices() {
 
   const copyCommand = async (device: Device) => {
     if (!device.deviceKey) return;
-    const cmd = buildInstallCommand(apiBase, device.deviceKey);
+    const cmd = buildInstallCommand(apiBase, device.deviceId, device.deviceKey);
     await navigator.clipboard.writeText(cmd);
     setCopiedId(device.deviceId);
     setTimeout(() => setCopiedId(null), 2000);
@@ -203,7 +200,7 @@ export default function Devices() {
               margin: 0,
             }}
           >
-            {buildInstallCommand(apiBase, devices[devices.length - 1].deviceKey!)}
+            {buildInstallCommand(apiBase, devices[devices.length - 1].deviceId, devices[devices.length - 1].deviceKey!)}
           </pre>
         </div>
       )}
