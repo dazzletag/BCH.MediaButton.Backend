@@ -49,3 +49,11 @@ export type AiPlaylistEnvelope = {
 };
 
 export type ResidentList = string[];
+
+export type Device = {
+  deviceId: string;
+  displayName?: string | null;
+  playlistId?: string | null;
+  playlistName?: string | null;
+  deviceKey?: string | null;
+};

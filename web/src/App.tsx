@@ -1,8 +1,12 @@
+import { useState } from "react";
 import { InteractionStatus } from "@azure/msal-browser";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import Dashboard from "./views/Dashboard";
+import Devices from "./views/Devices";
 import { loginRequest } from "./msalConfig";
 import "./styles/layout.css";
+
+type Tab = "media" | "devices";
 
 function Landing() {
   const { instance, inProgress } = useMsal();
@@ -65,7 +69,50 @@ function Landing() {
   );
 }
 
+function AuthenticatedApp() {
+  const { instance, accounts } = useMsal();
+  const [tab, setTab] = useState<Tab>("media");
+
+  const signOut = () => instance.logoutRedirect();
+  const accountName = accounts[0]?.name ?? "Signed in";
+
+  return (
+    <div className="page">
+      <header className="nav">
+        <div className="brand">
+          <img src="/bch-logo.svg" alt="Bristol Care Homes" className="brand-logo" />
+          <div className="brand-text">
+            <span className="brand-line">Press &amp; Play</span>
+            <span className="brand-subline">Media Button</span>
+          </div>
+        </div>
+        <nav style={{ display: "flex", gap: 4 }}>
+          <button
+            className={`btn ${tab === "media" ? "primary" : "ghost"}`}
+            style={{ borderRadius: 10 }}
+            onClick={() => setTab("media")}
+          >
+            Media &amp; Playlists
+          </button>
+          <button
+            className={`btn ${tab === "devices" ? "primary" : "ghost"}`}
+            style={{ borderRadius: 10 }}
+            onClick={() => setTab("devices")}
+          >
+            Devices
+          </button>
+        </nav>
+        <div className="nav-actions">
+          <span className="muted" style={{ fontSize: 14 }}>{accountName}</span>
+          <button className="btn ghost" onClick={signOut}>Sign out</button>
+        </div>
+      </header>
+      {tab === "media" ? <Dashboard /> : <Devices />}
+    </div>
+  );
+}
+
 export default function App() {
   const isAuthed = useIsAuthenticated();
-  return isAuthed ? <Dashboard /> : <Landing />;
+  return isAuthed ? <AuthenticatedApp /> : <Landing />;
 }

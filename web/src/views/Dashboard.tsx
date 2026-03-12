@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
+// Note: nav/sign-out are handled by the parent AuthenticatedApp shell in App.tsx
 import { useApiClient } from "../hooks/useApiClient";
 import { appConfig } from "../config";
 import type { ManualPlaylistResponse, MediaItem, MediaType, ResidentList } from "../types";
@@ -38,7 +39,7 @@ function formatDate(dateString?: string) {
 
 export default function Dashboard() {
   const isAuthed = useIsAuthenticated();
-  const { instance, accounts } = useMsal();
+  const { accounts } = useMsal();
   const { call } = useApiClient();
 
   const [media, setMedia] = useState<MediaItem[]>([]);
@@ -456,7 +457,6 @@ export default function Dashboard() {
     [call, loadData, photoRenameValues]
   );
 
-  const handleLogout = () => instance.logoutRedirect();
 
   const radioPresets = [
     { name: "BBC Radio 1", url: "https://lsn.lv/bbcradio.m3u8?station=bbc_radio_one&bitrate=128000" },
@@ -472,26 +472,7 @@ export default function Dashboard() {
   const seasonalOptions = ["", "Christmas", "Easter", "Diwali", "Eid", "Hanukkah", "Remembrance", "Summer", "Winter"];
 
   return (
-    <div className="page">
-      <header className="nav">
-        <div className="brand">
-          <img src="/bch-logo.svg" alt="Bristol Care Homes" className="brand-logo" />
-          <div className="brand-text">
-            <span className="brand-line">Press &amp; Play</span>
-            <span className="brand-subline">Media Button</span>
-          </div>
-        </div>
-        <div className="nav-actions">
-          <div className="pill">
-            <span className="status-dot" />
-            {accountName}
-          </div>
-          <button className="btn ghost" onClick={handleLogout}>
-            Sign out
-          </button>
-        </div>
-      </header>
-
+    <>
       <section className="hero">
         <div className="hero-left">
           <div className="hero-eyebrow">Bristol Care Homes</div>
@@ -999,6 +980,6 @@ export default function Dashboard() {
           )}
         </div>
       </main>
-    </div>
+    </>
   );
 }

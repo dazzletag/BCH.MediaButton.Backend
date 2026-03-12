@@ -38,3 +38,9 @@ public record ManualPlaylistResponse(string Resident, IReadOnlyList<object?> Ite
 public record DeviceManualPlaylistResponse(string Resident, IReadOnlyList<object?> Items, DateTimeOffset? UpdatedAtUtc, string? UpdatedBy);
 
 public record MediaPatchRequest(string? Name, string? BlobPath);
+
+public record DeviceListItem(string DeviceId, string? DisplayName, Guid? PlaylistId, string? PlaylistName, string? DeviceKey);
+
+public record DeviceCreateRequest(string DeviceId, string? DisplayName);
+
+public record DeviceRenameRequest(string? DisplayName);

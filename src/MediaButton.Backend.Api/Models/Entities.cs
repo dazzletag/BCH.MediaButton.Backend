@@ -24,6 +24,12 @@ public class Device
     /// </summary>
     [MaxLength(4000)]
     public string? ConfigJson { get; set; }
+
+    /// <summary>
+    /// Secret key used by the Pi to authenticate. Stored plaintext; admin-only readable.
+    /// </summary>
+    [MaxLength(200)]
+    public string? DeviceKey { get; set; }
 }
 
 public class Playlist

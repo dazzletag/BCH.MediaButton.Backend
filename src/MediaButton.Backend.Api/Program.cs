@@ -57,6 +57,22 @@ builder.Services.AddAuthorization(options =>
             return roleValues.Contains("Admin") || roleValues.Contains("Relative");
         });
     });
+
+    options.AddPolicy("AdminOnly", policy =>
+    {
+        policy.RequireAuthenticatedUser();
+        policy.RequireAssertion(ctx =>
+        {
+            var roleValues = ctx.User.Claims
+                .Where(c =>
+                    string.Equals(c.Type, "roles", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(c.Type, System.Security.Claims.ClaimTypes.Role, StringComparison.OrdinalIgnoreCase))
+                .Select(c => c.Value)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            return roleValues.Contains("Admin");
+        });
+    });
 });
 
 builder.Services.AddScoped<StorageSasService>();

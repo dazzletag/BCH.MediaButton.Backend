@@ -1,5 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
+using MediaButtonBackend.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace MediaButtonBackend.Auth;
 
@@ -7,17 +9,17 @@ public class DeviceAuthMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly IConfiguration _config;
+    private readonly IServiceScopeFactory _scopeFactory;
 
-    public DeviceAuthMiddleware(RequestDelegate next, IConfiguration config)
+    public DeviceAuthMiddleware(RequestDelegate next, IConfiguration config, IServiceScopeFactory scopeFactory)
     {
         _next = next;
         _config = config;
+        _scopeFactory = scopeFactory;
     }
 
     public async Task InvokeAsync(HttpContext context)
     {
-        // Only protect the device API surface
-        // (Adjust this prefix to match your actual routes.)
         var path = context.Request.Path.Value ?? "";
         if (!path.StartsWith("/api/device/", StringComparison.OrdinalIgnoreCase))
         {
@@ -36,9 +38,7 @@ public class DeviceAuthMiddleware
         }
 
         // Extract {device_id} from /api/device/{device_id}/...
-        // We assume your route pattern is /api/device/{deviceId}/...
         var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        // segments: ["api","device","{deviceId}", ...]
         if (segments.Length < 3)
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -48,7 +48,18 @@ public class DeviceAuthMiddleware
 
         var deviceId = segments[2];
 
-        var expectedKey = _config[$"DeviceAuth:Devices:{deviceId}"];
+        // Look up key: DB first, then config fallback (for devices not yet migrated)
+        string? expectedKey = null;
+        using (var scope = _scopeFactory.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var device = await db.Devices.FirstOrDefaultAsync(d => d.DeviceId == deviceId);
+            expectedKey = device?.DeviceKey;
+        }
+
+        if (string.IsNullOrWhiteSpace(expectedKey))
+            expectedKey = _config[$"DeviceAuth:Devices:{deviceId}"];
+
         if (string.IsNullOrWhiteSpace(expectedKey))
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
