@@ -12,6 +12,8 @@ Writes the result to publish/pi/config.yaml next to this script.
 
 import asyncio
 import os
+import shutil
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -239,6 +241,79 @@ def _read_env_file(path: Path) -> dict[str, str]:
     return env
 
 
+# ─── FLIRC setup ──────────────────────────────────────────────────────────────
+
+# Maps Tk key symbols (used in config.yaml) to flirc_util key names
+_TK_TO_FLIRC: dict[str, str] = {
+    "Up": "up", "Down": "down", "Left": "left", "Right": "right",
+    "Return": "return", "Escape": "escape", "space": "space",
+    "BackSpace": "backspace",
+}
+
+# The buttons to map, in order: (config key, human description, default Tk key)
+_FLIRC_BUTTONS = [
+    ("menu",   "Menu / Home",     "m"),
+    ("up",     "Up arrow",        "Up"),
+    ("down",   "Down arrow",      "Down"),
+    ("select", "Select / OK",     "Return"),
+    ("back",   "Back / Exit",     "Escape"),
+    ("pause",  "Pause / Play",    "space"),
+]
+
+
+def _setup_flirc(keymap: dict[str, str]) -> None:
+    """
+    Walk through FLIRC button mapping.
+    Reads existing keymap (from config.yaml) so already-set keys are respected.
+    """
+    print()
+    print("FLIRC Remote Control Setup")
+    print("-" * 40)
+    print("This will map each button on your IR remote to the correct action.")
+    print()
+
+    if not shutil.which("flirc_util"):
+        print("[WARN] flirc_util is not installed.")
+        print("  Install it with:")
+        print("    curl -s https://apt.flirc.tv/arch/key.gpg | sudo apt-key add -")
+        print("    echo 'deb https://apt.flirc.tv/arch/ focal main' \\")
+        print("      | sudo tee /etc/apt/sources.list.d/flirc.list")
+        print("    sudo apt-get update && sudo apt-get install flirc")
+        print()
+        ans = input("Skip FLIRC setup for now? [Y/n]: ").strip().lower()
+        if ans in ("", "y"):
+            print("  Skipped. Re-run the wizard after installing flirc_util.\n")
+            return
+
+    print("Make sure the FLIRC USB dongle is plugged in.")
+    print("For each button you will be prompted to press the matching key on your remote.\n")
+
+    for config_key, description, default_tk in _FLIRC_BUTTONS:
+        tk_key    = keymap.get(config_key, default_tk)
+        flirc_key = _TK_TO_FLIRC.get(tk_key, tk_key.lower())
+
+        print(f"  [{description}]  ->  keyboard key '{flirc_key}'")
+        input("  Press Enter, then immediately press the button on your remote...")
+
+        try:
+            result = subprocess.run(
+                ["flirc_util", "record", flirc_key],
+                timeout=30,
+            )
+            if result.returncode == 0:
+                print(f"  OK\n")
+            else:
+                print(f"  [WARN] flirc_util exited with code {result.returncode}\n")
+        except subprocess.TimeoutExpired:
+            print("  [WARN] No button press detected within 30 s — skipped.\n")
+        except FileNotFoundError:
+            print("  [ERROR] flirc_util not found. Stopping FLIRC setup.\n")
+            break
+
+    print("FLIRC mapping complete.")
+    print("Test your remote by starting the service:  sudo systemctl start media-button\n")
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -306,11 +381,12 @@ def main() -> None:
     control_mode = "beacon" if mode_choice == "1" else "remote_menu"
     print(f"\n  ✓ Control mode: {control_mode}\n")
 
-    # ── Beacon scan (switch mode only) ────────────────────────────────────────
+    # ── Hardware setup ────────────────────────────────────────────────────────
     beacon_key: str | None = None
 
     if control_mode == "beacon":
-        print("Scanning for nearby BLE beacons (15 seconds)…")
+        # BLE beacon scan
+        print("Scanning for nearby BLE beacons (15 seconds)...")
         print("Make sure the resident's beacon is switched on and nearby.\n")
 
         beacons = asyncio.run(scan_beacons(duration=15))
@@ -331,19 +407,24 @@ def main() -> None:
             beacon_key = sorted_beacons[beacon_idx][0]
             print(f"\n  ✓ Selected beacon: {beacon_key}\n")
 
+    else:
+        # FLIRC remote control setup
+        existing_keymap = config.get("remote_control", {}).get("keymap", {})
+        _setup_flirc(existing_keymap)
+
     # ── Confirm ───────────────────────────────────────────────────────────────
-    print("─" * 60)
+    print("-" * 60)
     print("Summary")
-    print("─" * 60)
+    print("-" * 60)
     print(f"  Resident     : {resident_name}")
     print(f"  Case ID      : {case_id}")
     print(f"  Control mode : {control_mode}")
     if beacon_key:
         print(f"  Beacon       : {beacon_key}")
     elif control_mode == "beacon":
-        print(f"  Beacon       : (none — add manually to config.yaml)")
+        print(f"  Beacon       : (none -- add manually to config.yaml)")
     print(f"  Config       : {CONFIG_PATH}")
-    print("─" * 60)
+    print("-" * 60)
 
     confirm = input("\nWrite to config.yaml? [y/N]: ").strip().lower()
     if confirm != "y":
