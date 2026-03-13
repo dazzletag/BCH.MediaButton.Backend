@@ -724,6 +724,7 @@ class MediaUI:
         sub_font   = _safe_font(size=54)
 
         tw, th = _measure_text(draw, title, title_font)
+        sw, sh = _measure_text(draw, likes_line, sub_font)
         ty = H // 2 - th - 20
 
         bar_pad = 30
@@ -733,7 +734,6 @@ class MediaUI:
         tx = (W - tw) // 2
         _text_outline(draw, (tx, ty), title, title_font, fill="#ffffff", outline="#000", width=6)
 
-        sw, sh = _measure_text(draw, likes_line, sub_font)
         draw.text(((W - sw) // 2, ty + th + 30), likes_line, font=sub_font, fill=ACCENT)
 
         return bg
