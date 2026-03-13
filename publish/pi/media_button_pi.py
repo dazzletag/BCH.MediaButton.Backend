@@ -1974,7 +1974,9 @@ class RemoteMenuController:
         self.keymap = {**defaults, **{k: v for k, v in override.items() if v}}
         self.playlist = []
         self.labels = []
-        self._special_items = ["▶  Play All", "⇄  Shuffle"]
+        self._radio_stations = self.remote_cfg.get("radio_stations") or []  # [{name, url}, ...]
+        self._special_items = ["▶  Play All", "⇄  Shuffle"] + (["📻  Radio"] if self._radio_stations else [])
+        self._in_radio_submenu = False
         self._last_key_time: dict = {}
         if not self.enabled:
             return
@@ -2021,13 +2023,19 @@ class RemoteMenuController:
             self.labels = []
 
     def open_menu(self):
+        self._in_radio_submenu = False
         self._ensure_playlist()
         title = f"{self.resident} • Playlist" if self.resident else "Playlist"
-        if not self.playlist:
+        if not self.playlist and not self._radio_stations:
             self.ui.show_idle(ResidentIdentity(name=self.resident or "Guest", key=self.resident or "guest", survey_blob={}), subtitle="No playlist available")
             return
         all_labels = self._special_items + self.labels
         self.ui.show_menu(title, all_labels, selected_index=0, hint="Up/Down to navigate • OK to play • Back to exit")
+
+    def _open_radio_menu(self):
+        self._in_radio_submenu = True
+        labels = [s["name"] for s in self._radio_stations]
+        self.ui.show_menu("📻  Radio", labels, selected_index=0, hint="Up/Down to select • OK to play • Back to return")
 
     def toggle_menu(self, *_):
         if self.ui.is_menu_visible():
@@ -2042,32 +2050,53 @@ class RemoteMenuController:
         self.ui.highlight_menu(delta)
 
     def play_selected(self, *_):
-        if not self.playlist:
-            self.open_menu()
-            return
         if not self.ui.is_menu_visible():
             self.open_menu()
             return
         idx = self.ui.current_menu_index() or 0
+
+        # Radio submenu — play selected station
+        if self._in_radio_submenu:
+            if 0 <= idx < len(self._radio_stations):
+                station = self._radio_stations[idx]
+                url = station.get("url", "")
+                if url.startswith("radio:"):
+                    url = url[6:]
+                self.ui.hide_menu()
+                self._in_radio_submenu = False
+                radio_item = [{"type": "radio", "url": url, "name": station["name"]}]
+                self.engine.start_manual_session(self.resident or "radio", playlist_override=radio_item, start_index=0, ordered=True)
+            return
+
+        if not self.playlist and not self._radio_stations:
+            self.open_menu()
+            return
         n_special = len(self._special_items)
-        self.ui.hide_menu()
         if idx < n_special:
-            # Special top-of-menu actions
-            if idx == 0:  # Play All
+            label = self._special_items[idx]
+            if label == "📻  Radio":
+                self._open_radio_menu()
+                return
+            self.ui.hide_menu()
+            if label == "▶  Play All":
                 self.engine.start_manual_session(self.resident, playlist_override=self.playlist, start_index=0, ordered=True)
-            elif idx == 1:  # Shuffle
+            elif label == "⇄  Shuffle":
                 shuffled = list(self.playlist)
                 random.shuffle(shuffled)
                 self.engine.start_manual_session(self.resident, playlist_override=shuffled, start_index=0, ordered=True)
         else:
             # Individual playlist item — play from that item in order
             item_idx = max(0, min(idx - n_special, len(self.playlist) - 1))
+            self.ui.hide_menu()
             self.engine.start_manual_session(self.resident, playlist_override=self.playlist, start_index=item_idx, ordered=True)
 
     def pause_or_resume(self, *_):
         self.engine.player.toggle_pause()
 
     def back(self, *_):
+        if self._in_radio_submenu:
+            self.open_menu()
+            return
         if self.ui.is_menu_visible():
             self.ui.hide_menu()
         else:
