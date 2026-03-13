@@ -1872,8 +1872,7 @@ class RemoteMenuController:
             return
         self._bind_keys()
         self._start_focus_maintainer()
-        if self.show_menu_on_start:
-            self.open_menu()
+        # open_menu deferred — called via root.after() in main() after mainloop starts
 
     def _default_resident(self) -> str | None:
         try:
@@ -2101,7 +2100,8 @@ def main():
     else:
         print("[BOOT] Beacon listener disabled (remote_menu control_mode)")
         if remote_controller.enabled and remote_controller.show_menu_on_start:
-            remote_controller.open_menu()
+            # Defer until after mainloop starts so Tk is fully ready
+            ui.root.after(500, remote_controller.open_menu)
 
     # Hand over to Tk mainloop
     ui.mainloop()

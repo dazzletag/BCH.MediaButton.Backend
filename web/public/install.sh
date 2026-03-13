@@ -27,7 +27,7 @@ die()     { echo -e "${RED}[install] ERROR:${NC} $*" >&2; exit 1; }
 API_BASE=""
 DEVICE_ID=""
 DEVICE_KEY=""
-OPENAI_KEY=""
+ANTHROPIC_KEY=""
 BRANCH="main"
 REPO_URL="https://github.com/dazzletag/BCH.MediaButton.Backend.git"
 RUN_WIZARD=1
@@ -37,7 +37,7 @@ while [[ $# -gt 0 ]]; do
     --api)        API_BASE="$2";    shift 2 ;;
     --device)     DEVICE_ID="$2";  shift 2 ;;
     --key)        DEVICE_KEY="$2"; shift 2 ;;
-    --openai-key) OPENAI_KEY="$2"; shift 2 ;;
+    --anthropic-key) ANTHROPIC_KEY="$2"; shift 2 ;;
     --branch)     BRANCH="$2";     shift 2 ;;
     --repo)       REPO_URL="$2";   shift 2 ;;
     --no-wizard)  RUN_WIZARD=0;    shift   ;;
@@ -182,8 +182,8 @@ DEVICE_ID=$DEVICE_ID
 DEVICE_KEY=$DEVICE_KEY
 EOF
 
-if [[ -n "$OPENAI_KEY" ]]; then
-  echo "OPENAI_API_KEY=$OPENAI_KEY" >> "$ENV_FILE"
+if [[ -n "$ANTHROPIC_KEY" ]]; then
+  echo "ANTHROPIC_API_KEY=$ANTHROPIC_KEY" >> "$ENV_FILE"
 fi
 
 cat >> "$ENV_FILE" <<'EOF'
