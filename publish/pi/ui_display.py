@@ -674,7 +674,8 @@ class MediaUI:
 
     def _generate_logo_ai(self, resident: ResidentIdentity) -> Image.Image:
         """
-        Generate a personalised logo image using the Stability AI image generation API.
+        Generate a personalised background image via Stability AI, then overlay
+        the resident's name and vibe line using PIL text (AI models can't do text).
         Falls back to the local PIL render if the API call fails.
         """
         api_key = os.getenv("STABILITY_API_KEY")
@@ -682,11 +683,11 @@ class MediaUI:
             return self._generate_logo_local(resident)
 
         likes_line = self._vibe_line(resident.survey_blob)
+        # Prompt asks for a background scene only — no text, no letters
         prompt = (
-            f"A vibrant, warm TV channel splash screen logo for a care home resident named "
-            f"'{resident.name}' who enjoys {likes_line}. "
-            "Large bold name text centred on screen, colourful background, cheerful and uplifting, "
-            "clean graphic design, 16:9 widescreen format, no people, no faces."
+            f"A warm, cheerful abstract background scene inspired by someone who enjoys "
+            f"{likes_line}. Vibrant colours, cinematic 16:9 format, painterly style, "
+            "no text, no letters, no words, no people, no faces."
         )
 
         url = f"https://api.stability.ai/v2beta/stable-image/generate/{STABILITY_ENGINE}"
@@ -706,12 +707,36 @@ class MediaUI:
                 timeout=60,
             )
             resp.raise_for_status()
-            img = Image.open(io.BytesIO(resp.content)).convert("RGBA")
-            print(f"[UI] (AI) Stability image generated for {resident.name} ({len(resp.content)} bytes)")
-            return img
+            bg = Image.open(io.BytesIO(resp.content)).convert("RGBA")
+            print(f"[UI] (AI) Stability background generated for {resident.name} ({len(resp.content)} bytes)")
         except Exception as e:
             print(f"[UI] (AI) Stability API failed ({e}); falling back to local render")
             return self._generate_logo_local(resident)
+
+        # ── Overlay PIL text on top of the AI background ──────────────────────
+        W, H = 1600, 900
+        bg = bg.resize((W, H), Image.LANCZOS)
+
+        # Semi-transparent dark bar so text is always readable
+        title   = f"{resident.name} TV"
+        draw    = ImageDraw.Draw(bg)
+        title_font = _safe_font(size=140, bold=True)
+        sub_font   = _safe_font(size=54)
+
+        tw, th = _measure_text(draw, title, title_font)
+        ty = H // 2 - th - 20
+
+        bar_pad = 30
+        bar = Image.new("RGBA", (W, th + bar_pad * 2 + 60 + sh), (0, 0, 0, 160))
+        bg.alpha_composite(bar, dest=(0, ty - bar_pad))
+
+        tx = (W - tw) // 2
+        _text_outline(draw, (tx, ty), title, title_font, fill="#ffffff", outline="#000", width=6)
+
+        sw, sh = _measure_text(draw, likes_line, sub_font)
+        draw.text(((W - sw) // 2, ty + th + 30), likes_line, font=sub_font, fill=ACCENT)
+
+        return bg
 
     def _generate_logo_local(self, resident: ResidentIdentity) -> Image.Image:
         """Crisp locally rendered logo card."""
