@@ -103,10 +103,26 @@ apt-get install -y --no-install-recommends \
   libatlas-base-dev \
   libopenblas-dev \
   libtk8.6 \
+  curl \
+  gnupg \
   2>/dev/null || true
 success "System packages installed."
 
-# ── 2. Create app user ────────────────────────────────────────────────────────
+# ── 2. FLIRC ──────────────────────────────────────────────────────────────────
+info "Installing FLIRC software..."
+if ! command -v flirc_util &>/dev/null; then
+  curl -s https://apt.flirc.tv/arch/key.gpg | apt-key add - 2>/dev/null
+  echo "deb https://apt.flirc.tv/arch/ focal main" \
+    > /etc/apt/sources.list.d/flirc.list
+  apt-get update -qq
+  apt-get install -y --no-install-recommends flirc 2>/dev/null || \
+    warn "FLIRC package install failed — you can install it manually later."
+  success "FLIRC installed."
+else
+  success "FLIRC already installed."
+fi
+
+# ── 3. Create app user ────────────────────────────────────────────────────────
 if ! id "$APP_USER" &>/dev/null; then
   info "Creating user '$APP_USER'..."
   useradd -m -s /bin/bash "$APP_USER"
@@ -117,7 +133,7 @@ else
   info "User '$APP_USER' already exists."
 fi
 
-# ── 3. Clone or update repo ───────────────────────────────────────────────────
+# ── 4. Clone or update repo ───────────────────────────────────────────────────
 if [[ -d "$INSTALL_DIR/.git" ]]; then
   info "Repo already present at $INSTALL_DIR — updating to branch '$BRANCH'..."
   git -C "$INSTALL_DIR" fetch origin "$BRANCH"
@@ -129,7 +145,7 @@ fi
 chown -R "$APP_USER":"$APP_USER" "$INSTALL_DIR"
 success "Repo ready at $INSTALL_DIR."
 
-# ── 4. Python virtual environment & dependencies ──────────────────────────────
+# ── 5. Python virtual environment & dependencies ──────────────────────────────
 info "Creating Python venv at $VENV_DIR..."
 python3 -m venv "$VENV_DIR"
 info "Installing Python dependencies..."
@@ -138,7 +154,7 @@ info "Installing Python dependencies..."
 chown -R "$APP_USER":"$APP_USER" "$VENV_DIR"
 success "Python dependencies installed."
 
-# ── 5. Write environment file ─────────────────────────────────────────────────
+# ── 6. Write environment file ─────────────────────────────────────────────────
 info "Writing environment file to $ENV_FILE..."
 mkdir -p "$ENV_DIR"
 chown "$APP_USER":"$APP_USER" "$ENV_DIR"
@@ -171,7 +187,7 @@ chown "$APP_USER":"$APP_USER" "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 success "Environment file written."
 
-# ── 6. Install systemd service ────────────────────────────────────────────────
+# ── 7. Install systemd service ────────────────────────────────────────────────
 info "Installing systemd service..."
 
 # Patch the service file's ExecStartPre to use the correct branch
@@ -185,12 +201,12 @@ systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
 success "Service installed and enabled."
 
-# ── 7. Create log file ────────────────────────────────────────────────────────
+# ── 8. Create log file ────────────────────────────────────────────────────────
 LOG_FILE="/var/log/media-button.log"
 touch "$LOG_FILE"
 chown "$APP_USER":"$APP_USER" "$LOG_FILE"
 
-# ── 8. Summary ────────────────────────────────────────────────────────────────
+# ── 9. Summary ────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  Installation complete!${NC}"
@@ -202,7 +218,7 @@ echo "  Config    : $ENV_FILE"
 echo "  Logs      : $LOG_FILE"
 echo ""
 
-# ── 9. Setup wizard ───────────────────────────────────────────────────────────
+# ── 10. Setup wizard ──────────────────────────────────────────────────────────
 if [[ "$RUN_WIZARD" -eq 1 ]]; then
   info "Launching setup wizard (resident & beacon configuration)..."
   echo ""
