@@ -152,17 +152,39 @@ def remember(resident, video_id):
 def _detect_alsa_device():
     """
     Try to pick a sensible ALSA device when AUDIO_OUT=alsa and no AUDIO_DEVICE
-    is provided. Prefers HDMI devices on Raspberry Pi.
+    is provided. Prefers HDMI devices using stable CARD= names (not numeric
+    indices which change when USB devices are added/removed).
     """
     try:
         out = subprocess.check_output(["aplay", "-L"], text=True)
         lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
-        plughw_hdmi = [ln for ln in lines if ln.lower().startswith("plughw:") and ("hdmi" in ln.lower() or "vc4hdmi" in ln.lower())]
-        if plughw_hdmi:
-            return plughw_hdmi[0]
-        plughw_any = [ln for ln in lines if ln.lower().startswith("plughw:")]
+
+        def _is_hdmi(s):
+            return "hdmi" in s.lower() or "vc4hdmi" in s.lower()
+
+        def _is_named(s):  # CARD= format is stable across reboots
+            return "card=" in s.lower()
+
+        # 1. Named HDMI (e.g. plughw:CARD=vc4hdmi0,DEV=0)  ← most stable
+        named_hdmi = [ln for ln in lines if ln.lower().startswith("plughw:") and _is_named(ln) and _is_hdmi(ln)]
+        if named_hdmi:
+            return named_hdmi[0]
+
+        # 2. Any named device
+        named_any = [ln for ln in lines if ln.lower().startswith("plughw:") and _is_named(ln)]
+        if named_any:
+            return named_any[0]
+
+        # 3. Numeric HDMI (fallback — index can drift)
+        num_hdmi = [ln for ln in lines if ln.lower().startswith("plughw:") and not _is_named(ln) and _is_hdmi(ln)]
+        if num_hdmi:
+            return num_hdmi[0]
+
+        # 4. Any plughw
+        plughw_any = [ln for ln in lines if ln.lower().startswith("plughw:") and not _is_named(ln)]
         if plughw_any:
             return plughw_any[0]
+
     except Exception as e:
         _log(f"[AUDIO] ALSA probe failed: {e}")
     return None
