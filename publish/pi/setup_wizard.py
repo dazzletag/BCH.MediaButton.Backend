@@ -285,25 +285,38 @@ def _setup_flirc(keymap: dict[str, str]) -> None:
             print("  Skipped. Re-run the wizard after installing flirc_util.\n")
             return
 
-    print("Make sure the FLIRC USB dongle is plugged in.")
-    print("For each button you will be prompted to press the matching key on your remote.\n")
+    # Pre-flight: check the dongle is connected
+    check = subprocess.run(
+        ["flirc_util", "version"],
+        capture_output=True, text=True, timeout=5,
+    )
+    if "device disconnected" in (check.stdout + check.stderr).lower():
+        print("[ERROR] FLIRC USB dongle not detected.")
+        print("  Plug the dongle in and re-run the wizard to map buttons.\n")
+        return
+
+    print("FLIRC dongle detected. For each button press Enter then press the key on your remote.\n")
 
     for config_key, description, default_tk in _FLIRC_BUTTONS:
         tk_key    = keymap.get(config_key, default_tk)
         flirc_key = _TK_TO_FLIRC.get(tk_key, tk_key.lower())
 
         print(f"  [{description}]  ->  keyboard key '{flirc_key}'")
-        input("  Press Enter, then immediately press the button on your remote...")
+        input("  Press Enter, then press the button on your remote...")
 
         try:
             result = subprocess.run(
                 ["flirc_util", "record", flirc_key],
-                timeout=30,
+                capture_output=True, text=True, timeout=30,
             )
-            if result.returncode == 0:
+            output = (result.stdout + result.stderr).strip()
+            if "device disconnected" in output.lower():
+                print("  [ERROR] FLIRC dongle disconnected during setup. Stopping.\n")
+                break
+            elif "recorded" in output.lower() or result.returncode == 0:
                 print(f"  OK\n")
             else:
-                print(f"  [WARN] flirc_util exited with code {result.returncode}\n")
+                print(f"  [WARN] Unexpected response: {output}\n")
         except subprocess.TimeoutExpired:
             print("  [WARN] No button press detected within 30 s — skipped.\n")
         except FileNotFoundError:
