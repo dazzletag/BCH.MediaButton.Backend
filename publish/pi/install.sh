@@ -117,36 +117,13 @@ info "Installing FLIRC software..."
 if ! command -v flirc_util &>/dev/null; then
   _flirc_ok=0
 
-  # Method 1: apt repo (works on Ubuntu; may fail on Raspberry Pi OS)
-  FLIRC_KEYRING="/usr/share/keyrings/flirc-archive-keyring.gpg"
-  if curl -sSL https://apt.flirc.tv/arch/key.gpg -o "$FLIRC_KEYRING" 2>/dev/null; then
-    echo "deb [signed-by=$FLIRC_KEYRING] https://apt.flirc.tv/arch/ focal main" \
-      > /etc/apt/sources.list.d/flirc.list
-    if apt-get update -qq 2>/dev/null; then
-      apt-get install -y --no-install-recommends flirc 2>/dev/null && _flirc_ok=1 || true
-    else
-      rm -f /etc/apt/sources.list.d/flirc.list "$FLIRC_KEYRING"
-    fi
-  fi
-
-  # Method 2: direct .deb download (works on Raspberry Pi OS)
-  if [ "$_flirc_ok" -eq 0 ]; then
-    ARCH=$(dpkg --print-architecture 2>/dev/null || echo "")
-    case "$ARCH" in
-      armhf)        FLIRC_DEB="flirc_latest.armhf.deb" ;;
-      arm64|aarch64) FLIRC_DEB="flirc_latest.arm64.deb" ;;
-      amd64)        FLIRC_DEB="flirc_latest.amd64.deb" ;;
-      *)            FLIRC_DEB="" ;;
-    esac
-    if [ -n "$FLIRC_DEB" ]; then
-      FLIRC_URL="https://flirc.tv/download/flirc/${FLIRC_DEB}"
-      if curl -sSL "$FLIRC_URL" -o /tmp/flirc.deb 2>/dev/null \
-          && dpkg -i /tmp/flirc.deb 2>/dev/null; then
-        apt-get install -f -y 2>/dev/null || true
-        _flirc_ok=1
-      fi
-      rm -f /tmp/flirc.deb
-    fi
+  # Gemfury repo — supports armhf, arm64 and amd64 including Raspberry Pi OS
+  echo "deb [trusted=yes] https://apt.fury.io/flirc/ /" \
+    > /etc/apt/sources.list.d/flirc.list
+  if apt-get update -qq 2>/dev/null; then
+    apt-get install -y --no-install-recommends flirc 2>/dev/null && _flirc_ok=1 || true
+  else
+    rm -f /etc/apt/sources.list.d/flirc.list
   fi
 
   if [ "$_flirc_ok" -eq 1 ] && command -v flirc_util &>/dev/null; then

@@ -274,11 +274,11 @@ def _setup_flirc(keymap: dict[str, str]) -> None:
 
     if not shutil.which("flirc_util"):
         print("[WARN] flirc_util is not installed.")
-        print("  Install via direct download (recommended for Raspberry Pi OS):")
+        print("  Install with:")
         print()
-        print("    ARCH=$(dpkg --print-architecture)")
-        print("    curl -sSL https://flirc.tv/download/flirc/flirc_latest.${ARCH}.deb -o /tmp/flirc.deb")
-        print("    sudo dpkg -i /tmp/flirc.deb && sudo apt-get install -f -y")
+        print("    echo 'deb [trusted=yes] https://apt.fury.io/flirc/ /' \\")
+        print("      | sudo tee /etc/apt/sources.list.d/flirc.list")
+        print("    sudo apt-get update && sudo apt-get install flirc")
         print()
         ans = input("Skip FLIRC setup for now? [Y/n]: ").strip().lower()
         if ans in ("", "y"):
