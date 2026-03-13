@@ -26,7 +26,9 @@ from bleak import BleakScanner
 # ─── Paths ────────────────────────────────────────────────────────────────────
 
 BASE_DIR    = Path(__file__).parent
-CONFIG_PATH = BASE_DIR / "config.yaml"
+# Config lives outside the git repo so it survives 'git reset --hard' on service restarts
+CONFIG_PATH     = Path(os.getenv("MEDIA_BUTTON_CONFIG", "/etc/media-button/config.yaml"))
+_TEMPLATE_CONFIG = BASE_DIR / "config.yaml"   # bundled read-only template
 ENV_FILE    = Path("/etc/media-button/env")
 
 EDDYSTONE_UUID = "feaa"
@@ -116,13 +118,16 @@ async def scan_beacons(duration: int = 15) -> dict[str, int]:
 # ─── Config helpers ───────────────────────────────────────────────────────────
 
 def _load_config() -> dict:
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH) as f:
+    # Prefer the external config; fall back to bundled template for structure
+    path = CONFIG_PATH if CONFIG_PATH.exists() else _TEMPLATE_CONFIG
+    if path.exists():
+        with open(path) as f:
             return yaml.safe_load(f) or {}
     return {}
 
 
 def _write_config(config: dict) -> None:
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(CONFIG_PATH, "w") as f:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
 

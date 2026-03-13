@@ -203,6 +203,18 @@ chown "$APP_USER":"$APP_USER" "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 success "Environment file written."
 
+# ── 6b. Seed config.yaml (outside the git repo so git reset --hard can't wipe it) ──
+CONFIG_FILE="$ENV_DIR/config.yaml"
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  info "Seeding config file from template..."
+  cp "$INSTALL_DIR/publish/pi/config.yaml" "$CONFIG_FILE"
+  chown "$APP_USER":"$APP_USER" "$CONFIG_FILE"
+  chmod 600 "$CONFIG_FILE"
+  success "Config file seeded at $CONFIG_FILE."
+else
+  info "Config file already exists at $CONFIG_FILE — preserving."
+fi
+
 # ── 7. Install systemd service ────────────────────────────────────────────────
 info "Installing systemd service..."
 

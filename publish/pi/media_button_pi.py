@@ -71,7 +71,10 @@ YT_FORCE_IPV4 = os.getenv("YT_FORCE_IPV4", "0") == "1"
 YT_FORMAT = os.getenv("YT_FORMAT", "bv*[ext=mp4][height<=720][fps<=30][vcodec^=avc1]+ba/b")
 YT_COOKIES_FILE    = os.getenv("YT_COOKIES_FILE", "")     # e.g. /etc/media-button/youtube-cookies.txt
 YT_COOKIES_BROWSER = os.getenv("YT_COOKIES_BROWSER", "")  # e.g. chromium  (reads cookies directly from browser profile)
-CONFIG_PATH = os.path.join(BASE_DIR, "config.yaml")
+# External config survives 'git reset --hard'; fall back to bundled template
+_EXTERNAL_CONFIG = os.getenv("MEDIA_BUTTON_CONFIG", "/etc/media-button/config.yaml")
+_TEMPLATE_CONFIG = os.path.join(BASE_DIR, "config.yaml")
+CONFIG_PATH = _EXTERNAL_CONFIG if os.path.exists(_EXTERNAL_CONFIG) else _TEMPLATE_CONFIG
 
 EDDYSTONE_UUID = "feaa"
 
