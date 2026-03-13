@@ -236,7 +236,10 @@ echo ""
 if [[ "$RUN_WIZARD" -eq 1 ]]; then
   info "Launching setup wizard (resident & beacon configuration)..."
   echo ""
-  sudo -u "$APP_USER" "$VENV_DIR/bin/python3" "$INSTALL_DIR/publish/pi/setup_wizard.py" || \
+  # Redirect stdin from /dev/tty so the wizard can read keyboard input even
+  # when the installer itself was piped from curl.
+  sudo -u "$APP_USER" "$VENV_DIR/bin/python3" "$INSTALL_DIR/publish/pi/setup_wizard.py" \
+    </dev/tty || \
     warn "Setup wizard exited with an error. You can re-run it later:"  \
          "  sudo -u $APP_USER $VENV_DIR/bin/python3 $INSTALL_DIR/publish/pi/setup_wizard.py"
 else
