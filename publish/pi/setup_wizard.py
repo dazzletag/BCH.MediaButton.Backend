@@ -199,6 +199,10 @@ def _apply_setup(
         rc = config.setdefault("remote_control", {})
         rc["resident"] = resident_name
         rc.setdefault("show_menu_on_start", True)
+        rc.setdefault("radio_stations", [
+            {"name": "BBC Radio 3",      "url": "radio:https://lsn.lv/bbcradio.m3u8?station=bbc_radio_three&bitrate=128000"},
+            {"name": "BBC Radio Bristol", "url": "radio:https://lsn.lv/bbcradio.m3u8?station=bbc_radio_bristol&bitrate=128000"},
+        ])
 
     return config
 
