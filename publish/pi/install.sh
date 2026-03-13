@@ -111,13 +111,16 @@ success "System packages installed."
 # ── 2. FLIRC ──────────────────────────────────────────────────────────────────
 info "Installing FLIRC software..."
 if ! command -v flirc_util &>/dev/null; then
-  curl -s https://apt.flirc.tv/arch/key.gpg | apt-key add - 2>/dev/null
-  echo "deb https://apt.flirc.tv/arch/ focal main" \
+  FLIRC_KEYRING="/usr/share/keyrings/flirc-archive-keyring.gpg"
+  curl -fsSL https://apt.flirc.tv/arch/key.gpg -o "$FLIRC_KEYRING"
+  echo "deb [signed-by=$FLIRC_KEYRING] https://apt.flirc.tv/arch/ focal main" \
     > /etc/apt/sources.list.d/flirc.list
   apt-get update -qq
   apt-get install -y --no-install-recommends flirc 2>/dev/null || \
     warn "FLIRC package install failed — you can install it manually later."
-  success "FLIRC installed."
+  if command -v flirc_util &>/dev/null; then
+    success "FLIRC installed."
+  fi
 else
   success "FLIRC already installed."
 fi
