@@ -37,11 +37,18 @@ export default function Devices() {
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const [sp, setSp] = useState<SharePointCreds>({
-    tenantId: "", clientId: "", clientSecret: "", driveId: "", itemId: "", itemPath: "",
+  const [sp, setSp] = useState<SharePointCreds>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("mb_sp_creds") ?? "{}");
+    } catch { return {}; }
   });
-  const setSPField = (field: keyof SharePointCreds) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setSp((prev) => ({ ...prev, [field]: e.target.value }));
+  const setSPField = (field: keyof SharePointCreds) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSp((prev) => {
+      const next = { ...prev, [field]: e.target.value };
+      localStorage.setItem("mb_sp_creds", JSON.stringify(next));
+      return next;
+    });
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
