@@ -338,6 +338,11 @@ class Survey:
         self._hashes = {}    # resident_lower -> sha256(row)
 
     def load(self):
+        if not os.path.exists(self.xlsx_path):
+            print(f"[SURVEY] File not found: {self.xlsx_path} — survey data unavailable")
+            self._rows = {}
+            self._hashes = {}
+            return {}
         xls = pd.ExcelFile(self.xlsx_path)
         rows = {}
         for sheet in xls.sheet_names:
@@ -791,6 +796,56 @@ def fetch_manual_playlist_from_api(resident: str) -> list[str]:
     except Exception as e:
         print(f"[API] Failed to fetch manual playlist for {resident}: {e}")
         return []
+
+# =========================
+# Mobizio "This is Me" profile (replaces local This_is_Me.xlsx)
+# =========================
+_PROFILE_CACHE_DIR = os.path.join(BASE_DIR, ".data", "profiles")
+
+def fetch_resident_profile_from_api(resident: str) -> dict:
+    """
+    Fetch the resident's 'This is Me' profile from the backend API (which reads from Mobizio).
+    Returns a flat dict of form field label → value, same shape as ThisIsMe.row_for().
+    Caches the result locally so playback continues when offline.
+    Falls back to the local cache if the API is unreachable.
+    """
+    cache_file = os.path.join(_PROFILE_CACHE_DIR, f"{resident.replace(' ', '_')}.profile.json")
+    os.makedirs(_PROFILE_CACHE_DIR, exist_ok=True)
+
+    if API_BASE and DEVICE_ID and DEVICE_KEY:
+        try:
+            url = (f"{API_BASE}/api/device/{urllib.parse.quote(DEVICE_ID)}"
+                   f"/resident-profile?residentKey={urllib.parse.quote(resident)}")
+            r = requests.get(url, headers=_device_headers(), timeout=20)
+            if r.status_code == 200:
+                data = r.json()
+                # API returns ResidentMobizioProfile: { name, dob, gender, formFields: {...} }
+                form_fields = data.get("formFields") or {}
+                # Enrich with top-level demographic fields
+                if data.get("dob"):
+                    form_fields.setdefault("Date of Birth", data["dob"])
+                if data.get("gender"):
+                    form_fields.setdefault("Gender", data["gender"])
+                with open(cache_file, "w") as f:
+                    json.dump(form_fields, f)
+                print(f"[PROFILE] Fetched {len(form_fields)} field(s) for {resident} from Mobizio API")
+                return form_fields
+            else:
+                print(f"[PROFILE] API returned {r.status_code} for {resident}")
+        except Exception as e:
+            print(f"[PROFILE] API fetch failed for {resident}: {e}")
+
+    # Fall back to local cache
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file) as f:
+                data = json.load(f)
+            print(f"[PROFILE] Using cached profile for {resident}")
+            return data
+        except Exception as e:
+            print(f"[PROFILE] Cache read failed: {e}")
+
+    return {}
 
 # =========================
 # Photo cache for ambient slideshow
@@ -1508,10 +1563,9 @@ class Engine:
             sess["radio_urls"] = self._gather_radio_urls(sess["playlist"], resident)
             return sess
 
-        # LLM cache
-                # LLM cache – now includes both survey row and This_is_Me profile
+        # LLM cache – fetch "This is Me" profile from Mobizio API (falls back to local cache)
         survey_row = self.survey.row_for(resident) or {}
-        profile = THIS_IS_ME.row_for(resident) or {}
+        profile = fetch_resident_profile_from_api(resident) or THIS_IS_ME.row_for(resident) or {}
 
         combined = {
             "survey_row": survey_row,

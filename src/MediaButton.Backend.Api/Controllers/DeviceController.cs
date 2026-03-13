@@ -111,4 +111,34 @@ public class DeviceController : ControllerBase
             return StatusCode(502, $"Failed to fetch residents from Mobizio: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// Returns the "This is Me" profile for a resident from Mobizio care planning.
+    /// The Pi uses this to personalise AI playlist generation without needing a local Excel file.
+    /// </summary>
+    [HttpGet("resident-profile")]
+    public async Task<IActionResult> GetResidentProfile(
+        string deviceId,
+        [FromQuery] string residentKey,
+        [FromServices] MobizioService mobizio)
+    {
+        var authedDeviceId = HttpContext.Items["DeviceId"] as string;
+        if (!string.Equals(deviceId, authedDeviceId, StringComparison.OrdinalIgnoreCase))
+            return Unauthorized("Device mismatch.");
+
+        if (string.IsNullOrWhiteSpace(residentKey))
+            return BadRequest("residentKey is required.");
+
+        try
+        {
+            var profile = await mobizio.GetResidentProfileAsync(residentKey);
+            if (profile is null)
+                return NotFound($"No Mobizio profile found for '{residentKey}'.");
+            return Ok(profile);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(502, $"Failed to fetch profile from Mobizio: {ex.Message}");
+        }
+    }
 }
