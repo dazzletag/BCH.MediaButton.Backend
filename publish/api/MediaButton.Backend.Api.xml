@@ -17,6 +17,13 @@
             Used by the Pi setup wizard to populate the resident selection list.
             </summary>
         </member>
+        <member name="M:MediaButtonBackend.Controllers.DeviceController.RegisterResident(System.String,MediaButtonBackend.Api.Models.RegisterResidentRequest)">
+            <summary>
+            Called by the Pi setup wizard after configuration to register the assigned resident.
+            Creates the resident record in the database if it doesn't exist, and stores the
+            Mobizio case ID on both the device and the resident snapshot.
+            </summary>
+        </member>
         <member name="M:MediaButtonBackend.Controllers.DeviceController.GetResidentProfile(System.String,System.String,MediaButtonBackend.Services.MobizioService)">
             <summary>
             Returns the "This is Me" profile for a resident from Mobizio care planning.
@@ -31,6 +38,21 @@
         <member name="P:MediaButtonBackend.Models.Device.DeviceKey">
             <summary>
             Secret key used by the Pi to authenticate. Stored plaintext; admin-only readable.
+            </summary>
+        </member>
+        <member name="P:MediaButtonBackend.Models.Device.ResidentKey">
+            <summary>
+            The resident this device is currently assigned to (set by the Pi setup wizard).
+            </summary>
+        </member>
+        <member name="P:MediaButtonBackend.Models.Device.MobizioId">
+            <summary>
+            Mobizio case ID for the assigned resident.
+            </summary>
+        </member>
+        <member name="P:MediaButtonBackend.Models.ResidentPlaylistSnapshot.MobizioId">
+            <summary>
+            Mobizio case ID for this resident (populated by the Pi setup wizard).
             </summary>
         </member>
         <member name="M:MediaButtonBackend.Services.MobizioService.GetActivityPhotoUrlsAsync(System.String,System.Collections.Generic.List{System.String},System.Collections.Generic.HashSet{System.Int32},System.Nullable{System.Int32})">
@@ -84,6 +106,18 @@
             <inheritdoc />
         </member>
         <member name="M:MediaButton.Backend.Api.Data.Migrations.AddDeviceKey.Down(Microsoft.EntityFrameworkCore.Migrations.MigrationBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="T:MediaButton.Backend.Api.Data.Migrations.AddDeviceResidentKey">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.AddDeviceResidentKey.Up(Microsoft.EntityFrameworkCore.Migrations.MigrationBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.AddDeviceResidentKey.Down(Microsoft.EntityFrameworkCore.Migrations.MigrationBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.AddDeviceResidentKey.BuildTargetModel(Microsoft.EntityFrameworkCore.ModelBuilder)">
             <inheritdoc />
         </member>
     </members>

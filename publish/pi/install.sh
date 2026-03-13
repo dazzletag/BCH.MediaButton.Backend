@@ -9,11 +9,16 @@
 #   --key      Device secret key
 #
 # Optional:
-#   --device       Device ID (default: Pi hardware serial number)
-#   --openai-key   OpenAI API key (for AI playlist generation)
-#   --branch       Git branch to track (default: main)
-#   --repo         Git repo URL (default: https://github.com/dazzletag/BCH.MediaButton.Backend.git)
-#   --no-wizard    Skip the setup wizard after install
+#   --device          Device ID (default: Pi hardware serial number)
+#   --branch          Git branch to track (default: main)
+#   --repo            Git repo URL (default: https://github.com/dazzletag/BCH.MediaButton.Backend.git)
+#   --no-wizard       Skip the setup wizard after install
+#   --tenant-id       Microsoft Entra tenant ID (for SharePoint/OneDrive spreadsheet sync)
+#   --client-id       Azure app client ID (for SharePoint/OneDrive spreadsheet sync)
+#   --client-secret   Azure app client secret (for SharePoint/OneDrive spreadsheet sync)
+#   --drive-id        OneDrive drive ID containing the survey spreadsheet
+#   --item-id         OneDrive item ID of the survey spreadsheet (preferred over --item-path)
+#   --item-path       OneDrive path to the survey spreadsheet (e.g. /BCH/survey.xlsx)
 set -euo pipefail
 
 # ── Colours ──────────────────────────────────────────────────────────────────
@@ -27,20 +32,32 @@ die()     { echo -e "${RED}[install] ERROR:${NC} $*" >&2; exit 1; }
 API_BASE=""
 DEVICE_ID=""
 DEVICE_KEY=""
-ANTHROPIC_KEY=""
 BRANCH="main"
 REPO_URL="https://github.com/dazzletag/BCH.MediaButton.Backend.git"
 RUN_WIZARD=1
+TENANT_ID=""
+CLIENT_ID=""
+CLIENT_SECRET=""
+DRIVE_ID=""
+ITEM_ID=""
+ITEM_PATH=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --api)        API_BASE="$2";    shift 2 ;;
-    --device)     DEVICE_ID="$2";  shift 2 ;;
-    --key)        DEVICE_KEY="$2"; shift 2 ;;
-    --anthropic-key) ANTHROPIC_KEY="$2"; shift 2 ;;
-    --branch)     BRANCH="$2";     shift 2 ;;
-    --repo)       REPO_URL="$2";   shift 2 ;;
-    --no-wizard)  RUN_WIZARD=0;    shift   ;;
+    --api)           API_BASE="$2";      shift 2 ;;
+    --device)        DEVICE_ID="$2";     shift 2 ;;
+    --key)           DEVICE_KEY="$2";    shift 2 ;;
+    --branch)        BRANCH="$2";        shift 2 ;;
+    --repo)          REPO_URL="$2";      shift 2 ;;
+    --no-wizard)     RUN_WIZARD=0;       shift   ;;
+    --tenant-id)     TENANT_ID="$2";     shift 2 ;;
+    --client-id)     CLIENT_ID="$2";     shift 2 ;;
+    --client-secret) CLIENT_SECRET="$2"; shift 2 ;;
+    --drive-id)      DRIVE_ID="$2";      shift 2 ;;
+    --item-id)       ITEM_ID="$2";       shift 2 ;;
+    --item-path)     ITEM_PATH="$2";     shift 2 ;;
+    # legacy / ignored
+    --anthropic-key|--openai-key) shift 2 ;;
     *) die "Unknown argument: $1" ;;
   esac
 done
@@ -185,9 +202,13 @@ DEVICE_ID=$DEVICE_ID
 DEVICE_KEY=$DEVICE_KEY
 EOF
 
-if [[ -n "$ANTHROPIC_KEY" ]]; then
-  echo "ANTHROPIC_API_KEY=$ANTHROPIC_KEY" >> "$ENV_FILE"
-fi
+# SharePoint / OneDrive credentials (for survey spreadsheet sync)
+if [[ -n "$TENANT_ID" ]];     then echo "TENANT_ID=$TENANT_ID"         >> "$ENV_FILE"; fi
+if [[ -n "$CLIENT_ID" ]];     then echo "CLIENT_ID=$CLIENT_ID"         >> "$ENV_FILE"; fi
+if [[ -n "$CLIENT_SECRET" ]]; then echo "CLIENT_SECRET=$CLIENT_SECRET" >> "$ENV_FILE"; fi
+if [[ -n "$DRIVE_ID" ]];      then echo "DRIVE_ID=$DRIVE_ID"           >> "$ENV_FILE"; fi
+if [[ -n "$ITEM_ID" ]];       then echo "ITEM_ID=$ITEM_ID"             >> "$ENV_FILE"; fi
+if [[ -n "$ITEM_PATH" ]];     then echo "ITEM_PATH=$ITEM_PATH"         >> "$ENV_FILE"; fi
 
 cat >> "$ENV_FILE" <<'EOF'
 
@@ -197,6 +218,7 @@ cat >> "$ENV_FILE" <<'EOF'
 # VOLUME_PERCENT=80
 # YT_FORCE_IPV4=1
 # YT_EXTRACTOR_ARGS=youtube:player_client=android
+# STABILITY_API_KEY=      # Stability AI key for AI-generated resident logos
 EOF
 
 chown "$APP_USER":"$APP_USER" "$ENV_FILE"

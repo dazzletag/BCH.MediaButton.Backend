@@ -1,9 +1,25 @@
-import { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useApiClient } from "../hooks/useApiClient";
 import type { Device } from "../types";
 
-function buildInstallCommand(apiBase: string, deviceId: string, key: string) {
-  return `curl -sSL ${apiBase}/install.sh \\\n  | sudo bash -s -- \\\n      --api ${apiBase} \\\n      --device "${deviceId}" \\\n      --key "${key}"`;
+interface SharePointCreds {
+  tenantId: string;
+  clientId: string;
+  clientSecret: string;
+  driveId: string;
+  itemId: string;
+  itemPath: string;
+}
+
+function buildInstallCommand(apiBase: string, deviceId: string, key: string, sp?: SharePointCreds) {
+  let cmd = `curl -sSL ${apiBase}/install.sh \\\n  | sudo bash -s -- \\\n      --api ${apiBase} \\\n      --device "${deviceId}" \\\n      --key "${key}"`;
+  if (sp?.tenantId)     cmd += ` \\\n      --tenant-id "${sp.tenantId}"`;
+  if (sp?.clientId)     cmd += ` \\\n      --client-id "${sp.clientId}"`;
+  if (sp?.clientSecret) cmd += ` \\\n      --client-secret "${sp.clientSecret}"`;
+  if (sp?.driveId)      cmd += ` \\\n      --drive-id "${sp.driveId}"`;
+  if (sp?.itemId)       cmd += ` \\\n      --item-id "${sp.itemId}"`;
+  else if (sp?.itemPath) cmd += ` \\\n      --item-path "${sp.itemPath}"`;
+  return cmd;
 }
 
 export default function Devices() {
@@ -20,6 +36,12 @@ export default function Devices() {
   const [addError, setAddError] = useState<string | null>(null);
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const [sp, setSp] = useState<SharePointCreds>({
+    tenantId: "", clientId: "", clientSecret: "", driveId: "", itemId: "", itemPath: "",
+  });
+  const setSPField = (field: keyof SharePointCreds) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setSp((prev) => ({ ...prev, [field]: e.target.value }));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -77,7 +99,7 @@ export default function Devices() {
 
   const copyCommand = async (device: Device) => {
     if (!device.deviceKey) return;
-    const cmd = buildInstallCommand(apiBase, device.deviceId, device.deviceKey);
+    const cmd = buildInstallCommand(apiBase, device.deviceId, device.deviceKey, sp);
     await navigator.clipboard.writeText(cmd);
     setCopiedId(device.deviceId);
     setTimeout(() => setCopiedId(null), 2000);
@@ -130,6 +152,47 @@ export default function Devices() {
           </div>
           {addError && <p style={{ color: "var(--error, #c0392b)", marginTop: 8 }}>{addError}</p>}
         </div>
+
+        {/* SharePoint / OneDrive credentials */}
+        <details style={{ marginBottom: 20 }}>
+          <summary style={{ cursor: "pointer", fontWeight: 600, marginBottom: 8 }}>
+            SharePoint / OneDrive credentials{" "}
+            <span className="muted" style={{ fontWeight: 400, fontSize: 13 }}>
+              (optional — needed for survey spreadsheet sync)
+            </span>
+          </summary>
+          <div className="card" style={{ background: "rgba(11,111,147,0.04)", marginTop: 8 }}>
+            <div className="form-row" style={{ flexWrap: "wrap", gap: 10 }}>
+              <div>
+                <label className="muted" style={{ display: "block", marginBottom: 4 }}>Tenant ID</label>
+                <input className="input" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" value={sp.tenantId} onChange={setSPField("tenantId")} />
+              </div>
+              <div>
+                <label className="muted" style={{ display: "block", marginBottom: 4 }}>Client ID</label>
+                <input className="input" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" value={sp.clientId} onChange={setSPField("clientId")} />
+              </div>
+              <div>
+                <label className="muted" style={{ display: "block", marginBottom: 4 }}>Client Secret</label>
+                <input className="input" type="password" placeholder="Azure app secret" value={sp.clientSecret} onChange={setSPField("clientSecret")} />
+              </div>
+              <div>
+                <label className="muted" style={{ display: "block", marginBottom: 4 }}>Drive ID</label>
+                <input className="input" placeholder="b!xxxx..." value={sp.driveId} onChange={setSPField("driveId")} />
+              </div>
+              <div>
+                <label className="muted" style={{ display: "block", marginBottom: 4 }}>Item ID <span className="muted">(preferred)</span></label>
+                <input className="input" placeholder="01XXXX..." value={sp.itemId} onChange={setSPField("itemId")} />
+              </div>
+              <div>
+                <label className="muted" style={{ display: "block", marginBottom: 4 }}>Item Path <span className="muted">(if no Item ID)</span></label>
+                <input className="input" placeholder="/BCH/survey.xlsx" value={sp.itemPath} onChange={setSPField("itemPath")} />
+              </div>
+            </div>
+            <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+              These values are embedded in the install command and written to <code>/etc/media-button/env</code> on the Pi.
+            </p>
+          </div>
+        </details>
 
         {/* Device list */}
         {loading && <p className="muted">Loading…</p>}
@@ -200,7 +263,7 @@ export default function Devices() {
               margin: 0,
             }}
           >
-            {buildInstallCommand(apiBase, devices[devices.length - 1].deviceId, devices[devices.length - 1].deviceKey!)}
+            {buildInstallCommand(apiBase, devices[devices.length - 1].deviceId, devices[devices.length - 1].deviceKey!, sp)}
           </pre>
         </div>
       )}
