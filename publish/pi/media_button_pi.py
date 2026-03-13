@@ -164,6 +164,10 @@ def _detect_alsa_device():
         def _is_named(s):  # CARD= format is stable across reboots
             return "card=" in s.lower()
 
+        # 0. Always prefer 'pulse' — routes through PipeWire, handles any format
+        if "pulse" in lines:
+            return "pulse"
+
         # 1. Named HDMI (e.g. plughw:CARD=vc4hdmi0,DEV=0)  ← most stable
         named_hdmi = [ln for ln in lines if ln.lower().startswith("plughw:") and _is_named(ln) and _is_hdmi(ln)]
         if named_hdmi:
