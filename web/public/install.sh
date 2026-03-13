@@ -89,6 +89,10 @@ info "Branch    : $BRANCH"
 echo ""
 
 # ── 1. System packages ────────────────────────────────────────────────────────
+# Remove any stale FLIRC apt sources from a previous failed run so they
+# don't pollute this apt-get update.
+rm -f /etc/apt/sources.list.d/flirc.list /usr/share/keyrings/flirc-archive-keyring.gpg
+
 info "Updating apt and installing system packages..."
 apt-get update -qq
 apt-get install -y --no-install-recommends \
@@ -116,13 +120,17 @@ if ! command -v flirc_util &>/dev/null; then
   if curl -sSL https://apt.flirc.tv/arch/key.gpg -o "$FLIRC_KEYRING" 2>/dev/null; then
     echo "deb [signed-by=$FLIRC_KEYRING] https://apt.flirc.tv/arch/ focal main" \
       > /etc/apt/sources.list.d/flirc.list
-    apt-get update -qq 2>/dev/null || true
-    apt-get install -y --no-install-recommends flirc 2>/dev/null && _flirc_ok=1 || true
+    if apt-get update -qq 2>/dev/null; then
+      apt-get install -y --no-install-recommends flirc 2>/dev/null && _flirc_ok=1 || true
+    else
+      # Repo not compatible with this OS — clean up so apt stays healthy
+      rm -f /etc/apt/sources.list.d/flirc.list "$FLIRC_KEYRING"
+    fi
   fi
   if [ "$_flirc_ok" -eq 1 ] && command -v flirc_util &>/dev/null; then
     success "FLIRC installed."
   else
-    warn "FLIRC could not be installed automatically — the wizard will prompt you to install it if you choose remote control mode."
+    warn "FLIRC could not be installed automatically — the wizard will prompt you if you choose remote control mode."
   fi
 else
   success "FLIRC already installed."
