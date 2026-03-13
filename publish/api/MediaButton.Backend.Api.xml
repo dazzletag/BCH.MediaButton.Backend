@@ -4,9 +4,39 @@
         <name>MediaButton.Backend.Api</name>
     </assembly>
     <members>
+        <member name="M:MediaButtonBackend.Controllers.AdminResidentMobizioController.FetchActivityPhotos(System.String)">
+            <summary>
+            Fetches recent activity record photos for a resident from Mobizio,
+            uploads them to Azure Blob Storage, registers MediaAsset records,
+            and returns the new media IDs ready to be added to the resident's playlist.
+            </summary>
+        </member>
+        <member name="M:MediaButtonBackend.Controllers.DeviceController.ListMobizioResidents(System.String,MediaButtonBackend.Services.MobizioService)">
+            <summary>
+            Returns all active residents from Mobizio care planning.
+            Used by the Pi setup wizard to populate the resident selection list.
+            </summary>
+        </member>
+        <member name="M:MediaButtonBackend.Controllers.DeviceController.GetResidentProfile(System.String,System.String,MediaButtonBackend.Services.MobizioService)">
+            <summary>
+            Returns the "This is Me" profile for a resident from Mobizio care planning.
+            The Pi uses this to personalise AI playlist generation without needing a local Excel file.
+            </summary>
+        </member>
         <member name="P:MediaButtonBackend.Models.Device.ConfigJson">
             <summary>
             JSON blob for per-device config overrides (e.g., interval, volume).
+            </summary>
+        </member>
+        <member name="P:MediaButtonBackend.Models.Device.DeviceKey">
+            <summary>
+            Secret key used by the Pi to authenticate. Stored plaintext; admin-only readable.
+            </summary>
+        </member>
+        <member name="M:MediaButtonBackend.Services.MobizioService.GetActivityPhotoUrlsAsync(System.String,System.Collections.Generic.List{System.String},System.Collections.Generic.HashSet{System.Int32},System.Nullable{System.Int32})">
+            <summary>
+            Returns up to <see cref="P:MediaButtonBackend.Services.MobizioService.ActivityPhotoLimit"/> (elementId, downloadUrl) pairs from
+            the most recent activity record form submissions for the named resident.
             </summary>
         </member>
         <member name="T:MediaButtonBackend.Services.StorageCorsInitializer">
@@ -36,6 +66,24 @@
             <inheritdoc />
         </member>
         <member name="M:MediaButton.Backend.Api.Data.Migrations.AddResidentPlaylists.BuildTargetModel(Microsoft.EntityFrameworkCore.ModelBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="T:MediaButton.Backend.Api.Data.Migrations.RecordPlaylistPollTime">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.RecordPlaylistPollTime.Up(Microsoft.EntityFrameworkCore.Migrations.MigrationBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.RecordPlaylistPollTime.Down(Microsoft.EntityFrameworkCore.Migrations.MigrationBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.RecordPlaylistPollTime.BuildTargetModel(Microsoft.EntityFrameworkCore.ModelBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.AddDeviceKey.Up(Microsoft.EntityFrameworkCore.Migrations.MigrationBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.AddDeviceKey.Down(Microsoft.EntityFrameworkCore.Migrations.MigrationBuilder)">
             <inheritdoc />
         </member>
     </members>
