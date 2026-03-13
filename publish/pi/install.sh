@@ -112,14 +112,17 @@ success "System packages installed."
 info "Installing FLIRC software..."
 if ! command -v flirc_util &>/dev/null; then
   FLIRC_KEYRING="/usr/share/keyrings/flirc-archive-keyring.gpg"
-  curl -fsSL https://apt.flirc.tv/arch/key.gpg -o "$FLIRC_KEYRING"
-  echo "deb [signed-by=$FLIRC_KEYRING] https://apt.flirc.tv/arch/ focal main" \
-    > /etc/apt/sources.list.d/flirc.list
-  apt-get update -qq
-  apt-get install -y --no-install-recommends flirc 2>/dev/null || \
-    warn "FLIRC package install failed — you can install it manually later."
-  if command -v flirc_util &>/dev/null; then
+  _flirc_ok=0
+  if curl -sSL https://apt.flirc.tv/arch/key.gpg -o "$FLIRC_KEYRING" 2>/dev/null; then
+    echo "deb [signed-by=$FLIRC_KEYRING] https://apt.flirc.tv/arch/ focal main" \
+      > /etc/apt/sources.list.d/flirc.list
+    apt-get update -qq 2>/dev/null || true
+    apt-get install -y --no-install-recommends flirc 2>/dev/null && _flirc_ok=1 || true
+  fi
+  if [ "$_flirc_ok" -eq 1 ] && command -v flirc_util &>/dev/null; then
     success "FLIRC installed."
+  else
+    warn "FLIRC could not be installed automatically — the wizard will prompt you to install it if you choose remote control mode."
   fi
 else
   success "FLIRC already installed."

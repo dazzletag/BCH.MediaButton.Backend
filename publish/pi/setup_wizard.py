@@ -274,9 +274,11 @@ def _setup_flirc(keymap: dict[str, str]) -> None:
 
     if not shutil.which("flirc_util"):
         print("[WARN] flirc_util is not installed.")
-        print("  Install it with:")
-        print("    curl -s https://apt.flirc.tv/arch/key.gpg | sudo apt-key add -")
-        print("    echo 'deb https://apt.flirc.tv/arch/ focal main' \\")
+        print("  Install it manually:")
+        print()
+        print("    KEYRING=/usr/share/keyrings/flirc-archive-keyring.gpg")
+        print("    sudo curl -sSL https://apt.flirc.tv/arch/key.gpg -o $KEYRING")
+        print("    echo \"deb [signed-by=$KEYRING] https://apt.flirc.tv/arch/ focal main\" \\")
         print("      | sudo tee /etc/apt/sources.list.d/flirc.list")
         print("    sudo apt-get update && sudo apt-get install flirc")
         print()
