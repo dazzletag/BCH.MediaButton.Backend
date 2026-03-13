@@ -87,12 +87,13 @@ public class DeviceController : ControllerBase
         var device = await _db.Devices.FirstOrDefaultAsync(d => d.DeviceId == deviceId);
 
         var shared = new DeviceSharedConfig(
-            TenantId:     _config["SharePoint:TenantId"],
-            ClientId:     _config["SharePoint:ClientId"],
-            ClientSecret: _config["SharePoint:ClientSecret"],
-            DriveId:      _config["SharePoint:DriveId"],
-            ItemId:       _config["SharePoint:ItemId"],
-            ItemPath:     _config["SharePoint:ItemPath"]);
+            TenantId:        _config["SharePoint:TenantId"],
+            ClientId:        _config["SharePoint:ClientId"],
+            ClientSecret:    _config["SharePoint:ClientSecret"],
+            DriveId:         _config["SharePoint:DriveId"],
+            ItemId:          _config["SharePoint:ItemId"],
+            ItemPath:        _config["SharePoint:ItemPath"],
+            PlaylistFlowUrl: _config["PlaylistFlow:Url"]);
 
         return Ok(new DeviceConfigResponse(deviceId, device?.ConfigJson, shared));
     }

@@ -73,12 +73,13 @@ def _fetch_backend_shared_config():
             print(f"[CONFIG] Backend config fetch returned {r.status_code}")
             return
         shared = r.json().get("sharedConfig") or {}
-        if not TENANT_ID:     TENANT_ID     = shared.get("tenantId")     or ""
-        if not CLIENT_ID:     CLIENT_ID     = shared.get("clientId")     or ""
-        if not CLIENT_SECRET: CLIENT_SECRET = shared.get("clientSecret") or ""
-        if not DRIVE_ID:      DRIVE_ID      = shared.get("driveId")      or ""
-        if not ITEM_ID:       ITEM_ID       = shared.get("itemId")       or ""
-        if not ITEM_PATH:     ITEM_PATH     = shared.get("itemPath")     or ""
+        if not TENANT_ID:         TENANT_ID         = shared.get("tenantId")        or ""
+        if not CLIENT_ID:         CLIENT_ID         = shared.get("clientId")        or ""
+        if not CLIENT_SECRET:     CLIENT_SECRET     = shared.get("clientSecret")    or ""
+        if not DRIVE_ID:          DRIVE_ID          = shared.get("driveId")         or ""
+        if not ITEM_ID:           ITEM_ID           = shared.get("itemId")          or ""
+        if not ITEM_PATH:         ITEM_PATH         = shared.get("itemPath")        or ""
+        if not PLAYLIST_FLOW_URL: PLAYLIST_FLOW_URL = shared.get("playlistFlowUrl") or ""
         print("[CONFIG] Loaded shared config from backend.")
     except Exception as e:
         print(f"[CONFIG] Failed to fetch backend config: {e}")

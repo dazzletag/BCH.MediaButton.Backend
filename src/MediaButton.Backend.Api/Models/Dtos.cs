@@ -25,7 +25,8 @@ public record DeviceSharedConfig(
     string? ClientSecret,
     string? DriveId,
     string? ItemId,
-    string? ItemPath);
+    string? ItemPath,
+    string? PlaylistFlowUrl);
 
 public record DeviceConfigResponse(string DeviceId, object? Config, DeviceSharedConfig? SharedConfig = null);
 
