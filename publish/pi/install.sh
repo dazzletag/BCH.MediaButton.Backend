@@ -146,6 +146,9 @@ else
   info "User '$APP_USER' already exists."
 fi
 
+# Enable linger so systemd user services (PipeWire etc.) survive without an active login session
+loginctl enable-linger "$APP_USER" 2>/dev/null || true
+
 # ── 4. Clone or update repo ───────────────────────────────────────────────────
 if [[ -d "$INSTALL_DIR/.git" ]]; then
   info "Repo already present at $INSTALL_DIR — updating to branch '$BRANCH'..."
@@ -203,11 +206,15 @@ success "Environment file written."
 # ── 7. Install systemd service ────────────────────────────────────────────────
 info "Installing systemd service..."
 
-# Patch the service file's ExecStartPre to use the correct branch
+# Patch the service file to use the correct branch and actual user UID
 cp "$SERVICE_SRC" "$SERVICE_DEST"
-# Replace 'origin/main' with the chosen branch if different
 if [[ "$BRANCH" != "main" ]]; then
   sed -i "s|origin/main|origin/$BRANCH|g" "$SERVICE_DEST"
+fi
+# Replace hardcoded UID 1000 with the real UID of $APP_USER (in case it differs)
+_app_uid=$(id -u "$APP_USER")
+if [[ "$_app_uid" != "1000" ]]; then
+  sed -i "s|/run/user/1000|/run/user/$_app_uid|g" "$SERVICE_DEST"
 fi
 
 systemctl daemon-reload
