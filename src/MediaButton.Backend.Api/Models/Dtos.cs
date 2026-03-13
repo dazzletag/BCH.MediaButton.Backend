@@ -39,8 +39,10 @@ public record DeviceManualPlaylistResponse(string Resident, IReadOnlyList<object
 
 public record MediaPatchRequest(string? Name, string? BlobPath);
 
-public record DeviceListItem(string DeviceId, string? DisplayName, Guid? PlaylistId, string? PlaylistName, string? DeviceKey);
+public record DeviceListItem(string DeviceId, string? DisplayName, Guid? PlaylistId, string? PlaylistName, string? DeviceKey, string? ResidentKey, string? MobizioId);
 
 public record DeviceCreateRequest(string DeviceId, string? DisplayName);
 
 public record DeviceRenameRequest(string? DisplayName);
+
+public record RegisterResidentRequest(string ResidentName, string? CaseId);

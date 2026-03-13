@@ -35,7 +35,9 @@ public class AdminDevicesController : ControllerBase
             d.DisplayName,
             d.PlaylistId,
             d.PlaylistId.HasValue && playlists.TryGetValue(d.PlaylistId.Value, out var name) ? name : null,
-            d.DeviceKey));
+            d.DeviceKey,
+            d.ResidentKey,
+            d.MobizioId));
 
         return Ok(result);
     }
@@ -62,7 +64,7 @@ public class AdminDevicesController : ControllerBase
         _db.Devices.Add(device);
         await _db.SaveChangesAsync();
 
-        return Ok(new DeviceListItem(device.DeviceId, device.DisplayName, null, null, device.DeviceKey));
+        return Ok(new DeviceListItem(device.DeviceId, device.DisplayName, null, null, device.DeviceKey, null, null));
     }
 
     [HttpPatch("{deviceId}")]

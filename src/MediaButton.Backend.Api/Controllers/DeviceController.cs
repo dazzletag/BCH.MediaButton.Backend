@@ -113,6 +113,45 @@ public class DeviceController : ControllerBase
     }
 
     /// <summary>
+    /// Called by the Pi setup wizard after configuration to register the assigned resident.
+    /// Creates the resident record in the database if it doesn't exist, and stores the
+    /// Mobizio case ID on both the device and the resident snapshot.
+    /// </summary>
+    [HttpPost("setup/register-resident")]
+    public async Task<IActionResult> RegisterResident(
+        string deviceId,
+        [FromBody] RegisterResidentRequest request)
+    {
+        var authedDeviceId = HttpContext.Items["DeviceId"] as string;
+        if (!string.Equals(deviceId, authedDeviceId, StringComparison.OrdinalIgnoreCase))
+            return Unauthorized("Device mismatch.");
+
+        if (string.IsNullOrWhiteSpace(request.ResidentName))
+            return BadRequest("residentName is required.");
+
+        var residentKey = request.ResidentName.Trim();
+
+        var device = await _db.Devices.FirstOrDefaultAsync(d => d.DeviceId == deviceId);
+        if (device == null) return NotFound("Device not found.");
+
+        device.ResidentKey = residentKey;
+        device.MobizioId = request.CaseId?.Trim();
+
+        // Ensure resident exists in the playlist snapshots table
+        var snapshot = await _db.ResidentPlaylists.FirstOrDefaultAsync(r => r.Resident == residentKey);
+        if (snapshot == null)
+        {
+            snapshot = new ResidentPlaylistSnapshot { Resident = residentKey };
+            _db.ResidentPlaylists.Add(snapshot);
+        }
+        if (!string.IsNullOrWhiteSpace(request.CaseId))
+            snapshot.MobizioId = request.CaseId.Trim();
+
+        await _db.SaveChangesAsync();
+        return Ok(new { residentKey, mobizioId = device.MobizioId });
+    }
+
+    /// <summary>
     /// Returns the "This is Me" profile for a resident from Mobizio care planning.
     /// The Pi uses this to personalise AI playlist generation without needing a local Excel file.
     /// </summary>

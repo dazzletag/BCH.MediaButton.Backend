@@ -3,7 +3,6 @@ yt-dlp>=2025.03.31
 python-dotenv~=1.0.1
 pyyaml~=6.0.2
 requests~=2.32.3
-anthropic>=0.51.0
 pillow~=10.4.0
 python-vlc~=3.0.20123
 pandas~=2.2.3

@@ -30,6 +30,18 @@ public class Device
     /// </summary>
     [MaxLength(200)]
     public string? DeviceKey { get; set; }
+
+    /// <summary>
+    /// The resident this device is currently assigned to (set by the Pi setup wizard).
+    /// </summary>
+    [MaxLength(200)]
+    public string? ResidentKey { get; set; }
+
+    /// <summary>
+    /// Mobizio case ID for the assigned resident.
+    /// </summary>
+    [MaxLength(100)]
+    public string? MobizioId { get; set; }
 }
 
 public class Playlist
@@ -107,4 +119,10 @@ public class ResidentPlaylistSnapshot
     public string? ManualUpdatedBy { get; set; }
 
     public DateTimeOffset? LastPolledAt { get; set; }
+
+    /// <summary>
+    /// Mobizio case ID for this resident (populated by the Pi setup wizard).
+    /// </summary>
+    [MaxLength(100)]
+    public string? MobizioId { get; set; }
 }

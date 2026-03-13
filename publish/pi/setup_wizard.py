@@ -132,26 +132,46 @@ def _write_config(config: dict) -> None:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
 
 
-def _prompt_anthropic_key() -> None:
-    """Prompt for an Anthropic API key and append it to the env file if not already set."""
+def _prompt_stability_key() -> None:
+    """Prompt for a Stability AI API key and append it to the env file if not already set."""
     if not ENV_FILE.exists():
         return
 
-    # Check if already set
     existing = ENV_FILE.read_text()
-    if "ANTHROPIC_API_KEY" in existing:
-        print("  Anthropic API key already set in env file — skipping.\n")
+    if "STABILITY_API_KEY" in existing:
+        print("  Stability AI key already set in env file — skipping.\n")
         return
 
-    print("Anthropic API key (used for AI logo generation).")
-    print("Press Enter to skip if you don't have one.\n")
-    key = input("  ANTHROPIC_API_KEY: ").strip()
+    print("Stability AI API key (used for AI-generated resident logo images).")
+    print("Get one at https://platform.stability.ai  — press Enter to skip.\n")
+    key = input("  STABILITY_API_KEY: ").strip()
     if key:
         with open(ENV_FILE, "a") as f:
-            f.write(f"\nANTHROPIC_API_KEY={key}\n")
-        print("  ✓ Anthropic API key saved to env file.\n")
+            f.write(f"\nSTABILITY_API_KEY={key}\n")
+        print("  ✓ Stability AI key saved to env file.\n")
     else:
         print("  Skipped — you can add it later to /etc/media-button/env\n")
+
+
+def _register_resident(
+    api_base: str, device_id: str, device_key: str,
+    resident_name: str, case_id: str | None,
+) -> None:
+    """Tell the backend about this resident so they appear in the admin site."""
+    try:
+        url = f"{api_base}/api/device/{urllib.parse.quote(device_id)}/setup/register-resident"
+        r = requests.post(
+            url,
+            json={"residentName": resident_name, "caseId": case_id},
+            headers={"X-DEVICE-KEY": device_key},
+            timeout=15,
+        )
+        if r.status_code == 200:
+            print(f"  ✓ Resident '{resident_name}' registered on the site.\n")
+        else:
+            print(f"  [warn] Could not register resident (HTTP {r.status_code}) — they may not appear in the admin site yet.\n")
+    except Exception as e:
+        print(f"  [warn] Could not reach API to register resident: {e}\n")
 
 
 def _apply_setup(
@@ -477,8 +497,11 @@ def main() -> None:
 
     print(f"\n  ✓ Config written to {CONFIG_PATH}\n")
 
-    # ── Anthropic API key (for AI logo generation) ────────────────────────────
-    _prompt_anthropic_key()
+    # ── Register resident with backend ────────────────────────────────────────
+    _register_resident(api_base, device_id, device_key, resident_name, case_id)
+
+    # ── Stability AI key (for AI logo generation) ─────────────────────────────
+    _prompt_stability_key()
 
     # ── Next steps ────────────────────────────────────────────────────────────
     resident_cfg = config["residents"].get(resident_name, {})

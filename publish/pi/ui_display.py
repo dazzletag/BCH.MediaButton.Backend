@@ -24,8 +24,8 @@ load_dotenv()
 # ---- Config / theming ----
 BASE_DIR = os.path.dirname(__file__)
 LOADING_GIF_PATH = os.getenv("LOADING_GIF_PATH") or os.path.join(BASE_DIR, "loading_clean.gif")
-USE_CLAUDE_LOGOS = bool(os.getenv("ANTHROPIC_API_KEY"))
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
+USE_STABILITY_LOGOS = bool(os.getenv("STABILITY_API_KEY"))
+STABILITY_ENGINE = os.getenv("STABILITY_ENGINE", "core")  # core | sd3 | ultra
 LOGO_DIR = os.getenv("MEDIA_LOGO_DIR", ".data/logos")
 FORCE_REGEN = os.getenv("MEDIA_LOGO_FORCE_REGEN", "0") == "1"
 os.makedirs(LOGO_DIR, exist_ok=True)
@@ -186,7 +186,7 @@ class MediaUI:
         self._gif_delay_id = None
 
 
-        print(f"[UI] Claude logos enabled: {USE_CLAUDE_LOGOS} (model={CLAUDE_MODEL})  FORCE_REGEN={FORCE_REGEN}")
+        print(f"[UI] Stability AI logos enabled: {USE_STABILITY_LOGOS} (engine={STABILITY_ENGINE})  FORCE_REGEN={FORCE_REGEN}")
 
         # Stack
         self.stack = tk.Frame(self.root, bg=BG)
@@ -632,7 +632,7 @@ class MediaUI:
         local_img = self._generate_logo_local(resident)
 
         # If AI is enabled, spawn a background job (dedup per resident)
-        if USE_CLAUDE_LOGOS and resident.key not in self._logo_jobs:
+        if USE_STABILITY_LOGOS and resident.key not in self._logo_jobs:
             self._logo_jobs.add(resident.key)
             threading.Thread(
                 target=self._ai_job,
@@ -674,73 +674,44 @@ class MediaUI:
 
     def _generate_logo_ai(self, resident: ResidentIdentity) -> Image.Image:
         """
-        Ask Claude for a personalised colour scheme + tagline, then render
-        a crisp PIL logo using those values.  No image-generation API needed.
+        Generate a personalised logo image using the Stability AI image generation API.
+        Falls back to the local PIL render if the API call fails.
         """
-        import anthropic, json  # lazy import
+        api_key = os.getenv("STABILITY_API_KEY")
+        if not api_key:
+            return self._generate_logo_local(resident)
 
         likes_line = self._vibe_line(resident.survey_blob)
-        system = (
-            "You are a graphic-design assistant for a care-home TV channel. "
-            "Respond with ONLY a JSON object — no markdown, no explanation."
-        )
-        user = (
-            f"Create a warm, cheerful logo design for a resident named '{resident.name}'. "
-            f"Their interests: {likes_line}. "
-            "Return JSON with these keys:\n"
-            "  bg_color      — hex background colour (dark, rich)\n"
-            "  card_color    — hex card/panel colour (lighter, warm)\n"
-            "  title_color   — hex for the resident's name (high contrast on card)\n"
-            "  accent_color  — hex for the tagline (softer)\n"
-            "  tagline       — short uplifting phrase (max 6 words, no name)\n"
-            "  emoji         — one emoji that suits their personality\n"
+        prompt = (
+            f"A vibrant, warm TV channel splash screen logo for a care home resident named "
+            f"'{resident.name}' who enjoys {likes_line}. "
+            "Large bold name text centred on screen, colourful background, cheerful and uplifting, "
+            "clean graphic design, 16:9 widescreen format, no people, no faces."
         )
 
-        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-        msg = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=256,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        raw_text = msg.content[0].text.strip()
-        # Strip markdown code fences if Claude wraps the JSON
-        if raw_text.startswith("```"):
-            raw_text = raw_text.split("```")[1]
-            if raw_text.startswith("json"):
-                raw_text = raw_text[4:]
-        design = json.loads(raw_text)
-
-        # ---- Render with PIL ------------------------------------------------
-        title   = f"{resident.name} TV"
-        tagline = f"{design.get('emoji', '')}  {design.get('tagline', likes_line)}".strip()
-        W, H    = 1600, 900
-
-        bg_col    = design.get("bg_color",    "#1a0a2e")
-        card_col  = design.get("card_color",  "#2d1b4e")
-        title_col = design.get("title_color", "#f0e6ff")
-        acc_col   = design.get("accent_color","#c9a0dc")
-
-        base = Image.new("RGBA", (W, H), color=bg_col)
-        draw = ImageDraw.Draw(base)
-
-        margin = 80
-        card = Image.new("RGBA", (W - 2*margin, H - 2*margin), card_col)
-        card = ImageOps.expand(card, border=6, fill=title_col)
-        base.alpha_composite(card, dest=(margin, margin))
-
-        title_font  = _safe_font(size=140, bold=True)
-        sub_font    = _safe_font(size=54)
-
-        tw, th = _measure_text(draw, title, title_font)
-        tx = (W - tw) // 2
-        ty = H // 2 - th - 20
-        _text_outline(draw, (tx, ty), title, title_font, fill=title_col, outline="#000", width=6)
-
-        sw, sh = _measure_text(draw, tagline, sub_font)
-        draw.text(((W - sw) // 2, ty + th + 30), tagline, font=sub_font, fill=acc_col)
-
-        return base
+        url = f"https://api.stability.ai/v2beta/stable-image/generate/{STABILITY_ENGINE}"
+        try:
+            resp = requests.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Accept": "image/*",
+                },
+                data={
+                    "prompt": prompt,
+                    "aspect_ratio": "16:9",
+                    "output_format": "png",
+                },
+                files={"none": ("", b"")},  # required for multipart
+                timeout=60,
+            )
+            resp.raise_for_status()
+            img = Image.open(io.BytesIO(resp.content)).convert("RGBA")
+            print(f"[UI] (AI) Stability image generated for {resident.name} ({len(resp.content)} bytes)")
+            return img
+        except Exception as e:
+            print(f"[UI] (AI) Stability API failed ({e}); falling back to local render")
+            return self._generate_logo_local(resident)
 
     def _generate_logo_local(self, resident: ResidentIdentity) -> Image.Image:
         """Crisp locally rendered logo card."""
