@@ -197,7 +197,7 @@ def _apply_setup(
     # Remote control section (remote mode)
     if control_mode == "remote_menu":
         rc = config.setdefault("remote_control", {})
-        rc.setdefault("resident", resident_name)
+        rc["resident"] = resident_name
         rc.setdefault("show_menu_on_start", True)
 
     return config
