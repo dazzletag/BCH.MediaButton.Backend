@@ -59,6 +59,31 @@ CLIENT_SECRET = os.getenv("CLIENT_SECRET", "")
 DRIVE_ID = os.getenv("DRIVE_ID", "")
 ITEM_ID = os.getenv("ITEM_ID", "")
 ITEM_PATH = os.getenv("ITEM_PATH", "")
+
+def _fetch_backend_shared_config():
+    """Fetch shared config (e.g. SharePoint creds) from the backend API.
+    Values from the backend only fill in gaps — local env vars take precedence."""
+    global TENANT_ID, CLIENT_ID, CLIENT_SECRET, DRIVE_ID, ITEM_ID, ITEM_PATH
+    if not (API_BASE and DEVICE_ID and DEVICE_KEY):
+        return
+    try:
+        url = f"{API_BASE}/api/device/{urllib.parse.quote(DEVICE_ID)}/config"
+        r = requests.get(url, headers={"X-DEVICE-KEY": DEVICE_KEY}, timeout=10)
+        if r.status_code != 200:
+            print(f"[CONFIG] Backend config fetch returned {r.status_code}")
+            return
+        shared = r.json().get("sharedConfig") or {}
+        if not TENANT_ID:     TENANT_ID     = shared.get("tenantId")     or ""
+        if not CLIENT_ID:     CLIENT_ID     = shared.get("clientId")     or ""
+        if not CLIENT_SECRET: CLIENT_SECRET = shared.get("clientSecret") or ""
+        if not DRIVE_ID:      DRIVE_ID      = shared.get("driveId")      or ""
+        if not ITEM_ID:       ITEM_ID       = shared.get("itemId")       or ""
+        if not ITEM_PATH:     ITEM_PATH     = shared.get("itemPath")     or ""
+        print("[CONFIG] Loaded shared config from backend.")
+    except Exception as e:
+        print(f"[CONFIG] Failed to fetch backend config: {e}")
+
+_fetch_backend_shared_config()
 LOCAL_SURVEY_XLSX = os.getenv("LOCAL_SURVEY_XLSX", os.path.join(DATA_DIR, "survey.xlsx"))
 THIS_IS_ME_XLSX   = os.getenv("THIS_IS_ME_XLSX",   os.path.join(DATA_DIR, "This_is_Me.xlsx"))
 GRAPH_POLL_SECONDS = int(os.getenv("GRAPH_POLL_SECONDS", "600"))

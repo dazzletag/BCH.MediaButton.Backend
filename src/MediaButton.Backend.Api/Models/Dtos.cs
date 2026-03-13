@@ -19,7 +19,15 @@ public record PlaylistItemResponse(Guid MediaId, string? Name, MediaType Type, U
 
 public record DevicePlaylistResponse(string DeviceId, string? PlaylistName, IReadOnlyList<PlaylistItemResponse> Items, object? Config);
 
-public record DeviceConfigResponse(string DeviceId, object? Config);
+public record DeviceSharedConfig(
+    string? TenantId,
+    string? ClientId,
+    string? ClientSecret,
+    string? DriveId,
+    string? ItemId,
+    string? ItemPath);
+
+public record DeviceConfigResponse(string DeviceId, object? Config, DeviceSharedConfig? SharedConfig = null);
 
 public record AiPlaylistPayload(
     string Resident,
