@@ -59,8 +59,8 @@ CLIENT_SECRET = os.getenv("CLIENT_SECRET", "")
 DRIVE_ID = os.getenv("DRIVE_ID", "")
 ITEM_ID = os.getenv("ITEM_ID", "")
 ITEM_PATH = os.getenv("ITEM_PATH", "")
-LOCAL_SURVEY_XLSX = os.getenv("LOCAL_SURVEY_XLSX", "/home/dazzletag/media-button/survey.xlsx")
-THIS_IS_ME_XLSX   = os.getenv("THIS_IS_ME_XLSX", "/home/dazzletag/media-button/This_is_Me.xlsx")
+LOCAL_SURVEY_XLSX = os.getenv("LOCAL_SURVEY_XLSX", os.path.join(DATA_DIR, "survey.xlsx"))
+THIS_IS_ME_XLSX   = os.getenv("THIS_IS_ME_XLSX",   os.path.join(DATA_DIR, "This_is_Me.xlsx"))
 GRAPH_POLL_SECONDS = int(os.getenv("GRAPH_POLL_SECONDS", "600"))
 DEFAULT_RADIO_URL = os.getenv("DEFAULT_RADIO_URL", "")
 VOLUME_PERCENT = int(os.getenv("VOLUME_PERCENT", "80"))
@@ -2096,13 +2096,16 @@ class RemoteMenuController:
 # Graph poller
 # =========================
 def graph_poll_task(graph: GraphClient):
+    if not (TENANT_ID and CLIENT_ID and CLIENT_SECRET and DRIVE_ID and (ITEM_ID or ITEM_PATH)):
+        print("[GRAPH] Credentials not configured — SharePoint sync disabled.")
+        return
     last_seen = None
     while True:
         try:
             mod = graph.get_item_last_modified(DRIVE_ID, ITEM_ID, ITEM_PATH)
             if mod != last_seen:
                 print(f"[GRAPH] Change detected ({mod}); downloading Excel…")
-
+                os.makedirs(os.path.dirname(LOCAL_SURVEY_XLSX), exist_ok=True)
                 graph.download_excel(LOCAL_SURVEY_XLSX, DRIVE_ID, ITEM_ID, ITEM_PATH)
                 SURVEY.load()
                 last_seen = mod
@@ -2144,12 +2147,18 @@ def main():
     control_mode = CONFIG.get("control_mode", "beacon")
 
     # initial sync
-    try:
-        print("[BOOT] Syncing survey…")
-        GRAPH.download_excel(LOCAL_SURVEY_XLSX, DRIVE_ID, ITEM_ID, ITEM_PATH)
-        SURVEY.load()
-    except Exception as e:
-        print(f"[BOOT] Sync failed: {e}. Using cached file if present.")
+    if TENANT_ID and CLIENT_ID and CLIENT_SECRET and DRIVE_ID and (ITEM_ID or ITEM_PATH):
+        try:
+            print("[BOOT] Syncing survey from SharePoint…")
+            os.makedirs(os.path.dirname(LOCAL_SURVEY_XLSX), exist_ok=True)
+            GRAPH.download_excel(LOCAL_SURVEY_XLSX, DRIVE_ID, ITEM_ID, ITEM_PATH)
+            SURVEY.load()
+        except Exception as e:
+            print(f"[BOOT] SharePoint sync failed: {e}. Using cached file if present.")
+            if os.path.exists(LOCAL_SURVEY_XLSX):
+                SURVEY.load()
+    else:
+        print("[BOOT] SharePoint credentials not set — loading local survey file if present.")
         if os.path.exists(LOCAL_SURVEY_XLSX):
             SURVEY.load()
         # Load This_is_Me profiles (local file)
