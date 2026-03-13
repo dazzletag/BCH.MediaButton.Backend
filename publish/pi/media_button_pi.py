@@ -63,7 +63,7 @@ ITEM_PATH = os.getenv("ITEM_PATH", "")
 def _fetch_backend_shared_config():
     """Fetch shared config (e.g. SharePoint creds) from the backend API.
     Values from the backend only fill in gaps — local env vars take precedence."""
-    global TENANT_ID, CLIENT_ID, CLIENT_SECRET, DRIVE_ID, ITEM_ID, ITEM_PATH
+    global TENANT_ID, CLIENT_ID, CLIENT_SECRET, DRIVE_ID, ITEM_ID, ITEM_PATH, PLAYLIST_FLOW_URL
     if not (API_BASE and DEVICE_ID and DEVICE_KEY):
         return
     try:
