@@ -49,11 +49,8 @@ os.makedirs(PHOTO_CACHE_DIR, exist_ok=True)
 RECENT_PATH = os.path.join(DATA_DIR, "recent.json")
 RECENT_DEPTH = 8
 
-AUDIO_DEVICE = os.getenv("AUDIO_DEVICE", "")        # e.g. "pulse/alsa_output.hdmi-0" to pin a specific sink
-# Raspberry Pi OS Bookworm uses PipeWire (PulseAudio compat) — pulse handles
-# all sample-rate/format conversion that raw ALSA (plughw) cannot.
-# Override with AUDIO_OUT=alsa only if you have a specific reason.
-AUDIO_OUT    = os.getenv("AUDIO_OUT", "pulse")
+AUDIO_DEVICE = os.getenv("AUDIO_DEVICE", "pulse")   # "pulse" ALSA device routes through PipeWire (handles all format conversion)
+AUDIO_OUT    = os.getenv("AUDIO_OUT", "alsa")        # alsa + device=pulse = ALSA pulse plugin → PipeWire
 
 PLAYLIST_FLOW_URL = os.getenv("PLAYLIST_FLOW_URL", "")
 TENANT_ID = os.environ.get("TENANT_ID", "")
