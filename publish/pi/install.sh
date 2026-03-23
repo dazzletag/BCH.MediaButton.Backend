@@ -13,6 +13,7 @@
 #   --branch          Git branch to track (default: main)
 #   --repo            Git repo URL (default: https://github.com/dazzletag/BCH.MediaButton.Backend.git)
 #   --no-wizard       Skip the setup wizard after install
+#   --wifi-adapter    Install RTL8821AU driver for TP-Link Archer T2U Plus
 #   --tenant-id       Microsoft Entra tenant ID (for SharePoint/OneDrive spreadsheet sync)
 #   --client-id       Azure app client ID (for SharePoint/OneDrive spreadsheet sync)
 #   --client-secret   Azure app client secret (for SharePoint/OneDrive spreadsheet sync)
@@ -35,6 +36,7 @@ DEVICE_KEY=""
 BRANCH="main"
 REPO_URL="https://github.com/dazzletag/BCH.MediaButton.Backend.git"
 RUN_WIZARD=1
+INSTALL_WIFI_ADAPTER=0
 TENANT_ID=""
 CLIENT_ID=""
 CLIENT_SECRET=""
@@ -50,6 +52,7 @@ while [[ $# -gt 0 ]]; do
     --branch)        BRANCH="$2";        shift 2 ;;
     --repo)          REPO_URL="$2";      shift 2 ;;
     --no-wizard)     RUN_WIZARD=0;       shift   ;;
+    --wifi-adapter)  INSTALL_WIFI_ADAPTER=1; shift ;;
     --tenant-id)     TENANT_ID="$2";     shift 2 ;;
     --client-id)     CLIENT_ID="$2";     shift 2 ;;
     --client-secret) CLIENT_SECRET="$2"; shift 2 ;;
@@ -152,7 +155,24 @@ else
   success "FLIRC already installed."
 fi
 
-# ── 3. Create app user ────────────────────────────────────────────────────────
+# ── 3. WiFi adapter driver (TP-Link Archer T2U Plus / RTL8821AU) ──────────────
+if [[ "$INSTALL_WIFI_ADAPTER" -eq 1 ]]; then
+  info "Installing RTL8821AU driver for TP-Link Archer T2U Plus..."
+  WIFI_SCRIPT="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )/install_wifi_adapter.sh"
+  if [[ -f "$WIFI_SCRIPT" ]]; then
+    bash "$WIFI_SCRIPT"
+  else
+    # Fallback: script not alongside installer — download from repo
+    _wifi_tmp="$(mktemp /tmp/install_wifi_adapter.XXXXXX.sh)"
+    curl -sSL "https://raw.githubusercontent.com/dazzletag/BCH.MediaButton.Backend/$BRANCH/publish/pi/install_wifi_adapter.sh" \
+      -o "$_wifi_tmp"
+    bash "$_wifi_tmp"
+    rm -f "$_wifi_tmp"
+  fi
+  success "WiFi adapter driver step complete."
+fi
+
+# ── 4. Create app user ────────────────────────────────────────────────────────
 if ! id "$APP_USER" &>/dev/null; then
   info "Creating user '$APP_USER'..."
   useradd -m -s /bin/bash "$APP_USER"

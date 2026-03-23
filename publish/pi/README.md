@@ -28,7 +28,7 @@ The installer will:
 | `--api URL` | Yes | Backend API base URL |
 | `--key KEY` | Yes | Device secret key |
 | `--device ID` | No | Override device ID (default: Pi hardware serial) |
-| `--openai-key KEY` | No | OpenAI API key (for AI playlist generation) |
+| `--wifi-adapter` | No | Install RTL8821AU driver for TP-Link Archer T2U Plus |
 | `--branch NAME` | No | Git branch to track (default: `main`) |
 | `--no-wizard` | No | Skip the setup wizard (run it later) |
 
@@ -39,6 +39,19 @@ cat /sys/firmware/devicetree/base/serial-number
 # or
 grep Serial /proc/cpuinfo
 ```
+
+### TP-Link Archer T2U Plus WiFi adapter
+
+Pass `--wifi-adapter` to the installer to automatically build and install the RTL8821AU driver, or run it separately at any time:
+
+```bash
+sudo bash /opt/media-button/publish/pi/install_wifi_adapter.sh
+sudo reboot
+```
+
+The script uses [morrownr/8821au-20210708](https://github.com/morrownr/8821au-20210708) via DKMS so the driver persists across kernel updates.
+
+---
 
 ### Re-running the setup wizard
 
