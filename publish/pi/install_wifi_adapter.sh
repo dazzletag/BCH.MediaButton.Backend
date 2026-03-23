@@ -37,15 +37,16 @@ else
 fi
 
 # ── 2. Check if driver is already loaded ─────────────────────────────────────
-if lsmod 2>/dev/null | grep -q "88XXau\|8821au"; then
+if lsmod 2>/dev/null | grep -q "8821au"; then
   success "RTL8821AU driver already loaded — nothing to do."
   echo ""
   exit 0
 fi
 
-# Also check if DKMS module is already installed
+# If DKMS module is already built, just load it (skip the build)
 if dkms status 2>/dev/null | grep -qi "8821au"; then
-  success "RTL8821AU DKMS module already installed."
+  success "RTL8821AU DKMS module already installed — loading now..."
+  modprobe 8821au && success "Driver loaded." || warn "modprobe failed — a reboot may be needed."
   echo ""
   exit 0
 fi
@@ -83,7 +84,10 @@ bash ./install-driver.sh NoPrompt
 
 success "RTL8821AU driver installed via DKMS."
 
-# ── 6. Clean up temp files ────────────────────────────────────────────────────
+# ── 6. Load the module now (no reboot needed) ─────────────────────────────────
+modprobe 8821au && success "Driver loaded." || warn "modprobe failed — a reboot will load it."
+
+# ── 7. Clean up temp files ────────────────────────────────────────────────────
 cd /
 rm -rf "$DRIVER_DIR"
 
@@ -92,6 +96,6 @@ echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━
 echo -e "${GREEN}  Driver installation complete!${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
-echo "  Reboot for the adapter to be fully recognised:"
-echo "    sudo reboot"
+echo "  The adapter should now be active (check with: ip link show)"
+echo "  If it is not visible, a reboot will load it:  sudo reboot"
 echo ""
