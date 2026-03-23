@@ -1,0 +1,15 @@
+[Unit]
+Description=Media Button WiFi adapter setup (RTL8821AU / TP-Link Archer T2U Plus)
+After=network-online.target
+Wants=network-online.target
+Before=media-button.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash /opt/media-button/publish/pi/install_wifi_adapter.sh
+StandardOutput=append:/var/log/media-button.log
+StandardError=append:/var/log/media-button.log
+
+[Install]
+WantedBy=multi-user.target

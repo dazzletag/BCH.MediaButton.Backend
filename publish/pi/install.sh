@@ -13,7 +13,6 @@
 #   --branch          Git branch to track (default: main)
 #   --repo            Git repo URL (default: https://github.com/dazzletag/BCH.MediaButton.Backend.git)
 #   --no-wizard       Skip the setup wizard after install
-#   --wifi-adapter    Install RTL8821AU driver for TP-Link Archer T2U Plus
 #   --tenant-id       Microsoft Entra tenant ID (for SharePoint/OneDrive spreadsheet sync)
 #   --client-id       Azure app client ID (for SharePoint/OneDrive spreadsheet sync)
 #   --client-secret   Azure app client secret (for SharePoint/OneDrive spreadsheet sync)
@@ -36,7 +35,6 @@ DEVICE_KEY=""
 BRANCH="main"
 REPO_URL="https://github.com/dazzletag/BCH.MediaButton.Backend.git"
 RUN_WIZARD=1
-INSTALL_WIFI_ADAPTER=0
 TENANT_ID=""
 CLIENT_ID=""
 CLIENT_SECRET=""
@@ -52,7 +50,6 @@ while [[ $# -gt 0 ]]; do
     --branch)        BRANCH="$2";        shift 2 ;;
     --repo)          REPO_URL="$2";      shift 2 ;;
     --no-wizard)     RUN_WIZARD=0;       shift   ;;
-    --wifi-adapter)  INSTALL_WIFI_ADAPTER=1; shift ;;
     --tenant-id)     TENANT_ID="$2";     shift 2 ;;
     --client-id)     CLIENT_ID="$2";     shift 2 ;;
     --client-secret) CLIENT_SECRET="$2"; shift 2 ;;
@@ -156,20 +153,25 @@ else
 fi
 
 # ── 3. WiFi adapter driver (TP-Link Archer T2U Plus / RTL8821AU) ──────────────
-if [[ "$INSTALL_WIFI_ADAPTER" -eq 1 ]]; then
-  info "Installing RTL8821AU driver for TP-Link Archer T2U Plus..."
-  WIFI_SCRIPT="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )/install_wifi_adapter.sh"
+# Auto-detect the adapter and install the driver now if it's plugged in.
+# Regardless, install the wifi systemd service so the driver is installed
+# automatically on any future boot where the adapter is present.
+_T2U_USB_ID="2357:0120"
+if lsusb 2>/dev/null | grep -q "$_T2U_USB_ID"; then
+  info "TP-Link Archer T2U Plus detected — installing RTL8821AU driver now..."
+  WIFI_SCRIPT="$( cd "$(dirname "${BASH_SOURCE[0]:-install.sh}")" 2>/dev/null && pwd )/install_wifi_adapter.sh"
   if [[ -f "$WIFI_SCRIPT" ]]; then
     bash "$WIFI_SCRIPT"
   else
-    # Fallback: script not alongside installer — download from repo
     _wifi_tmp="$(mktemp /tmp/install_wifi_adapter.XXXXXX.sh)"
     curl -sSL "https://raw.githubusercontent.com/dazzletag/BCH.MediaButton.Backend/$BRANCH/publish/pi/install_wifi_adapter.sh" \
       -o "$_wifi_tmp"
     bash "$_wifi_tmp"
     rm -f "$_wifi_tmp"
   fi
-  success "WiFi adapter driver step complete."
+  success "RTL8821AU driver installed."
+else
+  info "TP-Link Archer T2U Plus not detected now — driver will be installed automatically on first boot with the adapter plugged in."
 fi
 
 # ── 4. Create app user ────────────────────────────────────────────────────────
@@ -257,9 +259,15 @@ else
   info "Config file already exists at $CONFIG_FILE — preserving."
 fi
 
-# ── 7. Install systemd service ────────────────────────────────────────────────
-info "Installing systemd service..."
+# ── 7. Install systemd services ───────────────────────────────────────────────
+info "Installing systemd services..."
 
+# WiFi adapter one-shot service (runs as root before the main service)
+WIFI_SERVICE_SRC="$INSTALL_DIR/publish/pi/media-button-wifi.service"
+WIFI_SERVICE_DEST="/etc/systemd/system/media-button-wifi.service"
+cp "$WIFI_SERVICE_SRC" "$WIFI_SERVICE_DEST"
+
+# Main app service
 # Patch the service file to use the correct branch and actual user UID
 cp "$SERVICE_SRC" "$SERVICE_DEST"
 if [[ "$BRANCH" != "main" ]]; then
@@ -272,8 +280,9 @@ if [[ "$_app_uid" != "1000" ]]; then
 fi
 
 systemctl daemon-reload
+systemctl enable media-button-wifi
 systemctl enable "$SERVICE_NAME"
-success "Service installed and enabled."
+success "Services installed and enabled."
 
 # ── 8. Create log file ────────────────────────────────────────────────────────
 LOG_FILE="/var/log/media-button.log"
