@@ -22,66 +22,6 @@ namespace MediaButton.Backend.Api.Data.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
-            modelBuilder.Entity("MediaButtonBackend.Models.CarePlanVersion", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("AssessmentDataJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("CareActionsDataJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<Guid>("CarePlanId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("CreatedById")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<string>("CreatedByName")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<bool>("IsCurrent")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("ResidentId")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<string>("Section")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<string>("SignOffJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.Property<int>("VersionNumber")
-                        .HasColumnType("int");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CarePlanId", "VersionNumber")
-                        .IsUnique();
-
-                    b.HasIndex("ResidentId", "Section", "IsCurrent");
-
-                    b.ToTable("CarePlanVersions");
-                });
-
             modelBuilder.Entity("MediaButtonBackend.Models.Device", b =>
                 {
                     b.Property<string>("DeviceId")
