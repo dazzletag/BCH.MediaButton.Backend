@@ -14,6 +14,7 @@ public class AppDbContext : DbContext
     public DbSet<PlaylistItem> PlaylistItems => Set<PlaylistItem>();
     public DbSet<MediaAsset> MediaAssets => Set<MediaAsset>();
     public DbSet<ResidentPlaylistSnapshot> ResidentPlaylists => Set<ResidentPlaylistSnapshot>();
+    public DbSet<CarePlanVersion> CarePlanVersions => Set<CarePlanVersion>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -61,6 +62,18 @@ public class AppDbContext : DbContext
             b.HasKey(r => r.Resident);
             b.Property(r => r.Resident).HasMaxLength(200);
             b.Property(r => r.ManualUpdatedBy).HasMaxLength(200);
+        });
+
+        modelBuilder.Entity<CarePlanVersion>(b =>
+        {
+            b.HasKey(c => c.Id);
+            b.Property(c => c.ResidentId).IsRequired().HasMaxLength(200);
+            b.Property(c => c.Section).IsRequired().HasMaxLength(100);
+            b.Property(c => c.Status).IsRequired().HasMaxLength(20);
+            b.Property(c => c.CreatedById).HasMaxLength(200);
+            b.Property(c => c.CreatedByName).HasMaxLength(200);
+            b.HasIndex(c => new { c.CarePlanId, c.VersionNumber }).IsUnique();
+            b.HasIndex(c => new { c.ResidentId, c.Section, c.IsCurrent });
         });
     }
 }

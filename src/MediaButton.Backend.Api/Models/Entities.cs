@@ -126,3 +126,41 @@ public class ResidentPlaylistSnapshot
     [MaxLength(100)]
     public string? MobizioId { get; set; }
 }
+
+public class CarePlanVersion
+{
+    [Key]
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    public Guid CarePlanId { get; set; }
+
+    [Required]
+    [MaxLength(200)]
+    public string ResidentId { get; set; } = string.Empty;
+
+    [Required]
+    [MaxLength(100)]
+    public string Section { get; set; } = string.Empty;
+
+    public int VersionNumber { get; set; }
+
+    [Required]
+    [MaxLength(20)]
+    public string Status { get; set; } = "draft";
+
+    public string? AssessmentDataJson { get; set; }
+
+    public string? CareActionsDataJson { get; set; }
+
+    public string? SignOffJson { get; set; }
+
+    [MaxLength(200)]
+    public string? CreatedById { get; set; }
+
+    [MaxLength(200)]
+    public string? CreatedByName { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    public bool IsCurrent { get; set; }
+}
