@@ -12,6 +12,10 @@ import vlc
 
 # UI (from ui_display.py)
 from ui_display import MediaUI, ResidentIdentity
+# Local-video-cache modules (Pi-side only; pure stdlib + yt-dlp subprocess)
+import cache_db
+import cache_gc
+import video_downloader
 load_dotenv()
 
 def _log(msg: str):
@@ -220,6 +224,32 @@ def _detect_alsa_device():
     except Exception as e:
         _log(f"[AUDIO] ALSA probe failed: {e}")
     return None
+
+# Connectivity guard used by cache-first playback fallback. Cached for 30s so
+# rapid track switches don't hammer youtube.com with HEAD requests.
+_WIFI_PROBE_TTL = 30.0
+_wifi_state = {"ok": False, "expires": 0.0}
+_wifi_lock = threading.Lock()
+
+
+def wifi_healthy(timeout: float = 2.0) -> bool:
+    """Lightweight HEAD probe to youtube.com. Returns True on 200/3xx. The result
+    is cached for 30 seconds so repeated calls during a track switch are cheap."""
+    now = time.time()
+    with _wifi_lock:
+        if now < _wifi_state["expires"]:
+            return _wifi_state["ok"]
+    ok = False
+    try:
+        r = requests.head("https://www.youtube.com/", timeout=timeout, allow_redirects=False)
+        ok = 200 <= r.status_code < 400
+    except Exception:
+        ok = False
+    with _wifi_lock:
+        _wifi_state["ok"] = ok
+        _wifi_state["expires"] = now + _WIFI_PROBE_TTL
+    return ok
+
 
 def pick_random_youtube_id(query, yt_dlp_bin, avoid_ids, max_candidates=20):
     # Search is public — no auth needed (oauth2/cookies only apply to stream resolution)
@@ -1125,6 +1155,14 @@ class MediaPlayer:
         self._stop_current()
         return self._play_media(media_url, wid)
 
+    def play_cached_file(self, filepath: str, wid: int | None = None) -> bool:
+        """Play a pre-downloaded local file from the video cache. No yt-dlp,
+        no network resolution; falls through the same _play_media path as
+        radio + youtube."""
+        _log(f"[MEDIA] VLC cached file: {filepath}")
+        self._stop_current()
+        return self._play_media(filepath, wid)
+
     def play_background_radio(self, url: str) -> bool:
         """
         Start or keep a low-footprint radio stream running on a dedicated player.
@@ -1349,6 +1387,12 @@ class Engine:
         self.sessions = {}         # resident -> session dict
         self.session_threads = {}  # resident -> Thread
         self.session_locks = {}    # resident -> Lock
+        # Signals the local video cache downloader to throttle while VLC is
+        # actively rendering. Set/cleared in _session_loop around playback calls.
+        self.is_playback_active = threading.Event()
+        # Filepath of the currently-playing cached video (or None). Read by the
+        # GC sweep so it never deletes a file out from under VLC.
+        self.currently_playing_filepath: str | None = None
         self.stop_grace_misses = self.config.get("stop_grace_misses", 1)
         self.watchdog_interval = self.config.get("watchdog_interval", 0.5)
         self.control_mode = self.config.get("control_mode", "beacon")
@@ -1462,12 +1506,76 @@ class Engine:
             self.session_locks[resident] = threading.Lock()
         return self.session_locks[resident]
 
+    def _register_session_terms(self, sess):
+        """
+        Push the cacheable items from this resident's playlist into cache_db so
+        the downloader knows what to fetch. Called by each caller of
+        _make_session once the final playlist is settled.
+
+        Runs reconciliation: any term previously known for this resident that
+        isn't in the new playlist is marked inactive and its term_videos rows
+        are cascade-deleted, leaving the videos themselves as orphans for the
+        GC pass to handle.
+
+        DEFENSIVE GUARD: if the cacheable set is empty, we DO NOT reconcile.
+        An empty cacheable set never means 'wipe this resident's cache' — it
+        means either:
+          (a) a one-off manual play of a non-cacheable item type (cached,
+              radio, photo) via the portal command queue or the remote
+              menu's Cached Videos / Radio submenus, or
+          (b) a transient hiccup where the LLM playlist hasn't loaded yet.
+        In either case the right behaviour is to leave the existing term
+        set (and the videos linked to it) untouched.
+        """
+        resident = sess.get("resident")
+        playlist = sess.get("playlist") or []
+        if not resident:
+            return
+        terms_with_blobs: list[tuple[str, dict | None]] = []
+        seen: set[str] = set()
+        for item in playlist:
+            if not cache_db.is_cacheable(item):
+                continue
+            term = cache_db.canonical_term(item)
+            if not term or term in seen:
+                continue
+            seen.add(term)
+            blob = item if isinstance(item, dict) else {"type": "youtube", "query": term}
+            terms_with_blobs.append((term, blob))
+
+        if not terms_with_blobs:
+            _log(f"[CACHE] Skipping term reconcile for {resident}: "
+                 f"no cacheable items in this session (one-off play or "
+                 f"non-video playlist) — keeping existing terms")
+            return
+
+        try:
+            removed = cache_db.reconcile_resident_terms(resident, terms_with_blobs)
+            _log(f"[CACHE] Reconciled {len(terms_with_blobs)} term(s) for {resident}; "
+                 f"{removed} inactive term row(s) cleared")
+        except Exception as e:
+            _log(f"[CACHE] Term reconciliation failed for {resident}: {e}")
+        # Reconciliation just unlinked any term_videos whose term went away,
+        # so the videos are orphans now — clear them out before the disk
+        # fills up. Skip the file currently being rendered.
+        try:
+            cache_gc.run_orphan_sweep(self.currently_playing_filepath)
+        except Exception as e:
+            _log(f"[CACHE] Orphan sweep failed for {resident}: {e}")
+        # Nudge the downloader so it picks up new terms immediately rather
+        # than waiting for its next idle tick.
+        try:
+            video_downloader.kick()
+        except Exception:
+            pass
+
     def prepare_session(self, resident: str, *, playlist_override=None, ordered: bool = False, start_index: int = 0):
         """
         Build (or rebuild) a session for a resident without needing a beacon trigger.
         When ordered=True, playback will follow the playlist sequentially starting at start_index.
         """
         sess = self._make_session(resident, playlist_override=playlist_override, ordered=ordered, start_index=start_index)
+        self._register_session_terms(sess)
         return sess
 
     def _stop_session(self, resident, from_thread: bool):
@@ -1495,6 +1603,7 @@ class Engine:
         with self._ensure_lock(resident):
             self._stop_session(resident, from_thread=False)
             sess = self._make_session(resident, playlist_override=playlist_override, ordered=ordered, start_index=start_index)
+            self._register_session_terms(sess)
             self.sessions[resident] = sess
             t = threading.Thread(target=self._session_loop, args=(resident,), daemon=True)
             self.session_threads[resident] = t
@@ -1530,6 +1639,7 @@ class Engine:
 
         with self._ensure_lock(resident):
             sess = self._make_session(resident, radio_first=radio_first)
+            self._register_session_terms(sess)
             self.sessions[resident] = sess
 
             t = threading.Thread(target=self._session_loop, args=(resident,), daemon=True)
@@ -1777,6 +1887,8 @@ class Engine:
             force_radio = False
             is_photo = False
             is_youtube = False
+            is_cached = False
+            cached_row_id: int | None = None
             photo_via_ui = False
             photo_duration = 0
             display_label = None
@@ -1788,6 +1900,14 @@ class Engine:
                 item_type = (q.get("type") or q.get("kind") or q.get("mediaType") or q.get("media_type") or "").lower()
                 force_radio = item_type == "radio"
                 is_photo = item_type in {"photo", "image", "picture"}
+                # Direct-from-cache playback item (carried in via the remote
+                # menu's cached-videos submenu). Skip URL parsing entirely —
+                # the filepath is authoritative.
+                if item_type == "cached":
+                    is_cached = True
+                    media_url = q.get("filepath") or q.get("url")
+                    cached_row_id = q.get("id")
+                    display_label = q.get("name") or q.get("title") or os.path.basename(media_url or "")
                 radio_hint = q.get("radioUrl") or q.get("radio") or q.get("station")
                 # Allow radio: prefix even if type was omitted
                 if media_url and media_url.lower().startswith("radio:"):
@@ -1806,11 +1926,13 @@ class Engine:
                     force_radio = bool(sess.get("force_radio"))
                 display_label = str(q)
 
-            if isinstance(media_url, str):
+            # _maybe_add_scheme and the URL heuristics below assume an HTTP(S)
+            # URL; cached items carry a local filesystem path, so short-circuit.
+            if isinstance(media_url, str) and not is_cached:
                 media_url = _maybe_add_scheme(media_url)
 
             # Heuristics: if no explicit type, infer from URL/extension
-            if media_url:
+            if media_url and not is_cached:
                 if isinstance(media_url, str) and media_url.startswith("http"):
                     media_url = _escape_spaces(media_url)
                 if not is_photo and _is_image_url(media_url):
@@ -1876,13 +1998,45 @@ class Engine:
                 print(f"[ENGINE] Got WID: {wid}")
 
             # 4) Start VLC while keeping loading GIF visible
+            # Signal cache downloader to throttle. Cleared in step 8 after
+            # the track ends or playback errors. Photos use the Tk path,
+            # which doesn't touch the network, so they don't set the flag.
+            self.is_playback_active.set()
             if force_radio:
                 self.player.stop_background_radio()
                 ok = self.player.play_radio(media_url, wid=None)  # audio-only, no window
                 # Stay on idle frame and show photos while radio plays
                 if ok and sess_photos:
                     self.ui.start_ambient_slideshow(sess_photos)
+            elif is_cached:
+                # Explicit cached-file playback (chosen from the remote menu's
+                # Cached Videos list). No yt-dlp, no connectivity check, no
+                # cache lookup — just play the file the menu handed us.
+                self.player.stop_background_radio()
+                if media_url and os.path.exists(media_url):
+                    self.currently_playing_filepath = media_url
+                    ok = self.player.play_cached_file(media_url, wid=wid)
+                    if ok:
+                        try:
+                            if cached_row_id is not None:
+                                cache_db.mark_video_played(int(cached_row_id))
+                                with cache_db._lock:
+                                    row = cache_db.get_conn().execute(
+                                        "SELECT source_id FROM cached_videos WHERE id = ?",
+                                        (int(cached_row_id),),
+                                    ).fetchone()
+                                if row and row["source_id"]:
+                                    remember(resident, row["source_id"])
+                        except Exception as e:
+                            _log(f"[CACHE] Failed to record cached playback: {e}")
+                    else:
+                        self.currently_playing_filepath = None
+                else:
+                    _log(f"[CACHE] Selected cached file missing on disk: {media_url}")
+                    ok = False
             elif is_photo:
+                # Photo doesn't drive VLC's main player; clear the throttle flag.
+                self.is_playback_active.clear()
                 self.ui.stop_ambient_slideshow()   # individual photo takes over
                 bed = radio_hint or _pick_radio_bed()
                 if bed:
@@ -1901,13 +2055,93 @@ class Engine:
                 self.ui.show_photo(media_url, on_ready=lambda: evt.set())
                 evt.wait(timeout=3)
                 ok = True
-            elif is_youtube:
-                self.player.stop_background_radio()
-                ok = self.player.play_youtube(media_url, resident=resident, wid=wid)
             else:
+                # Cacheable media (youtube search/URL, or a direct video URL).
+                # Decision flow:
+                #   1) Look up cached videos for this term; prefer LRU cached
+                #      file if one exists. On VLC error, fall through to stream.
+                #   2) Otherwise, only stream if wifi_healthy() passes.
+                #   3) Otherwise skip to the next track.
                 self.player.stop_background_radio()
-                ok = self.player.play_direct(media_url, wid=wid)
+                ok = False
+                cached_video_id = None
+                cached_filepath = None
+                cached_source_id = None
+                term_str = cache_db.canonical_term(q)
+                if term_str:
+                    tid = cache_db.term_id_for(resident, term_str)
+                    if tid is not None:
+                        for v in cache_db.videos_for_term(tid):
+                            fp = v["filepath"]
+                            if fp and os.path.exists(fp):
+                                cached_filepath = fp
+                                cached_source_id = v["source_id"]
+                                cached_video_id = int(v["id"])
+                                break
+
+                if cached_filepath:
+                    self.currently_playing_filepath = cached_filepath
+                    ok = self.player.play_cached_file(cached_filepath, wid=wid)
+                    if ok:
+                        cache_db.mark_video_played(cached_video_id)
+                        if cached_source_id:
+                            remember(resident, cached_source_id)
+                        _log(f"[CACHE] Hit for '{term_str}' (resident={resident}): "
+                             f"{os.path.basename(cached_filepath)}")
+                    else:
+                        # Cached file failed in VLC (corrupted? codec mismatch?).
+                        # Don't tombstone the row — fall through to streaming and
+                        # let GC's disk consistency sweep notice if the file is
+                        # truly gone next tick.
+                        self.currently_playing_filepath = None
+                        _log(f"[CACHE] Cached playback failed, attempting stream: "
+                             f"{os.path.basename(cached_filepath)}")
+
+                if not ok:
+                    if not wifi_healthy():
+                        # Offline mode: fall back to any cached video for this
+                        # resident, picked at random and avoiding the short-term
+                        # recent set so we don't replay back-to-back. This
+                        # degrades the playlist to "whatever we have locally"
+                        # rather than skipping uncached terms one at a time.
+                        avoid = set(recent_for(resident))
+                        fallback = cache_db.random_cached_video_for_resident(
+                            resident, exclude_source_ids=avoid,
+                        )
+                        if fallback and fallback["filepath"] and os.path.exists(fallback["filepath"]):
+                            self.currently_playing_filepath = fallback["filepath"]
+                            ok = self.player.play_cached_file(fallback["filepath"], wid=wid)
+                            if ok:
+                                cache_db.mark_video_played(int(fallback["id"]))
+                                if fallback["source_id"]:
+                                    remember(resident, fallback["source_id"])
+                                _log(f"[CACHE] Offline fallback for "
+                                     f"'{term_str or media_url}' → "
+                                     f"{os.path.basename(fallback['filepath'])} "
+                                     f"(resident={resident})")
+                            else:
+                                self.currently_playing_filepath = None
+                        if not ok:
+                            _log(f"[CONNECTIVITY] No network and nothing cached "
+                                 f"for {resident} — skipping")
+                            self.is_playback_active.clear()
+                            continue
+                    else:
+                        if is_youtube:
+                            ok = self.player.play_youtube(media_url, resident=resident, wid=wid)
+                        else:
+                            ok = self.player.play_direct(media_url, wid=wid)
+                        if ok:
+                            # Streaming this term — nudge the downloader so a future
+                            # session can serve it from cache.
+                            try:
+                                video_downloader.kick()
+                            except Exception:
+                                pass
+
             if not ok:
+                self.is_playback_active.clear()
+                self.currently_playing_filepath = None
                 print("[ENGINE] VLC start failed")
                 time.sleep(1)
                 continue
@@ -1945,6 +2179,8 @@ class Engine:
                 finished = self.player.wait_until_track_finishes_or_stop()
 
             # 8) Between tracks: stop radio bed + slideshow, then briefly show idle
+            self.is_playback_active.clear()
+            self.currently_playing_filepath = None
             self.player.stop_background_radio()
             self.ui.stop_ambient_slideshow()
             if sess["running"]:
@@ -1952,6 +2188,8 @@ class Engine:
                 time.sleep(1)
 
         # Cleanup after session ends
+        self.is_playback_active.clear()
+        self.currently_playing_filepath = None
         self._stop_session(resident, from_thread=True)
         self.ui.back_to_idle()
 
@@ -1975,14 +2213,57 @@ class RemoteMenuController:
         self.playlist = []
         self.labels = []
         self._radio_stations = self.remote_cfg.get("radio_stations") or []  # [{name, url}, ...]
-        self._special_items = ["▶  Play All", "⇄  Shuffle"] + (["📻  Radio"] if self._radio_stations else [])
         self._in_radio_submenu = False
+        # Cached-videos submenu state, populated each time it opens.
+        self._in_videos_submenu = False
+        self._cached_videos: list = []
         self._last_key_time: dict = {}
         if not self.enabled:
             return
         self._bind_keys()
         self._start_focus_maintainer()
         # open_menu deferred — called via root.after() in main() after mainloop starts
+
+    def _current_special_items(self) -> list[str]:
+        """Recompute the special-item rows each time the main menu opens, so
+        '📼  Cached Videos' only appears when there's actually something to
+        list, and the radio entry is gated on having radio_stations configured.
+        """
+        items = ["▶  Play All", "⇄  Shuffle"]
+        try:
+            if self.resident:
+                cached = cache_db.cached_videos_for_resident(self.resident)
+                if cached:
+                    items.append(f"📼  Cached Videos ({len(cached)})")
+        except Exception as e:
+            print(f"[REMOTE] Cached-videos count failed: {e}")
+        if self._radio_stations:
+            items.append("📻  Radio")
+        return items
+
+    @staticmethod
+    def _format_duration(seconds, filesize_bytes=None) -> str:
+        """Format a duration for the menu label. Uses cached duration if
+        available; otherwise estimates from file size assuming ~2 Mbps for
+        a 720p H.264+AAC mp4 (≈ 250 KB/s). Returns '?:??' when neither is
+        known."""
+        s = None
+        try:
+            if seconds is not None and int(seconds) > 0:
+                s = int(seconds)
+            elif filesize_bytes:
+                # ~2 Mbps avg → 250 000 bytes/s. Cheap, conservative ballpark.
+                s = max(1, int(filesize_bytes) // 250_000)
+        except Exception:
+            s = None
+        if s is None:
+            return "?:??"
+        h = s // 3600
+        m = (s % 3600) // 60
+        sec = s % 60
+        if h:
+            return f"{h}:{m:02d}:{sec:02d}"
+        return f"{m}:{sec:02d}"
 
     def _default_resident(self) -> str | None:
         try:
@@ -2024,13 +2305,38 @@ class RemoteMenuController:
 
     def open_menu(self):
         self._in_radio_submenu = False
+        self._in_videos_submenu = False
         self._ensure_playlist()
         title = f"{self.resident} • Playlist" if self.resident else "Playlist"
-        if not self.playlist and not self._radio_stations:
+        specials = self._current_special_items()
+        if not self.playlist and not self._radio_stations and not any(s.startswith("📼") for s in specials):
             self.ui.show_idle(ResidentIdentity(name=self.resident or "Guest", key=self.resident or "guest", survey_blob={}), subtitle="No playlist available")
             return
-        all_labels = self._special_items + self.labels
+        # Remember the currently-active special items so play_selected can map
+        # the menu index back to the same list we showed.
+        self._active_specials = specials
+        all_labels = specials + self.labels
         self.ui.show_menu(title, all_labels, selected_index=0, hint="Up/Down to navigate • OK to play • Back to exit")
+
+    def _open_videos_menu(self):
+        self._in_videos_submenu = True
+        try:
+            self._cached_videos = cache_db.cached_videos_for_resident(self.resident or "")
+        except Exception as e:
+            print(f"[REMOTE] Failed to load cached videos: {e}")
+            self._cached_videos = []
+        if not self._cached_videos:
+            self.open_menu()
+            return
+        labels = []
+        for row in self._cached_videos:
+            dur = self._format_duration(row["duration_seconds"], row["filesize_bytes"])
+            title = (row["title"] or row["source_id"] or "").strip() or "(untitled)"
+            if len(title) > 64:
+                title = title[:61] + "…"
+            labels.append(f"[{dur}]  {title}")
+        self.ui.show_menu("📼  Cached Videos", labels, selected_index=0,
+                          hint="Up/Down to select • OK to play • Back to return")
 
     def _open_radio_menu(self):
         self._in_radio_submenu = True
@@ -2068,14 +2374,40 @@ class RemoteMenuController:
                 self.engine.start_manual_session(self.resident or "radio", playlist_override=radio_item, start_index=0, ordered=True)
             return
 
-        if not self.playlist and not self._radio_stations:
+        # Cached-videos submenu — play the selected file directly via the
+        # engine, wrapped as a single cached-type playlist item.
+        if self._in_videos_submenu:
+            if 0 <= idx < len(self._cached_videos):
+                row = self._cached_videos[idx]
+                item = {
+                    "type": "cached",
+                    "id": int(row["id"]),
+                    "filepath": row["filepath"],
+                    "name": row["title"] or row["source_id"],
+                    "duration": row["duration_seconds"],
+                }
+                self.ui.hide_menu()
+                self._in_videos_submenu = False
+                self.engine.start_manual_session(
+                    self.resident or "cached",
+                    playlist_override=[item],
+                    start_index=0,
+                    ordered=True,
+                )
+            return
+
+        specials = getattr(self, "_active_specials", None) or self._current_special_items()
+        if not self.playlist and not self._radio_stations and not any(s.startswith("📼") for s in specials):
             self.open_menu()
             return
-        n_special = len(self._special_items)
+        n_special = len(specials)
         if idx < n_special:
-            label = self._special_items[idx]
+            label = specials[idx]
             if label == "📻  Radio":
                 self._open_radio_menu()
+                return
+            if label.startswith("📼"):
+                self._open_videos_menu()
                 return
             self.ui.hide_menu()
             if label == "▶  Play All":
@@ -2095,6 +2427,9 @@ class RemoteMenuController:
 
     def back(self, *_):
         if self._in_radio_submenu:
+            self.open_menu()
+            return
+        if self._in_videos_submenu:
             self.open_menu()
             return
         if self.ui.is_menu_visible():
@@ -2229,6 +2564,25 @@ def main():
     # Build engine with UI
     ENGINE = Engine(SURVEY, PLAYER, CONFIG, ui=ui)
     remote_controller = RemoteMenuController(ENGINE, ui, CONFIG)
+
+    # Initialise the local video cache DB and start the download worker.
+    # The worker throttles its yt-dlp calls while ENGINE.is_playback_active is
+    # set, and prioritises terms for any resident whose session is currently
+    # active (button held).
+    try:
+        cache_db.init_db()
+        video_downloader.start(
+            playback_active=ENGINE.is_playback_active,
+            get_active_residents=lambda: list(ENGINE.sessions.keys()),
+            is_online=wifi_healthy,
+        )
+        # One full GC sweep at startup, then a slow timer for safety-net
+        # cleanup. The timer reads ENGINE.currently_playing_filepath on
+        # every tick so it never deletes a file VLC is actively playing.
+        cache_gc.run_full_sweep(ENGINE.currently_playing_filepath)
+        cache_gc.start_timer(get_currently_playing=lambda: ENGINE.currently_playing_filepath)
+    except Exception as e:
+        print(f"[BOOT] Video cache subsystem failed to start: {e}")
 
     # Graph poller
     threading.Thread(target=graph_poll_task, args=(GRAPH,), daemon=True).start()
