@@ -57,3 +57,39 @@ export type Device = {
   playlistName?: string | null;
   deviceKey?: string | null;
 };
+
+// --- Pi-local video cache: mirror surfaced through the portal ---
+
+export type CachedVideo = {
+  id: string;
+  deviceId: string;
+  resident: string;
+  source: string;            // 'yt' | 'fam' | future 'azure'
+  sourceId: string;
+  title: string;
+  term?: string | null;
+  filesizeBytes?: number | null;
+  durationSeconds?: number | null;
+  downloadedAt: string;
+  lastPlayedAt?: string | null;
+  playCount: number;
+  protected: boolean;
+  firstSeenAt: string;
+  lastSeenAt: string;
+};
+
+export type ResidentCacheResponse = {
+  resident: string;
+  videos: CachedVideo[];
+  devices: string[];
+  lastSeenAt?: string | null;
+};
+
+export type DeviceCacheCommand = {
+  id: string;
+  deviceId: string;
+  commandType: "delete_video" | "play_video" | "force_term";
+  payload: Record<string, unknown>;
+  createdAt: string;
+  status: "pending" | "acked" | "applied" | "failed" | "expired";
+};

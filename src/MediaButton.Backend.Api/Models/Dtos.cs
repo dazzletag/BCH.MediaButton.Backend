@@ -55,3 +55,61 @@ public record DeviceCreateRequest(string DeviceId, string? DisplayName);
 public record DeviceRenameRequest(string? DisplayName);
 
 public record RegisterResidentRequest(string ResidentName, string? CaseId);
+
+// -------------------------------------------------------------------------
+// Pi-local video cache: snapshot push + admin queries + command queue
+// -------------------------------------------------------------------------
+
+/// <summary>One video as reported by the Pi in its periodic snapshot.</summary>
+public record CachedVideoSnapshotItem(
+    string Source,
+    string SourceId,
+    string Title,
+    string? Term,
+    long? FilesizeBytes,
+    int? DurationSeconds,
+    DateTimeOffset DownloadedAt,
+    DateTimeOffset? LastPlayedAt,
+    int PlayCount,
+    bool Protected);
+
+public record CacheSnapshotRequest(
+    DateTimeOffset SnapshotAt,
+    string Resident,
+    IReadOnlyList<CachedVideoSnapshotItem> Videos);
+
+public record CachedVideoView(
+    Guid Id,
+    string DeviceId,
+    string Resident,
+    string Source,
+    string SourceId,
+    string Title,
+    string? Term,
+    long? FilesizeBytes,
+    int? DurationSeconds,
+    DateTimeOffset DownloadedAt,
+    DateTimeOffset? LastPlayedAt,
+    int PlayCount,
+    bool Protected,
+    DateTimeOffset FirstSeenAt,
+    DateTimeOffset LastSeenAt);
+
+public record ResidentCacheResponse(
+    string Resident,
+    IReadOnlyList<CachedVideoView> Videos,
+    IReadOnlyList<string> Devices,
+    DateTimeOffset? LastSeenAt);
+
+public record DeviceCacheCommandView(
+    Guid Id,
+    string DeviceId,
+    string CommandType,
+    object Payload,
+    DateTimeOffset CreatedAt,
+    string Status);
+
+public record ForceTermRequest(string Term, int? Count);
+
+public record CommandAckRequest(string Status, object? Result);
+
