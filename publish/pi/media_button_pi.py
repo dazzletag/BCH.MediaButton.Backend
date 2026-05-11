@@ -14,6 +14,7 @@ import vlc
 from ui_display import MediaUI, ResidentIdentity
 # Local-video-cache modules (Pi-side only; pure stdlib + yt-dlp subprocess)
 import cache_db
+import cache_gc
 import video_downloader
 load_dotenv()
 
@@ -1503,6 +1504,13 @@ class Engine:
                  f"{removed} inactive term row(s) cleared")
         except Exception as e:
             _log(f"[CACHE] Term reconciliation failed for {resident}: {e}")
+        # Reconciliation just unlinked any term_videos whose term went away,
+        # so the videos are orphans now — clear them out before the disk
+        # fills up. Skip the file currently being rendered.
+        try:
+            cache_gc.run_orphan_sweep(self.currently_playing_filepath)
+        except Exception as e:
+            _log(f"[CACHE] Orphan sweep failed for {resident}: {e}")
         # Nudge the downloader so it picks up new terms immediately rather
         # than waiting for its next idle tick.
         try:
@@ -2302,8 +2310,13 @@ def main():
             playback_active=ENGINE.is_playback_active,
             get_active_residents=lambda: list(ENGINE.sessions.keys()),
         )
+        # One full GC sweep at startup, then a slow timer for safety-net
+        # cleanup. The timer reads ENGINE.currently_playing_filepath on
+        # every tick so it never deletes a file VLC is actively playing.
+        cache_gc.run_full_sweep(ENGINE.currently_playing_filepath)
+        cache_gc.start_timer(get_currently_playing=lambda: ENGINE.currently_playing_filepath)
     except Exception as e:
-        print(f"[BOOT] Video cache downloader failed to start: {e}")
+        print(f"[BOOT] Video cache subsystem failed to start: {e}")
 
     # Graph poller
     threading.Thread(target=graph_poll_task, args=(GRAPH,), daemon=True).start()
