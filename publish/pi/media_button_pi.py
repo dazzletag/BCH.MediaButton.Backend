@@ -1516,6 +1516,16 @@ class Engine:
         isn't in the new playlist is marked inactive and its term_videos rows
         are cascade-deleted, leaving the videos themselves as orphans for the
         GC pass to handle.
+
+        DEFENSIVE GUARD: if the cacheable set is empty, we DO NOT reconcile.
+        An empty cacheable set never means 'wipe this resident's cache' — it
+        means either:
+          (a) a one-off manual play of a non-cacheable item type (cached,
+              radio, photo) via the portal command queue or the remote
+              menu's Cached Videos / Radio submenus, or
+          (b) a transient hiccup where the LLM playlist hasn't loaded yet.
+        In either case the right behaviour is to leave the existing term
+        set (and the videos linked to it) untouched.
         """
         resident = sess.get("resident")
         playlist = sess.get("playlist") or []
@@ -1532,6 +1542,13 @@ class Engine:
             seen.add(term)
             blob = item if isinstance(item, dict) else {"type": "youtube", "query": term}
             terms_with_blobs.append((term, blob))
+
+        if not terms_with_blobs:
+            _log(f"[CACHE] Skipping term reconcile for {resident}: "
+                 f"no cacheable items in this session (one-off play or "
+                 f"non-video playlist) — keeping existing terms")
+            return
+
         try:
             removed = cache_db.reconcile_resident_terms(resident, terms_with_blobs)
             _log(f"[CACHE] Reconciled {len(terms_with_blobs)} term(s) for {resident}; "
