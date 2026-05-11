@@ -15,6 +15,7 @@ from ui_display import MediaUI, ResidentIdentity
 # Local-video-cache modules (Pi-side only; pure stdlib + yt-dlp subprocess)
 import cache_db
 import cache_gc
+import cache_sync
 import video_downloader
 load_dotenv()
 
@@ -2581,6 +2582,16 @@ def main():
         # every tick so it never deletes a file VLC is actively playing.
         cache_gc.run_full_sweep(ENGINE.currently_playing_filepath)
         cache_gc.start_timer(get_currently_playing=lambda: ENGINE.currently_playing_filepath)
+        # Backend sync: pushes cache snapshots to the portal and polls
+        # for delete/play/force-term commands. No-op if API_BASE /
+        # DEVICE_ID / DEVICE_KEY aren't configured.
+        cache_sync.start(
+            api_base=API_BASE,
+            device_id=DEVICE_ID,
+            device_key=DEVICE_KEY,
+            engine=ENGINE,
+            is_online=wifi_healthy,
+        )
     except Exception as e:
         print(f"[BOOT] Video cache subsystem failed to start: {e}")
 
