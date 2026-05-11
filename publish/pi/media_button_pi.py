@@ -12,6 +12,9 @@ import vlc
 
 # UI (from ui_display.py)
 from ui_display import MediaUI, ResidentIdentity
+# Local-video-cache modules (Pi-side only; pure stdlib + yt-dlp subprocess)
+import cache_db
+import video_downloader
 load_dotenv()
 
 def _log(msg: str):
@@ -1349,6 +1352,12 @@ class Engine:
         self.sessions = {}         # resident -> session dict
         self.session_threads = {}  # resident -> Thread
         self.session_locks = {}    # resident -> Lock
+        # Signals the local video cache downloader to throttle while VLC is
+        # actively rendering. Set/cleared in _session_loop around playback calls.
+        self.is_playback_active = threading.Event()
+        # Filepath of the currently-playing cached video (or None). Read by the
+        # GC sweep so it never deletes a file out from under VLC.
+        self.currently_playing_filepath: str | None = None
         self.stop_grace_misses = self.config.get("stop_grace_misses", 1)
         self.watchdog_interval = self.config.get("watchdog_interval", 0.5)
         self.control_mode = self.config.get("control_mode", "beacon")
@@ -1462,12 +1471,52 @@ class Engine:
             self.session_locks[resident] = threading.Lock()
         return self.session_locks[resident]
 
+    def _register_session_terms(self, sess):
+        """
+        Push the cacheable items from this resident's playlist into cache_db so
+        the downloader knows what to fetch. Called by each caller of
+        _make_session once the final playlist is settled.
+
+        Runs reconciliation: any term previously known for this resident that
+        isn't in the new playlist is marked inactive and its term_videos rows
+        are cascade-deleted, leaving the videos themselves as orphans for the
+        GC pass to handle.
+        """
+        resident = sess.get("resident")
+        playlist = sess.get("playlist") or []
+        if not resident:
+            return
+        terms_with_blobs: list[tuple[str, dict | None]] = []
+        seen: set[str] = set()
+        for item in playlist:
+            if not cache_db.is_cacheable(item):
+                continue
+            term = cache_db.canonical_term(item)
+            if not term or term in seen:
+                continue
+            seen.add(term)
+            blob = item if isinstance(item, dict) else {"type": "youtube", "query": term}
+            terms_with_blobs.append((term, blob))
+        try:
+            removed = cache_db.reconcile_resident_terms(resident, terms_with_blobs)
+            _log(f"[CACHE] Reconciled {len(terms_with_blobs)} term(s) for {resident}; "
+                 f"{removed} inactive term row(s) cleared")
+        except Exception as e:
+            _log(f"[CACHE] Term reconciliation failed for {resident}: {e}")
+        # Nudge the downloader so it picks up new terms immediately rather
+        # than waiting for its next idle tick.
+        try:
+            video_downloader.kick()
+        except Exception:
+            pass
+
     def prepare_session(self, resident: str, *, playlist_override=None, ordered: bool = False, start_index: int = 0):
         """
         Build (or rebuild) a session for a resident without needing a beacon trigger.
         When ordered=True, playback will follow the playlist sequentially starting at start_index.
         """
         sess = self._make_session(resident, playlist_override=playlist_override, ordered=ordered, start_index=start_index)
+        self._register_session_terms(sess)
         return sess
 
     def _stop_session(self, resident, from_thread: bool):
@@ -1495,6 +1544,7 @@ class Engine:
         with self._ensure_lock(resident):
             self._stop_session(resident, from_thread=False)
             sess = self._make_session(resident, playlist_override=playlist_override, ordered=ordered, start_index=start_index)
+            self._register_session_terms(sess)
             self.sessions[resident] = sess
             t = threading.Thread(target=self._session_loop, args=(resident,), daemon=True)
             self.session_threads[resident] = t
@@ -1530,6 +1580,7 @@ class Engine:
 
         with self._ensure_lock(resident):
             sess = self._make_session(resident, radio_first=radio_first)
+            self._register_session_terms(sess)
             self.sessions[resident] = sess
 
             t = threading.Thread(target=self._session_loop, args=(resident,), daemon=True)
@@ -1876,6 +1927,10 @@ class Engine:
                 print(f"[ENGINE] Got WID: {wid}")
 
             # 4) Start VLC while keeping loading GIF visible
+            # Signal cache downloader to throttle. Cleared in step 8 after
+            # the track ends or playback errors. Photos use the Tk path,
+            # which doesn't touch the network, so they don't set the flag.
+            self.is_playback_active.set()
             if force_radio:
                 self.player.stop_background_radio()
                 ok = self.player.play_radio(media_url, wid=None)  # audio-only, no window
@@ -1883,6 +1938,8 @@ class Engine:
                 if ok and sess_photos:
                     self.ui.start_ambient_slideshow(sess_photos)
             elif is_photo:
+                # Photo doesn't drive VLC's main player; clear the throttle flag.
+                self.is_playback_active.clear()
                 self.ui.stop_ambient_slideshow()   # individual photo takes over
                 bed = radio_hint or _pick_radio_bed()
                 if bed:
@@ -1908,6 +1965,7 @@ class Engine:
                 self.player.stop_background_radio()
                 ok = self.player.play_direct(media_url, wid=wid)
             if not ok:
+                self.is_playback_active.clear()
                 print("[ENGINE] VLC start failed")
                 time.sleep(1)
                 continue
@@ -1945,6 +2003,8 @@ class Engine:
                 finished = self.player.wait_until_track_finishes_or_stop()
 
             # 8) Between tracks: stop radio bed + slideshow, then briefly show idle
+            self.is_playback_active.clear()
+            self.currently_playing_filepath = None
             self.player.stop_background_radio()
             self.ui.stop_ambient_slideshow()
             if sess["running"]:
@@ -1952,6 +2012,8 @@ class Engine:
                 time.sleep(1)
 
         # Cleanup after session ends
+        self.is_playback_active.clear()
+        self.currently_playing_filepath = None
         self._stop_session(resident, from_thread=True)
         self.ui.back_to_idle()
 
@@ -2229,6 +2291,19 @@ def main():
     # Build engine with UI
     ENGINE = Engine(SURVEY, PLAYER, CONFIG, ui=ui)
     remote_controller = RemoteMenuController(ENGINE, ui, CONFIG)
+
+    # Initialise the local video cache DB and start the download worker.
+    # The worker throttles its yt-dlp calls while ENGINE.is_playback_active is
+    # set, and prioritises terms for any resident whose session is currently
+    # active (button held).
+    try:
+        cache_db.init_db()
+        video_downloader.start(
+            playback_active=ENGINE.is_playback_active,
+            get_active_residents=lambda: list(ENGINE.sessions.keys()),
+        )
+    except Exception as e:
+        print(f"[BOOT] Video cache downloader failed to start: {e}")
 
     # Graph poller
     threading.Thread(target=graph_poll_task, args=(GRAPH,), daemon=True).start()
