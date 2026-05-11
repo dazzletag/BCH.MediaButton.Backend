@@ -7,14 +7,35 @@ cached videos, resolves a YouTube candidate via yt-dlp, downloads it to
 .data/video_cache/yt_<videoid>.mp4 and records it in cache_db. Throttles to
 VIDEO_CACHE_THROTTLE_RATE while VLC is actively playing.
 
-Future extension point (Phase 5 / central curated content):
-  resolve_download_candidates(term, resident) is the only place that knows
-  *how* to turn a playlist term into download candidates. To plug in an
-  Azure-backed curated source later, branch inside this function on the
-  term's item_blob: if it carries a central_curated_id with a media_url,
-  yield a Candidate(source='azure', source_id=..., download_url=...) and let
-  download_candidate handle the actual byte fetch. No other module needs to
-  change.
+==========================================================================
+Future extension point — central curated content (post-merge)
+==========================================================================
+The module is deliberately split into two stages so a future central
+service that serves pre-curated videos from Azure Blob can be added in
+one place without touching anything else:
+
+  resolve_download_candidates(term, resident, item_blob) -> [Candidate ...]
+      decides *what* to download. Returns one or more Candidate records,
+      tried in order.
+
+  download_candidate(candidate, out_path, throttle=...) -> (ok, title, dur)
+      decides *how* to fetch a Candidate's bytes onto disk.
+
+To plug in the central system later:
+
+  1. Extend resolve_download_candidates so that if item_blob carries a
+     'central_curated_id' (or a hit against the central API), it returns
+     a Candidate(source='azure', source_id=<curated_id>,
+     download_url=<blob_sas_url>) *first*, ahead of any YouTube fallback.
+
+  2. Extend download_candidate to handle source=='azure' by streaming
+     the blob via requests instead of yt-dlp.
+
+The schema already carries central_curated_id on cached_videos and the
+source field accepts arbitrary strings, so no DB migration is needed.
+No other module in this branch reads cached_videos.source, so adding new
+values is forward-compatible.
+==========================================================================
 """
 import json
 import os
