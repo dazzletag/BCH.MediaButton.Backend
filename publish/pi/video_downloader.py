@@ -292,12 +292,17 @@ class DownloadWorker:
         *,
         playback_active: threading.Event,
         get_active_residents,           # callable -> list[str]
+        is_online=None,                 # optional callable -> bool
         per_term_cap: int = cache_db.VIDEO_CACHE_PER_TERM_CAP,
     ):
         self._stop = threading.Event()
         self._wake = threading.Event()
         self.playback_active = playback_active
         self.get_active_residents = get_active_residents
+        # When provided, the worker checks this before each pick and stays
+        # idle if it returns False. Spares the log from a parade of
+        # yt-dlp failures while the Pi has no network.
+        self.is_online = is_online
         self.per_term_cap = per_term_cap
         self._thread: threading.Thread | None = None
 
@@ -319,7 +324,17 @@ class DownloadWorker:
 
     def _pick_next_term(self) -> dict | None:
         """Pick the (resident, term) that most needs a download.
-        Active residents (button currently held) get priority."""
+        Active residents (button currently held) get priority. Returns None
+        if there's nothing to do or the Pi is currently offline."""
+        if self.is_online is not None:
+            try:
+                if not self.is_online():
+                    return None
+            except Exception:
+                # If the probe itself errors, treat as "unknown" and attempt
+                # the pick — better to try and fail loudly than to stall.
+                pass
+
         active = []
         try:
             active = self.get_active_residents() or []
@@ -440,12 +455,17 @@ def _row_to_dict(r):
 _worker: DownloadWorker | None = None
 
 
-def start(playback_active: threading.Event, get_active_residents) -> DownloadWorker:
+def start(
+    playback_active: threading.Event,
+    get_active_residents,
+    is_online=None,
+) -> DownloadWorker:
     global _worker
     if _worker is None:
         _worker = DownloadWorker(
             playback_active=playback_active,
             get_active_residents=get_active_residents,
+            is_online=is_online,
         )
     _worker.start()
     return _worker

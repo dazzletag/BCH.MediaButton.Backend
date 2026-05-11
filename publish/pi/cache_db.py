@@ -471,6 +471,32 @@ def video_count_for_term(term_id: int) -> int:
     return int(row["n"]) if row else 0
 
 
+def random_cached_video_for_resident(
+    resident: str,
+    exclude_source_ids: set[str] | None = None,
+) -> sqlite3.Row | None:
+    """
+    Pick a random cached_videos row for this resident. Used by the offline
+    playback fallback — when WiFi is down and the engine's chosen term has
+    no term-specific cache, we still serve *something* the resident knows
+    rather than skipping the slot.
+
+    exclude_source_ids lets the caller pass in recent video IDs (typically
+    from recent_for(resident)) so we don't replay the same video back-to-back.
+    Falls back to ignoring the exclusion if every cached video is excluded.
+    """
+    exclude = set(exclude_source_ids or ())
+    with _lock:
+        rows = list(get_conn().execute(
+            "SELECT * FROM cached_videos WHERE resident = ?", (resident,)
+        ))
+    if not rows:
+        return None
+    candidates = [r for r in rows if r["source_id"] not in exclude] or rows
+    import random
+    return random.choice(candidates)
+
+
 def cached_filepaths() -> set[str]:
     """All known cached_videos.filepath values — used by GC to spot dangling files on disk."""
     with _lock:

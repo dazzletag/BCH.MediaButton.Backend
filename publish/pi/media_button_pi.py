@@ -2044,21 +2044,45 @@ class Engine:
 
                 if not ok:
                     if not wifi_healthy():
-                        _log(f"[CONNECTIVITY] No network and no usable cache for "
-                             f"'{term_str or media_url}' — skipping")
-                        self.is_playback_active.clear()
-                        continue
-                    if is_youtube:
-                        ok = self.player.play_youtube(media_url, resident=resident, wid=wid)
+                        # Offline mode: fall back to any cached video for this
+                        # resident, picked at random and avoiding the short-term
+                        # recent set so we don't replay back-to-back. This
+                        # degrades the playlist to "whatever we have locally"
+                        # rather than skipping uncached terms one at a time.
+                        avoid = set(recent_for(resident))
+                        fallback = cache_db.random_cached_video_for_resident(
+                            resident, exclude_source_ids=avoid,
+                        )
+                        if fallback and fallback["filepath"] and os.path.exists(fallback["filepath"]):
+                            self.currently_playing_filepath = fallback["filepath"]
+                            ok = self.player.play_cached_file(fallback["filepath"], wid=wid)
+                            if ok:
+                                cache_db.mark_video_played(int(fallback["id"]))
+                                if fallback["source_id"]:
+                                    remember(resident, fallback["source_id"])
+                                _log(f"[CACHE] Offline fallback for "
+                                     f"'{term_str or media_url}' → "
+                                     f"{os.path.basename(fallback['filepath'])} "
+                                     f"(resident={resident})")
+                            else:
+                                self.currently_playing_filepath = None
+                        if not ok:
+                            _log(f"[CONNECTIVITY] No network and nothing cached "
+                                 f"for {resident} — skipping")
+                            self.is_playback_active.clear()
+                            continue
                     else:
-                        ok = self.player.play_direct(media_url, wid=wid)
-                    if ok:
-                        # Streaming this term — nudge the downloader so a future
-                        # session can serve it from cache.
-                        try:
-                            video_downloader.kick()
-                        except Exception:
-                            pass
+                        if is_youtube:
+                            ok = self.player.play_youtube(media_url, resident=resident, wid=wid)
+                        else:
+                            ok = self.player.play_direct(media_url, wid=wid)
+                        if ok:
+                            # Streaming this term — nudge the downloader so a future
+                            # session can serve it from cache.
+                            try:
+                                video_downloader.kick()
+                            except Exception:
+                                pass
 
             if not ok:
                 self.is_playback_active.clear()
@@ -2398,6 +2422,7 @@ def main():
         video_downloader.start(
             playback_active=ENGINE.is_playback_active,
             get_active_residents=lambda: list(ENGINE.sessions.keys()),
+            is_online=wifi_healthy,
         )
         # One full GC sweep at startup, then a slow timer for safety-net
         # cleanup. The timer reads ENGINE.currently_playing_filepath on
