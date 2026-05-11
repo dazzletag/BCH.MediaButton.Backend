@@ -471,6 +471,21 @@ def video_count_for_term(term_id: int) -> int:
     return int(row["n"]) if row else 0
 
 
+def cached_videos_for_resident(resident: str) -> list[sqlite3.Row]:
+    """All cached videos for this resident, ordered for menu display.
+    Sort by title (case-insensitive) so the remote-control list is stable
+    between renders and easy for staff to scan."""
+    with _lock:
+        return list(get_conn().execute(
+            """
+            SELECT * FROM cached_videos
+            WHERE resident = ?
+            ORDER BY LOWER(title) ASC, downloaded_at ASC
+            """,
+            (resident,),
+        ))
+
+
 def random_cached_video_for_resident(
     resident: str,
     exclude_source_ids: set[str] | None = None,

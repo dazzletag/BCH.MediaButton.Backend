@@ -1870,6 +1870,8 @@ class Engine:
             force_radio = False
             is_photo = False
             is_youtube = False
+            is_cached = False
+            cached_row_id: int | None = None
             photo_via_ui = False
             photo_duration = 0
             display_label = None
@@ -1881,6 +1883,14 @@ class Engine:
                 item_type = (q.get("type") or q.get("kind") or q.get("mediaType") or q.get("media_type") or "").lower()
                 force_radio = item_type == "radio"
                 is_photo = item_type in {"photo", "image", "picture"}
+                # Direct-from-cache playback item (carried in via the remote
+                # menu's cached-videos submenu). Skip URL parsing entirely —
+                # the filepath is authoritative.
+                if item_type == "cached":
+                    is_cached = True
+                    media_url = q.get("filepath") or q.get("url")
+                    cached_row_id = q.get("id")
+                    display_label = q.get("name") or q.get("title") or os.path.basename(media_url or "")
                 radio_hint = q.get("radioUrl") or q.get("radio") or q.get("station")
                 # Allow radio: prefix even if type was omitted
                 if media_url and media_url.lower().startswith("radio:"):
@@ -1899,11 +1909,13 @@ class Engine:
                     force_radio = bool(sess.get("force_radio"))
                 display_label = str(q)
 
-            if isinstance(media_url, str):
+            # _maybe_add_scheme and the URL heuristics below assume an HTTP(S)
+            # URL; cached items carry a local filesystem path, so short-circuit.
+            if isinstance(media_url, str) and not is_cached:
                 media_url = _maybe_add_scheme(media_url)
 
             # Heuristics: if no explicit type, infer from URL/extension
-            if media_url:
+            if media_url and not is_cached:
                 if isinstance(media_url, str) and media_url.startswith("http"):
                     media_url = _escape_spaces(media_url)
                 if not is_photo and _is_image_url(media_url):
@@ -1979,6 +1991,32 @@ class Engine:
                 # Stay on idle frame and show photos while radio plays
                 if ok and sess_photos:
                     self.ui.start_ambient_slideshow(sess_photos)
+            elif is_cached:
+                # Explicit cached-file playback (chosen from the remote menu's
+                # Cached Videos list). No yt-dlp, no connectivity check, no
+                # cache lookup — just play the file the menu handed us.
+                self.player.stop_background_radio()
+                if media_url and os.path.exists(media_url):
+                    self.currently_playing_filepath = media_url
+                    ok = self.player.play_cached_file(media_url, wid=wid)
+                    if ok:
+                        try:
+                            if cached_row_id is not None:
+                                cache_db.mark_video_played(int(cached_row_id))
+                                with cache_db._lock:
+                                    row = cache_db.get_conn().execute(
+                                        "SELECT source_id FROM cached_videos WHERE id = ?",
+                                        (int(cached_row_id),),
+                                    ).fetchone()
+                                if row and row["source_id"]:
+                                    remember(resident, row["source_id"])
+                        except Exception as e:
+                            _log(f"[CACHE] Failed to record cached playback: {e}")
+                    else:
+                        self.currently_playing_filepath = None
+                else:
+                    _log(f"[CACHE] Selected cached file missing on disk: {media_url}")
+                    ok = False
             elif is_photo:
                 # Photo doesn't drive VLC's main player; clear the throttle flag.
                 self.is_playback_active.clear()
@@ -2158,14 +2196,57 @@ class RemoteMenuController:
         self.playlist = []
         self.labels = []
         self._radio_stations = self.remote_cfg.get("radio_stations") or []  # [{name, url}, ...]
-        self._special_items = ["▶  Play All", "⇄  Shuffle"] + (["📻  Radio"] if self._radio_stations else [])
         self._in_radio_submenu = False
+        # Cached-videos submenu state, populated each time it opens.
+        self._in_videos_submenu = False
+        self._cached_videos: list = []
         self._last_key_time: dict = {}
         if not self.enabled:
             return
         self._bind_keys()
         self._start_focus_maintainer()
         # open_menu deferred — called via root.after() in main() after mainloop starts
+
+    def _current_special_items(self) -> list[str]:
+        """Recompute the special-item rows each time the main menu opens, so
+        '📼  Cached Videos' only appears when there's actually something to
+        list, and the radio entry is gated on having radio_stations configured.
+        """
+        items = ["▶  Play All", "⇄  Shuffle"]
+        try:
+            if self.resident:
+                cached = cache_db.cached_videos_for_resident(self.resident)
+                if cached:
+                    items.append(f"📼  Cached Videos ({len(cached)})")
+        except Exception as e:
+            print(f"[REMOTE] Cached-videos count failed: {e}")
+        if self._radio_stations:
+            items.append("📻  Radio")
+        return items
+
+    @staticmethod
+    def _format_duration(seconds, filesize_bytes=None) -> str:
+        """Format a duration for the menu label. Uses cached duration if
+        available; otherwise estimates from file size assuming ~2 Mbps for
+        a 720p H.264+AAC mp4 (≈ 250 KB/s). Returns '?:??' when neither is
+        known."""
+        s = None
+        try:
+            if seconds is not None and int(seconds) > 0:
+                s = int(seconds)
+            elif filesize_bytes:
+                # ~2 Mbps avg → 250 000 bytes/s. Cheap, conservative ballpark.
+                s = max(1, int(filesize_bytes) // 250_000)
+        except Exception:
+            s = None
+        if s is None:
+            return "?:??"
+        h = s // 3600
+        m = (s % 3600) // 60
+        sec = s % 60
+        if h:
+            return f"{h}:{m:02d}:{sec:02d}"
+        return f"{m}:{sec:02d}"
 
     def _default_resident(self) -> str | None:
         try:
@@ -2207,13 +2288,38 @@ class RemoteMenuController:
 
     def open_menu(self):
         self._in_radio_submenu = False
+        self._in_videos_submenu = False
         self._ensure_playlist()
         title = f"{self.resident} • Playlist" if self.resident else "Playlist"
-        if not self.playlist and not self._radio_stations:
+        specials = self._current_special_items()
+        if not self.playlist and not self._radio_stations and not any(s.startswith("📼") for s in specials):
             self.ui.show_idle(ResidentIdentity(name=self.resident or "Guest", key=self.resident or "guest", survey_blob={}), subtitle="No playlist available")
             return
-        all_labels = self._special_items + self.labels
+        # Remember the currently-active special items so play_selected can map
+        # the menu index back to the same list we showed.
+        self._active_specials = specials
+        all_labels = specials + self.labels
         self.ui.show_menu(title, all_labels, selected_index=0, hint="Up/Down to navigate • OK to play • Back to exit")
+
+    def _open_videos_menu(self):
+        self._in_videos_submenu = True
+        try:
+            self._cached_videos = cache_db.cached_videos_for_resident(self.resident or "")
+        except Exception as e:
+            print(f"[REMOTE] Failed to load cached videos: {e}")
+            self._cached_videos = []
+        if not self._cached_videos:
+            self.open_menu()
+            return
+        labels = []
+        for row in self._cached_videos:
+            dur = self._format_duration(row["duration_seconds"], row["filesize_bytes"])
+            title = (row["title"] or row["source_id"] or "").strip() or "(untitled)"
+            if len(title) > 64:
+                title = title[:61] + "…"
+            labels.append(f"[{dur}]  {title}")
+        self.ui.show_menu("📼  Cached Videos", labels, selected_index=0,
+                          hint="Up/Down to select • OK to play • Back to return")
 
     def _open_radio_menu(self):
         self._in_radio_submenu = True
@@ -2251,14 +2357,40 @@ class RemoteMenuController:
                 self.engine.start_manual_session(self.resident or "radio", playlist_override=radio_item, start_index=0, ordered=True)
             return
 
-        if not self.playlist and not self._radio_stations:
+        # Cached-videos submenu — play the selected file directly via the
+        # engine, wrapped as a single cached-type playlist item.
+        if self._in_videos_submenu:
+            if 0 <= idx < len(self._cached_videos):
+                row = self._cached_videos[idx]
+                item = {
+                    "type": "cached",
+                    "id": int(row["id"]),
+                    "filepath": row["filepath"],
+                    "name": row["title"] or row["source_id"],
+                    "duration": row["duration_seconds"],
+                }
+                self.ui.hide_menu()
+                self._in_videos_submenu = False
+                self.engine.start_manual_session(
+                    self.resident or "cached",
+                    playlist_override=[item],
+                    start_index=0,
+                    ordered=True,
+                )
+            return
+
+        specials = getattr(self, "_active_specials", None) or self._current_special_items()
+        if not self.playlist and not self._radio_stations and not any(s.startswith("📼") for s in specials):
             self.open_menu()
             return
-        n_special = len(self._special_items)
+        n_special = len(specials)
         if idx < n_special:
-            label = self._special_items[idx]
+            label = specials[idx]
             if label == "📻  Radio":
                 self._open_radio_menu()
+                return
+            if label.startswith("📼"):
+                self._open_videos_menu()
                 return
             self.ui.hide_menu()
             if label == "▶  Play All":
@@ -2278,6 +2410,9 @@ class RemoteMenuController:
 
     def back(self, *_):
         if self._in_radio_submenu:
+            self.open_menu()
+            return
+        if self._in_videos_submenu:
             self.open_menu()
             return
         if self.ui.is_menu_visible():
