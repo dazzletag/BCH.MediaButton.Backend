@@ -225,6 +225,32 @@ def _detect_alsa_device():
         _log(f"[AUDIO] ALSA probe failed: {e}")
     return None
 
+# Connectivity guard used by cache-first playback fallback. Cached for 30s so
+# rapid track switches don't hammer youtube.com with HEAD requests.
+_WIFI_PROBE_TTL = 30.0
+_wifi_state = {"ok": False, "expires": 0.0}
+_wifi_lock = threading.Lock()
+
+
+def wifi_healthy(timeout: float = 2.0) -> bool:
+    """Lightweight HEAD probe to youtube.com. Returns True on 200/3xx. The result
+    is cached for 30 seconds so repeated calls during a track switch are cheap."""
+    now = time.time()
+    with _wifi_lock:
+        if now < _wifi_state["expires"]:
+            return _wifi_state["ok"]
+    ok = False
+    try:
+        r = requests.head("https://www.youtube.com/", timeout=timeout, allow_redirects=False)
+        ok = 200 <= r.status_code < 400
+    except Exception:
+        ok = False
+    with _wifi_lock:
+        _wifi_state["ok"] = ok
+        _wifi_state["expires"] = now + _WIFI_PROBE_TTL
+    return ok
+
+
 def pick_random_youtube_id(query, yt_dlp_bin, avoid_ids, max_candidates=20):
     # Search is public — no auth needed (oauth2/cookies only apply to stream resolution)
     search = f"ytsearch{max_candidates}:{query}"
@@ -1129,6 +1155,14 @@ class MediaPlayer:
         self._stop_current()
         return self._play_media(media_url, wid)
 
+    def play_cached_file(self, filepath: str, wid: int | None = None) -> bool:
+        """Play a pre-downloaded local file from the video cache. No yt-dlp,
+        no network resolution; falls through the same _play_media path as
+        radio + youtube."""
+        _log(f"[MEDIA] VLC cached file: {filepath}")
+        self._stop_current()
+        return self._play_media(filepath, wid)
+
     def play_background_radio(self, url: str) -> bool:
         """
         Start or keep a low-footprint radio stream running on a dedicated player.
@@ -1966,14 +2000,69 @@ class Engine:
                 self.ui.show_photo(media_url, on_ready=lambda: evt.set())
                 evt.wait(timeout=3)
                 ok = True
-            elif is_youtube:
-                self.player.stop_background_radio()
-                ok = self.player.play_youtube(media_url, resident=resident, wid=wid)
             else:
+                # Cacheable media (youtube search/URL, or a direct video URL).
+                # Decision flow:
+                #   1) Look up cached videos for this term; prefer LRU cached
+                #      file if one exists. On VLC error, fall through to stream.
+                #   2) Otherwise, only stream if wifi_healthy() passes.
+                #   3) Otherwise skip to the next track.
                 self.player.stop_background_radio()
-                ok = self.player.play_direct(media_url, wid=wid)
+                ok = False
+                cached_video_id = None
+                cached_filepath = None
+                cached_source_id = None
+                term_str = cache_db.canonical_term(q)
+                if term_str:
+                    tid = cache_db.term_id_for(resident, term_str)
+                    if tid is not None:
+                        for v in cache_db.videos_for_term(tid):
+                            fp = v["filepath"]
+                            if fp and os.path.exists(fp):
+                                cached_filepath = fp
+                                cached_source_id = v["source_id"]
+                                cached_video_id = int(v["id"])
+                                break
+
+                if cached_filepath:
+                    self.currently_playing_filepath = cached_filepath
+                    ok = self.player.play_cached_file(cached_filepath, wid=wid)
+                    if ok:
+                        cache_db.mark_video_played(cached_video_id)
+                        if cached_source_id:
+                            remember(resident, cached_source_id)
+                        _log(f"[CACHE] Hit for '{term_str}' (resident={resident}): "
+                             f"{os.path.basename(cached_filepath)}")
+                    else:
+                        # Cached file failed in VLC (corrupted? codec mismatch?).
+                        # Don't tombstone the row — fall through to streaming and
+                        # let GC's disk consistency sweep notice if the file is
+                        # truly gone next tick.
+                        self.currently_playing_filepath = None
+                        _log(f"[CACHE] Cached playback failed, attempting stream: "
+                             f"{os.path.basename(cached_filepath)}")
+
+                if not ok:
+                    if not wifi_healthy():
+                        _log(f"[CONNECTIVITY] No network and no usable cache for "
+                             f"'{term_str or media_url}' — skipping")
+                        self.is_playback_active.clear()
+                        continue
+                    if is_youtube:
+                        ok = self.player.play_youtube(media_url, resident=resident, wid=wid)
+                    else:
+                        ok = self.player.play_direct(media_url, wid=wid)
+                    if ok:
+                        # Streaming this term — nudge the downloader so a future
+                        # session can serve it from cache.
+                        try:
+                            video_downloader.kick()
+                        except Exception:
+                            pass
+
             if not ok:
                 self.is_playback_active.clear()
+                self.currently_playing_filepath = None
                 print("[ENGINE] VLC start failed")
                 time.sleep(1)
                 continue
