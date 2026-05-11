@@ -3,7 +3,15 @@ import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 // Note: nav/sign-out are handled by the parent AuthenticatedApp shell in App.tsx
 import { useApiClient } from "../hooks/useApiClient";
 import { appConfig } from "../config";
-import type { ManualPlaylistResponse, MediaItem, MediaType, ResidentList } from "../types";
+import type {
+  CachedVideo,
+  DeviceCacheCommand,
+  ManualPlaylistResponse,
+  MediaItem,
+  MediaType,
+  ResidentCacheResponse,
+  ResidentList,
+} from "../types";
 
 type UploadRequest = {
   fileName: string;
@@ -37,6 +45,44 @@ function formatDate(dateString?: string) {
   }).format(new Date(dateString));
 }
 
+function formatBytes(bytes?: number | null): string {
+  if (bytes == null || bytes <= 0) return "—";
+  const mb = bytes / 1024 / 1024;
+  if (mb < 1) return `${(bytes / 1024).toFixed(0)} KB`;
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  return `${(mb / 1024).toFixed(2)} GB`;
+}
+
+function formatDuration(seconds?: number | null, fallbackBytes?: number | null): string {
+  let s: number | null = null;
+  if (seconds != null && seconds > 0) {
+    s = Math.floor(seconds);
+  } else if (fallbackBytes != null && fallbackBytes > 0) {
+    // Same ~2 Mbps assumption the Pi's remote menu uses.
+    s = Math.max(1, Math.floor(fallbackBytes / 250_000));
+  }
+  if (s == null) return "?:??";
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  return `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+function formatRelative(iso?: string | null): string {
+  if (!iso) return "—";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms)) return "—";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
 export default function Dashboard() {
   const isAuthed = useIsAuthenticated();
   const { accounts } = useMsal();
@@ -66,6 +112,18 @@ export default function Dashboard() {
   const [urlInput, setUrlInput] = useState("");
   const [playlistUrls, setPlaylistUrls] = useState<string[]>([]);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+
+  // Cached videos on Pi (mirror surfaced by the Pi's snapshot push)
+  const [cacheVideos, setCacheVideos] = useState<CachedVideo[]>([]);
+  const [cacheDevices, setCacheDevices] = useState<string[]>([]);
+  const [cacheLastSeen, setCacheLastSeen] = useState<string | null>(null);
+  const [cacheCommands, setCacheCommands] = useState<DeviceCacheCommand[]>([]);
+  const [cacheLoading, setCacheLoading] = useState(false);
+  const [cacheError, setCacheError] = useState<string | null>(null);
+  const [pendingVideoActions, setPendingVideoActions] = useState<Record<string, "delete" | "play">>({});
+  const [forceTermInput, setForceTermInput] = useState("");
+  const [forceTermCount, setForceTermCount] = useState<number>(3);
+  const [forceTermBusy, setForceTermBusy] = useState(false);
 
   // Activity photo viewer state
   const [photoSasUrls, setPhotoSasUrls] = useState<Record<string, string>>({});
@@ -160,6 +218,118 @@ export default function Dashboard() {
       setLoadingResident(false);
     }
   }, [call, residentQuery]);
+
+  const loadResidentCache = useCallback(async (silent = false) => {
+    const r = residentQuery.trim();
+    if (!r) return;
+    if (!silent) setCacheLoading(true);
+    setCacheError(null);
+    try {
+      const data = await call<ResidentCacheResponse>({
+        url: `/api/admin/residents/${encodeURIComponent(r)}/cache`,
+        method: "GET",
+      });
+      setCacheVideos(data?.videos ?? []);
+      setCacheDevices(data?.devices ?? []);
+      setCacheLastSeen(data?.lastSeenAt ?? null);
+    } catch (err) {
+      console.error(err);
+      if (!silent) setCacheError("Could not load cached videos for that resident.");
+    } finally {
+      if (!silent) setCacheLoading(false);
+    }
+  }, [call, residentQuery]);
+
+  const loadCacheCommands = useCallback(async () => {
+    const r = residentQuery.trim();
+    if (!r) return;
+    try {
+      const data = await call<DeviceCacheCommand[]>({
+        url: `/api/admin/residents/${encodeURIComponent(r)}/cache/commands`,
+        method: "GET",
+      });
+      setCacheCommands(data ?? []);
+    } catch (err) {
+      console.error(err);
+    }
+  }, [call, residentQuery]);
+
+  const enqueueDeleteCached = useCallback(async (video: CachedVideo) => {
+    const r = residentQuery.trim();
+    if (!r) return;
+    if (!window.confirm(`Delete '${video.title}' from ${video.deviceId}?\nThe Pi removes the file on its next sync (~30 s).`)) return;
+    setPendingVideoActions((prev) => ({ ...prev, [video.id]: "delete" }));
+    try {
+      await call({
+        url: `/api/admin/residents/${encodeURIComponent(r)}/cache/${video.id}`,
+        method: "DELETE",
+      });
+      await loadCacheCommands();
+    } catch (err) {
+      console.error(err);
+      setCacheError("Failed to enqueue delete command.");
+      setPendingVideoActions((prev) => {
+        const next = { ...prev };
+        delete next[video.id];
+        return next;
+      });
+    }
+  }, [call, residentQuery, loadCacheCommands]);
+
+  const enqueuePlayCached = useCallback(async (video: CachedVideo) => {
+    const r = residentQuery.trim();
+    if (!r) return;
+    setPendingVideoActions((prev) => ({ ...prev, [video.id]: "play" }));
+    try {
+      await call({
+        url: `/api/admin/residents/${encodeURIComponent(r)}/cache/${video.id}/play`,
+        method: "POST",
+      });
+      await loadCacheCommands();
+    } catch (err) {
+      console.error(err);
+      setCacheError("Failed to enqueue play command.");
+      setPendingVideoActions((prev) => {
+        const next = { ...prev };
+        delete next[video.id];
+        return next;
+      });
+    }
+  }, [call, residentQuery, loadCacheCommands]);
+
+  const enqueueForceTerm = useCallback(async () => {
+    const r = residentQuery.trim();
+    const term = forceTermInput.trim();
+    if (!r || !term) return;
+    setForceTermBusy(true);
+    try {
+      await call({
+        url: `/api/admin/residents/${encodeURIComponent(r)}/cache/force-term`,
+        method: "POST",
+        data: { term, count: forceTermCount },
+      });
+      setForceTermInput("");
+      await loadCacheCommands();
+    } catch (err) {
+      console.error(err);
+      setCacheError("Failed to enqueue force-term command.");
+    } finally {
+      setForceTermBusy(false);
+    }
+  }, [call, residentQuery, forceTermInput, forceTermCount, loadCacheCommands]);
+
+  // Auto-refresh while a resident is selected: poll every 15 s for new
+  // snapshot pushes from the Pi and any newly-acked commands.
+  useEffect(() => {
+    if (!residentQuery.trim()) return;
+    loadResidentCache();
+    loadCacheCommands();
+    const t = window.setInterval(() => {
+      loadResidentCache(true);
+      loadCacheCommands();
+    }, 15000);
+    return () => window.clearInterval(t);
+  }, [residentQuery, loadResidentCache, loadCacheCommands]);
 
   const saveResidentManual = useCallback(
     async (overrideItems?: string[]) => {
@@ -537,6 +707,148 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+
+        {residentQuery.trim() && (
+          <div className="card glass">
+            <div className="card-header">
+              <p className="card-title">Cached videos on Pi</p>
+              <span className="tag">
+                {cacheDevices.length === 0
+                  ? "No device snapshot yet"
+                  : `${cacheVideos.length} video(s) • ${cacheDevices.length} device(s) • last seen ${formatRelative(cacheLastSeen)}`}
+              </span>
+            </div>
+
+            {cacheError && (
+              <div className="muted" style={{ color: "var(--warning)" }}>{cacheError}</div>
+            )}
+
+            {cacheLoading && cacheVideos.length === 0 ? (
+              <div className="muted">Loading.</div>
+            ) : cacheVideos.length === 0 ? (
+              <div className="muted">
+                Nothing cached for this resident yet. The Pi pushes its inventory every few minutes;
+                if you're sure videos are cached on the device, check that the Pi is online and that
+                the cache subsystem is running.
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+                  <thead>
+                    <tr style={{ textAlign: "left", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+                      <th style={{ padding: "8px 6px" }}>Title</th>
+                      <th style={{ padding: "8px 6px" }}>Term</th>
+                      <th style={{ padding: "8px 6px" }}>Duration</th>
+                      <th style={{ padding: "8px 6px" }}>Size</th>
+                      <th style={{ padding: "8px 6px" }}>Downloaded</th>
+                      <th style={{ padding: "8px 6px" }}>Last played</th>
+                      <th style={{ padding: "8px 6px" }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cacheVideos.map((v) => {
+                      const pending = pendingVideoActions[v.id];
+                      return (
+                        <tr key={v.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                          <td style={{ padding: "6px" }}>
+                            <div style={{ fontWeight: 600 }}>{v.title}</div>
+                            <div className="muted" style={{ fontSize: 12 }}>
+                              {v.source}:{v.sourceId}
+                              {v.protected ? " • protected" : ""}
+                            </div>
+                          </td>
+                          <td style={{ padding: "6px" }} className="muted">{v.term ?? "—"}</td>
+                          <td style={{ padding: "6px" }}>{formatDuration(v.durationSeconds, v.filesizeBytes)}</td>
+                          <td style={{ padding: "6px" }}>{formatBytes(v.filesizeBytes)}</td>
+                          <td style={{ padding: "6px" }} title={v.downloadedAt}>{formatRelative(v.downloadedAt)}</td>
+                          <td style={{ padding: "6px" }} title={v.lastPlayedAt ?? ""}>{formatRelative(v.lastPlayedAt)} {v.playCount ? `(×${v.playCount})` : ""}</td>
+                          <td style={{ padding: "6px", whiteSpace: "nowrap" }}>
+                            <button
+                              className="btn ghost"
+                              type="button"
+                              style={{ padding: "4px 10px", marginRight: 6 }}
+                              disabled={!!pending}
+                              onClick={() => enqueuePlayCached(v)}
+                              title="Start a session on the Pi with just this video"
+                            >
+                              {pending === "play" ? "queued." : "▶ Play"}
+                            </button>
+                            <button
+                              className="btn ghost"
+                              type="button"
+                              style={{ padding: "4px 10px" }}
+                              disabled={!!pending || v.protected}
+                              onClick={() => enqueueDeleteCached(v)}
+                              title={v.protected ? "Protected uploads cannot be deleted" : "Remove from Pi on next sync"}
+                            >
+                              {pending === "delete" ? "queued." : "🗑 Delete"}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div style={{ marginTop: 16, borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 12 }}>
+              <div className="card-header" style={{ marginBottom: 6 }}>
+                <p className="card-title" style={{ fontSize: 14 }}>Force download for a term</p>
+                <span className="tag">Pi fetches more candidates next sync</span>
+              </div>
+              <div className="form-row" style={{ alignItems: "flex-end" }}>
+                <label className="grid" style={{ flex: 3 }}>
+                  <span className="muted">Search term (e.g. "Vera Lynn songs")</span>
+                  <input
+                    className="input"
+                    value={forceTermInput}
+                    onChange={(e) => setForceTermInput(e.target.value)}
+                    placeholder="Vera Lynn songs"
+                  />
+                </label>
+                <label className="grid" style={{ flex: 1 }}>
+                  <span className="muted">Count</span>
+                  <input
+                    className="input"
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={forceTermCount}
+                    onChange={(e) => setForceTermCount(Math.max(1, Math.min(10, Number(e.target.value) || 3)))}
+                  />
+                </label>
+                <button
+                  className="btn primary"
+                  type="button"
+                  disabled={forceTermBusy || !forceTermInput.trim() || cacheDevices.length === 0}
+                  onClick={enqueueForceTerm}
+                >
+                  {forceTermBusy ? "Queueing." : "Queue downloads"}
+                </button>
+              </div>
+              {cacheDevices.length === 0 && (
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Needs at least one device assigned to this resident before download commands can be enqueued.
+                </div>
+              )}
+            </div>
+
+            {cacheCommands.length > 0 && (
+              <div style={{ marginTop: 12, fontSize: 13 }}>
+                <div className="muted" style={{ marginBottom: 4 }}>Pending commands</div>
+                <div className="list" style={{ gap: 2 }}>
+                  {cacheCommands.map((c) => (
+                    <div key={c.id} className="row" style={{ fontSize: 12 }}>
+                      <span>{c.commandType} → <span className="muted">{c.deviceId}</span></span>
+                      <span className="tag">{c.status} • {formatRelative(c.createdAt)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="split">
           <div className="card glass">
