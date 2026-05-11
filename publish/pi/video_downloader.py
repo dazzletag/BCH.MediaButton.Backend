@@ -227,13 +227,16 @@ def download_candidate(
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
     for extractor in _extractor_chain():
+        # yt-dlp uses <name>.<ext>.part for in-progress files by default and
+        # renames to the final name on success. We rely on that so the GC's
+        # disk-consistency sweep doesn't match an in-flight download as a
+        # dangling .mp4 and delete it mid-write.
         cmd = [
             YT_DLP_BIN,
             "-f", YT_FORMAT,
             "--merge-output-format", "mp4",
             "-o", out_path,
             "--no-progress",
-            "--no-part",
             "--no-playlist",
             "--no-mtime",
         ]
@@ -255,18 +258,27 @@ def download_candidate(
             subprocess.check_call(
                 cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, timeout=1800,
             )
-            if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
-                return True, title or candidate.title_hint or candidate.source_id, duration
+            if os.path.exists(out_path):
+                size = os.path.getsize(out_path)
+                if size >= cache_db.VIDEO_CACHE_MIN_FILE_SIZE_BYTES:
+                    return True, title or candidate.title_hint or candidate.source_id, duration
+                # Real video formats weren't available; yt-dlp's /b fallback
+                # grabbed a storyboard or audio-only stub. Treat as failure.
+                _log(f"[DOWNLOADER] yt-dlp produced an undersize file "
+                     f"({size} B < {cache_db.VIDEO_CACHE_MIN_FILE_SIZE_BYTES} B); "
+                     f"discarding and trying next extractor")
         except subprocess.TimeoutExpired:
             _log("[DOWNLOADER] yt-dlp timed out — trying next extractor")
         except subprocess.CalledProcessError as e:
             _log(f"[DOWNLOADER] yt-dlp failed (exit {e.returncode}) — trying next extractor")
-        # Clean up any partial output before the next attempt
-        try:
-            if os.path.exists(out_path):
-                os.remove(out_path)
-        except Exception:
-            pass
+        # Clean up the rejected/partial output (and any leftover .part) before
+        # the next attempt.
+        for path in (out_path, out_path + ".part"):
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except Exception:
+                pass
 
     return False, None, None
 
@@ -372,16 +384,24 @@ class DownloadWorker:
         for cand in candidates:
             out_path = os.path.join(cache_db.VIDEO_CACHE_DIR, f"{cand.source}_{cand.source_id}.mp4")
             if os.path.exists(out_path):
-                # File already on disk but somehow not in DB — record it and move on.
-                title = cand.title_hint or cand.source_id
-                vid_id = cache_db.register_video(
-                    resident, cand.source, cand.source_id, title, out_path,
-                    filesize_bytes=os.path.getsize(out_path),
-                )
-                cache_db.link_video_to_term(term_id, vid_id)
-                cache_db.record_term_success(term_id)
-                _log(f"[DOWNLOADER] Recovered existing file for term '{term}': {os.path.basename(out_path)}")
-                return
+                size = os.path.getsize(out_path)
+                if size >= cache_db.VIDEO_CACHE_MIN_FILE_SIZE_BYTES:
+                    # File already on disk but somehow not in DB — record it.
+                    title = cand.title_hint or cand.source_id
+                    vid_id = cache_db.register_video(
+                        resident, cand.source, cand.source_id, title, out_path,
+                        filesize_bytes=size,
+                    )
+                    cache_db.link_video_to_term(term_id, vid_id)
+                    cache_db.record_term_success(term_id)
+                    _log(f"[DOWNLOADER] Recovered existing file for term '{term}': {os.path.basename(out_path)}")
+                    return
+                # Undersize leftover from a previous failed attempt; clear it
+                # so the download below isn't blocked by a stale file.
+                try:
+                    os.remove(out_path)
+                except Exception:
+                    pass
 
             throttle = self.playback_active.is_set()
             ok, title, duration = download_candidate(cand, out_path, throttle=throttle)

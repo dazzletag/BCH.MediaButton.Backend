@@ -36,6 +36,15 @@ VIDEO_CACHE_DIR = os.getenv(
 VIDEO_CACHE_PER_TERM_CAP = int(os.getenv("VIDEO_CACHE_PER_TERM_CAP", "5"))
 VIDEO_CACHE_MIN_AGE_DAYS = int(os.getenv("VIDEO_CACHE_MIN_AGE_DAYS", "7"))
 
+# Minimum file size for a download to count as a real video. yt-dlp's /b
+# fallback in the format string can yield image-only storyboards or audio-only
+# m4a tracks when YouTube's PO-token gate blocks the real video streams; those
+# are typically a few tens of KB and would otherwise occupy a cache slot,
+# masquerade as a cache hit, fail VLC playback, and force a stream fallback.
+# 500 KB comfortably exceeds any storyboard but stays below even very short
+# real clips.
+VIDEO_CACHE_MIN_FILE_SIZE_BYTES = int(os.getenv("VIDEO_CACHE_MIN_FILE_SIZE_BYTES", "512000"))
+
 
 def _log(msg: str):
     try:

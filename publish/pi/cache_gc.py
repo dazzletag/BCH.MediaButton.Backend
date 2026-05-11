@@ -86,7 +86,45 @@ def run_cap_eviction(currently_playing_filepath: str | None = None) -> int:
 
 
 # -------------------------------------------------------------------------
-# Sweep 3: disk consistency (file on disk but no DB row)
+# Sweep 3: undersize entries (real video formats unavailable at download time)
+# -------------------------------------------------------------------------
+def run_undersize_sweep(currently_playing_filepath: str | None = None) -> int:
+    """
+    Remove cached_videos whose on-disk size is below
+    VIDEO_CACHE_MIN_FILE_SIZE_BYTES. These are usually image-only storyboards
+    or audio-only fallbacks yt-dlp grabbed when PO-token gating blocked real
+    video streams — they pass our existence check but fail VLC playback.
+    Protected (family) rows are exempt regardless of size.
+    """
+    threshold = cache_db.VIDEO_CACHE_MIN_FILE_SIZE_BYTES
+    removed = 0
+    with cache_db._lock:
+        rows = list(cache_db.get_conn().execute(
+            "SELECT id, filepath, protected FROM cached_videos"
+        ))
+    for r in rows:
+        if int(r["protected"]):
+            continue
+        fp = r["filepath"]
+        if currently_playing_filepath and fp == currently_playing_filepath:
+            continue
+        try:
+            if not fp or not os.path.exists(fp):
+                continue
+            if os.path.getsize(fp) >= threshold:
+                continue
+        except Exception:
+            continue
+        _safe_delete_file(fp)
+        cache_db.delete_video(int(r["id"]))
+        removed += 1
+    if removed:
+        _log(f"[GC] Removed {removed} undersize cached video(s)")
+    return removed
+
+
+# -------------------------------------------------------------------------
+# Sweep 4: disk consistency (file on disk but no DB row)
 # -------------------------------------------------------------------------
 def run_disk_consistency_sweep(currently_playing_filepath: str | None = None) -> int:
     cache_dir = cache_db.VIDEO_CACHE_DIR
@@ -113,10 +151,11 @@ def run_disk_consistency_sweep(currently_playing_filepath: str | None = None) ->
 # Full sweep
 # -------------------------------------------------------------------------
 def run_full_sweep(currently_playing_filepath: str | None = None) -> dict[str, int]:
-    """Run all three sweeps. Returns counts per sweep for logging/tests."""
+    """Run every sweep. Returns counts per sweep for logging/tests."""
     return {
         "orphans": run_orphan_sweep(currently_playing_filepath),
         "evicted": run_cap_eviction(currently_playing_filepath),
+        "undersize": run_undersize_sweep(currently_playing_filepath),
         "dangling": run_disk_consistency_sweep(currently_playing_filepath),
     }
 
