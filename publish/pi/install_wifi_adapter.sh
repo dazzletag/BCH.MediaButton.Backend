@@ -52,23 +52,18 @@ if dkms status 2>/dev/null | grep -qi "8821au"; then
 fi
 
 # ── 3. Install build dependencies ─────────────────────────────────────────────
-info "Installing kernel headers and build tools..."
-apt-get update -qq
-apt-get install -y --no-install-recommends \
-  dkms \
-  git \
-  build-essential \
-  bc \
-  2>/dev/null || true
+info "Updating package lists..."
+apt-get update || die "apt-get update failed. Check the Pi's network connection."
 
+info "Installing kernel headers and build tools..."
 # Raspberry Pi OS ships raspberrypi-kernel-headers; standard Debian uses linux-headers-<version>
-if apt-get install -y --no-install-recommends raspberrypi-kernel-headers 2>/dev/null; then
-  success "Kernel headers installed (raspberrypi-kernel-headers)."
+if apt-get install -y dkms git raspberrypi-kernel-headers; then
+  success "Build dependencies and kernel headers installed."
 else
   warn "raspberrypi-kernel-headers not available; trying linux-headers-$(uname -r)..."
-  apt-get install -y --no-install-recommends "linux-headers-$(uname -r)" 2>/dev/null \
-    || die "Could not install kernel headers. Run 'sudo apt-get install linux-headers-$(uname -r)' manually."
-  success "Kernel headers installed (linux-headers-$(uname -r))."
+  apt-get install -y dkms git build-essential bc "linux-headers-$(uname -r)" \
+    || die "Could not install build dependencies. Run 'sudo apt-get install dkms git linux-headers-$(uname -r)' manually."
+  success "Build dependencies and kernel headers installed (linux-headers-$(uname -r))."
 fi
 
 # ── 4. Clone driver source ────────────────────────────────────────────────────
