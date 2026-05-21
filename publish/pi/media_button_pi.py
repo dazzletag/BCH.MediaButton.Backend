@@ -522,6 +522,13 @@ def llm_build_big_playlist(
                or profile.get("Date of Birth") or "")
         gender = profile.get("gender") or profile.get("Gender") or ""
 
+    profile_keys = list((profile or {}).keys())
+    print(f"[LLM] Building playlist for {resident_name}: "
+          f"{len(profile_keys)} This Is Me field(s), dob={dob!r}, gender={gender!r}")
+    if profile_keys:
+        print(f"[LLM] This Is Me keys: {', '.join(profile_keys[:10])}"
+              + (f" ... (+{len(profile_keys)-10} more)" if len(profile_keys) > 10 else ""))
+
     payload = {
         "residentName": resident_name,
         "surveyRow": survey_row,
