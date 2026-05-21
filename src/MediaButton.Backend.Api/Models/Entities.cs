@@ -38,10 +38,16 @@ public class Device
     public string? ResidentKey { get; set; }
 
     /// <summary>
-    /// Mobizio case ID for the assigned resident.
+    /// Mobizio numeric case ID for the assigned resident.
     /// </summary>
     [MaxLength(100)]
     public string? MobizioId { get; set; }
+
+    /// <summary>
+    /// Mobizio tenant case ID (e.g. CASE-29959) — required for case-scoped API endpoints.
+    /// </summary>
+    [MaxLength(100)]
+    public string? MobizioTenantId { get; set; }
 }
 
 public class Playlist
@@ -216,8 +222,14 @@ public class ResidentPlaylistSnapshot
     public DateTimeOffset? LastPolledAt { get; set; }
 
     /// <summary>
-    /// Mobizio case ID for this resident (populated by the Pi setup wizard).
+    /// Mobizio numeric case ID for this resident (populated by the Pi setup wizard).
     /// </summary>
     [MaxLength(100)]
     public string? MobizioId { get; set; }
+
+    /// <summary>
+    /// Mobizio tenant case ID (e.g. CASE-29959) — required for case-scoped API endpoints.
+    /// </summary>
+    [MaxLength(100)]
+    public string? MobizioTenantId { get; set; }
 }

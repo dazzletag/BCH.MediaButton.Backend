@@ -562,6 +562,14 @@ def llm_build_big_playlist(
         if len(uniq) > want:
             uniq = uniq[:want]
         return uniq
+    except requests.HTTPError as e:
+        body = ""
+        try:
+            body = e.response.text[:500]
+        except Exception:
+            pass
+        print(f"[LLM] big playlist failed: {e}" + (f"\n[LLM] Response body: {body}" if body else ""))
+        return []
     except Exception as e:
         print(f"[LLM] big playlist failed: {e}")
         return []

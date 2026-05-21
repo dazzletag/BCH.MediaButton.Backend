@@ -9,7 +9,7 @@ public record ResidentMobizioProfile(
     string? Gender,
     IReadOnlyDictionary<string, string> FormFields);
 
-public record MobizioResidentSummary(string Name, string CaseId, string? Dob);
+public record MobizioResidentSummary(string Name, string CaseId, string? TenantCaseId, string? Dob);
 
 public class MobizioService(IConfiguration configuration, IHttpClientFactory httpFactory, ILogger<MobizioService> logger)
 {
@@ -45,9 +45,10 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
             var name = $"{firstName} {lastName}".Trim();
             if (string.IsNullOrWhiteSpace(name)) continue;
 
-            var caseId = item?["id"]?.ToString() ?? "";
-            var dob    = customer?["dob"]?.GetValue<string>();
-            residents.Add(new MobizioResidentSummary(name, caseId, dob));
+            var caseId       = item?["id"]?.ToString() ?? "";
+            var tenantCaseId = item?["tenantCaseId"]?.GetValue<string>();
+            var dob          = customer?["dob"]?.GetValue<string>();
+            residents.Add(new MobizioResidentSummary(name, caseId, tenantCaseId, dob));
         }
 
         return residents.OrderBy(r => r.Name).ToList();
@@ -61,10 +62,10 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
         http.Timeout = TimeSpan.FromSeconds(60);
         http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        var (caseId, _, dob, gender) = await FindCaseAsync(http, residentName);
-        if (caseId is null) return null;
+        var (caseId, tenantCaseId, dob, gender) = await FindCaseAsync(http, residentName);
+        if (caseId is null || tenantCaseId is null) return null;
 
-        var fields = await GetThisIsMeFieldsAsync(http, caseId);
+        var fields = await GetThisIsMeFieldsAsync(http, caseId, tenantCaseId);
         return new ResidentMobizioProfile(residentName, dob, gender, fields);
     }
 
@@ -72,7 +73,8 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
     /// Fetch the This Is Me profile using a known Mobizio case ID, bypassing the
     /// full-list name search. Used when the case ID was captured during device setup.
     /// </summary>
-    public async Task<ResidentMobizioProfile?> GetResidentProfileByCaseIdAsync(string caseId, string residentName)
+    public async Task<ResidentMobizioProfile?> GetResidentProfileByCaseIdAsync(
+        string caseId, string tenantCaseId, string residentName)
     {
         var token = await GetTokenAsync();
 
@@ -80,7 +82,7 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
         http.Timeout = TimeSpan.FromSeconds(60);
         http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        var fields = await GetThisIsMeFieldsAsync(http, caseId);
+        var fields = await GetThisIsMeFieldsAsync(http, caseId, tenantCaseId);
         if (fields.Count == 0) return null;
         return new ResidentMobizioProfile(residentName, null, null, fields);
     }
@@ -247,7 +249,7 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
                 if (submittedFormId is null) continue;
 
                 var elemResp = await http.GetAsync(
-                    $"{ApiBase}/v3/submittedForms/{submittedFormId}/elements");
+                    $"{ApiBase}/v3/cases/{tenantCaseId}/submittedForms/{submittedFormId}/elements");
                 if (!elemResp.IsSuccessStatusCode) continue;
 
                 var elemBody = await elemResp.Content.ReadAsStringAsync();
@@ -306,7 +308,7 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
     }
 
     private async Task<IReadOnlyDictionary<string, string>> GetThisIsMeFieldsAsync(
-        HttpClient http, string caseId)
+        HttpClient http, string caseId, string tenantCaseId)
     {
         var versionsResp = await http.GetAsync(
             $"{ApiBase}/v3/forms/{FormId}/versions?start=0&limit=100&column=id&direction=1");
@@ -334,7 +336,7 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
                 if (submittedFormId is null) continue;
 
                 var elemResp = await http.GetAsync(
-                    $"{ApiBase}/v3/submittedForms/{submittedFormId}/elements");
+                    $"{ApiBase}/v3/cases/{tenantCaseId}/submittedForms/{submittedFormId}/elements");
                 if (!elemResp.IsSuccessStatusCode) continue;
 
                 // Elements may come back as an array or as { results: [...] }

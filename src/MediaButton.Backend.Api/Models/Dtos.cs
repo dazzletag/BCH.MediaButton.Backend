@@ -54,7 +54,7 @@ public record DeviceCreateRequest(string DeviceId, string? DisplayName);
 
 public record DeviceRenameRequest(string? DisplayName);
 
-public record RegisterResidentRequest(string ResidentName, string? CaseId);
+public record RegisterResidentRequest(string ResidentName, string? CaseId, string? TenantCaseId);
 
 // -------------------------------------------------------------------------
 // Pi-local video cache: snapshot push + admin queries + command queue

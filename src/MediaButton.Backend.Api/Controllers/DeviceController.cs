@@ -146,6 +146,7 @@ public class DeviceController : ControllerBase
 
         device.ResidentKey = residentKey;
         device.MobizioId = request.CaseId?.Trim();
+        device.MobizioTenantId = request.TenantCaseId?.Trim();
 
         // Ensure resident exists in the playlist snapshots table
         var snapshot = await _db.ResidentPlaylists.FirstOrDefaultAsync(r => r.Resident == residentKey);
@@ -156,6 +157,8 @@ public class DeviceController : ControllerBase
         }
         if (!string.IsNullOrWhiteSpace(request.CaseId))
             snapshot.MobizioId = request.CaseId.Trim();
+        if (!string.IsNullOrWhiteSpace(request.TenantCaseId))
+            snapshot.MobizioTenantId = request.TenantCaseId.Trim();
 
         await _db.SaveChangesAsync();
         return Ok(new { residentKey, mobizioId = device.MobizioId });
@@ -182,16 +185,18 @@ public class DeviceController : ControllerBase
         // full-list name search on every profile fetch.
         var device = await _db.Devices.FirstOrDefaultAsync(d => d.DeviceId == deviceId);
         var mobizioId = device?.MobizioId;
-        if (string.IsNullOrWhiteSpace(mobizioId))
+        var mobizioTenantId = device?.MobizioTenantId;
+        if (string.IsNullOrWhiteSpace(mobizioId) || string.IsNullOrWhiteSpace(mobizioTenantId))
         {
             var snap = await _db.ResidentPlaylists.FirstOrDefaultAsync(r => r.Resident == residentKey);
-            mobizioId = snap?.MobizioId;
+            if (string.IsNullOrWhiteSpace(mobizioId)) mobizioId = snap?.MobizioId;
+            if (string.IsNullOrWhiteSpace(mobizioTenantId)) mobizioTenantId = snap?.MobizioTenantId;
         }
 
         try
         {
-            ResidentMobizioProfile? profile = !string.IsNullOrWhiteSpace(mobizioId)
-                ? await mobizio.GetResidentProfileByCaseIdAsync(mobizioId, residentKey)
+            ResidentMobizioProfile? profile = !string.IsNullOrWhiteSpace(mobizioId) && !string.IsNullOrWhiteSpace(mobizioTenantId)
+                ? await mobizio.GetResidentProfileByCaseIdAsync(mobizioId, mobizioTenantId, residentKey)
                 : await mobizio.GetResidentProfileAsync(residentKey);
 
             if (profile is null)
