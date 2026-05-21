@@ -68,6 +68,23 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
         return new ResidentMobizioProfile(residentName, dob, gender, fields);
     }
 
+    /// <summary>
+    /// Fetch the This Is Me profile using a known Mobizio case ID, bypassing the
+    /// full-list name search. Used when the case ID was captured during device setup.
+    /// </summary>
+    public async Task<ResidentMobizioProfile?> GetResidentProfileByCaseIdAsync(string caseId, string residentName)
+    {
+        var token = await GetTokenAsync();
+
+        var http = httpFactory.CreateClient();
+        http.Timeout = TimeSpan.FromSeconds(60);
+        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var fields = await GetThisIsMeFieldsAsync(http, caseId);
+        if (fields.Count == 0) return null;
+        return new ResidentMobizioProfile(residentName, null, null, fields);
+    }
+
     private async Task<string> GetTokenAsync()
     {
         using var http = httpFactory.CreateClient();

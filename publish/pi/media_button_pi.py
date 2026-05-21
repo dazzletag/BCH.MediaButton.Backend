@@ -885,8 +885,10 @@ def fetch_resident_profile_from_api(resident: str) -> dict:
                     form_fields.setdefault("Gender", data["gender"])
                 with open(cache_file, "w") as f:
                     json.dump(form_fields, f)
-                print(f"[PROFILE] Fetched {len(form_fields)} field(s) for {resident} from Mobizio API")
+                print(f"[PROFILE] Found {resident} in Mobizio ({len(form_fields)} field(s))")
                 return form_fields
+            elif r.status_code == 404:
+                print(f"[PROFILE] {resident} not found in Mobizio — no profile data from API")
             else:
                 print(f"[PROFILE] API returned {r.status_code} for {resident}")
         except Exception as e:
@@ -897,11 +899,12 @@ def fetch_resident_profile_from_api(resident: str) -> dict:
         try:
             with open(cache_file) as f:
                 data = json.load(f)
-            print(f"[PROFILE] Using cached profile for {resident}")
+            print(f"[PROFILE] Using cached profile for {resident} ({len(data)} field(s))")
             return data
         except Exception as e:
             print(f"[PROFILE] Cache read failed: {e}")
 
+    print(f"[PROFILE] No profile data found for {resident} — playlist will be generic")
     return {}
 
 # =========================

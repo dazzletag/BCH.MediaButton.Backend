@@ -178,9 +178,22 @@ public class DeviceController : ControllerBase
         if (string.IsNullOrWhiteSpace(residentKey))
             return BadRequest("residentKey is required.");
 
+        // Prefer the Mobizio case ID captured during setup — avoids an expensive
+        // full-list name search on every profile fetch.
+        var device = await _db.Devices.FirstOrDefaultAsync(d => d.DeviceId == deviceId);
+        var mobizioId = device?.MobizioId;
+        if (string.IsNullOrWhiteSpace(mobizioId))
+        {
+            var snap = await _db.ResidentPlaylists.FirstOrDefaultAsync(r => r.Resident == residentKey);
+            mobizioId = snap?.MobizioId;
+        }
+
         try
         {
-            var profile = await mobizio.GetResidentProfileAsync(residentKey);
+            ResidentMobizioProfile? profile = !string.IsNullOrWhiteSpace(mobizioId)
+                ? await mobizio.GetResidentProfileByCaseIdAsync(mobizioId, residentKey)
+                : await mobizio.GetResidentProfileAsync(residentKey);
+
             if (profile is null)
                 return NotFound($"No Mobizio profile found for '{residentKey}'.");
             return Ok(profile);
