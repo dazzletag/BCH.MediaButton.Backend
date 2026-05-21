@@ -292,7 +292,18 @@ class MediaUI:
         self.video_holder.update_idletasks()
         self.root.update()
 
-    
+        # Steal input focus from the desktop immediately and again after the WM
+        # settles — without this the desktop retains keyboard focus and remote-
+        # control OK/Enter events land on whatever the cursor is hovering over.
+        self.root.focus_force()
+        self.root.after(1000, self.root.focus_force)
+        self.root.after(3000, self.root.focus_force)
+
+        # Re-claim focus whenever the window manager hands it elsewhere
+        # (e.g. a system notification briefly takes it).
+        self.root.bind("<FocusOut>", lambda e: self.root.after(200, self.root.focus_force))
+
+
     def schedule_loading_gif(self, delay_ms=500):
         # Cancel any previous schedules
         if self._gif_delay_id:
