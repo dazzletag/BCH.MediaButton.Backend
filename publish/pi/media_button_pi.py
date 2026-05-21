@@ -881,7 +881,7 @@ def fetch_resident_profile_from_api(resident: str) -> dict:
         try:
             url = (f"{API_BASE}/api/device/{urllib.parse.quote(DEVICE_ID)}"
                    f"/resident-profile?residentKey={urllib.parse.quote(resident)}")
-            r = requests.get(url, headers=_device_headers(), timeout=20)
+            r = requests.get(url, headers=_device_headers(), timeout=60)
             if r.status_code == 200:
                 data = r.json()
                 # API returns ResidentMobizioProfile: { name, dob, gender, formFields: {...} }
