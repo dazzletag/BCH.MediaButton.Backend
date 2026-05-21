@@ -515,11 +515,12 @@ def llm_build_big_playlist(
     """
     Send the resident data to the Power Automate flow and return a playlist.
     """
-    dob = None
-    gender = None
+    dob = ""
+    gender = ""
     if profile:
-        dob = profile.get("dob") or profile.get("DOB") or profile.get("Dob")
-        gender = profile.get("gender") or profile.get("Gender")
+        dob = (profile.get("dob") or profile.get("DOB") or profile.get("Dob")
+               or profile.get("Date of Birth") or "")
+        gender = profile.get("gender") or profile.get("Gender") or ""
 
     payload = {
         "residentName": resident_name,
