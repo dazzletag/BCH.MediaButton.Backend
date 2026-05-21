@@ -190,7 +190,7 @@
             full-list name search. Used when the case ID was captured during device setup.
             </summary>
         </member>
-        <member name="M:MediaButtonBackend.Services.MobizioService.GetActivityPhotoUrlsAsync(System.String,System.Collections.Generic.List{System.String},System.Collections.Generic.HashSet{System.Int32},System.Nullable{System.Int32})">
+        <member name="M:MediaButtonBackend.Services.MobizioService.GetActivityPhotoUrlsAsync(System.String,System.Collections.Generic.List{System.String},System.Collections.Generic.HashSet{System.Int32},System.Nullable{System.Int32},System.String,System.String)">
             <summary>
             Returns up to <see cref="P:MediaButtonBackend.Services.MobizioService.ActivityPhotoLimit"/> (elementId, downloadUrl) pairs from
             the most recent activity record form submissions for the named resident.

@@ -67,6 +67,13 @@ public class AdminResidentMobizioController : ControllerBase
         _log.LogInformation("[ActivityPhotos] Starting import for resident: {Resident}", residentKey);
         var diag = new List<string>();
 
+        // Look up stored Mobizio IDs to skip the expensive 5000-case list search
+        var snapshot = await _db.ResidentPlaylists.FirstOrDefaultAsync(r => r.Resident == residentKey);
+        var knownCaseId = snapshot?.MobizioId;
+        var knownTenantCaseId = snapshot?.MobizioTenantId;
+        if (!string.IsNullOrWhiteSpace(knownCaseId))
+            diag.Add($"Found stored Mobizio IDs: caseId={knownCaseId}, tenantCaseId={knownTenantCaseId}");
+
         // Collect already-imported element IDs so the service can skip them and fetch the next batch
         var safeResidentForQuery = residentKey.Replace("/", "-").Replace("\\", "-");
         var blobPrefix = $"photo/{safeResidentForQuery}/mobizio/elem_";
@@ -89,7 +96,8 @@ public class AdminResidentMobizioController : ControllerBase
         IReadOnlyList<(int ElementId, byte[] Data, string ContentType)> photos;
         try
         {
-            photos = await _mobizio.GetActivityPhotoUrlsAsync(residentKey, diag, alreadyImported);
+            photos = await _mobizio.GetActivityPhotoUrlsAsync(residentKey, diag, alreadyImported,
+                knownCaseId: knownCaseId, knownTenantCaseId: knownTenantCaseId);
         }
         catch (Exception ex)
         {

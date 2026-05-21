@@ -165,7 +165,8 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
     /// the most recent activity record form submissions for the named resident.
     /// </summary>
     public async Task<IReadOnlyList<(int ElementId, byte[] Data, string ContentType)>> GetActivityPhotoUrlsAsync(
-        string residentName, List<string> diag, HashSet<int>? skipElementIds = null, int? maxPhotos = null)
+        string residentName, List<string> diag, HashSet<int>? skipElementIds = null, int? maxPhotos = null,
+        string? knownCaseId = null, string? knownTenantCaseId = null)
     {
         var limit = maxPhotos ?? ActivityPhotoLimit;
         var token = await GetTokenAsync();
@@ -174,7 +175,18 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
         http.Timeout = TimeSpan.FromSeconds(60);
         http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        var (caseId, tenantCaseId, _, _) = await FindCaseAsync(http, residentName);
+        string? caseId = knownCaseId;
+        string? tenantCaseId = knownTenantCaseId;
+
+        if (string.IsNullOrWhiteSpace(caseId) || string.IsNullOrWhiteSpace(tenantCaseId))
+        {
+            (caseId, tenantCaseId, _, _) = await FindCaseAsync(http, residentName);
+        }
+        else
+        {
+            diag.Add($"Using stored Mobizio IDs: caseId={caseId}, tenantCaseId={tenantCaseId}");
+        }
+
         if (caseId is null || tenantCaseId is null)
         {
             diag.Add($"Could not find Mobizio case for resident '{residentName}'");
