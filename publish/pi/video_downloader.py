@@ -134,6 +134,16 @@ def resolve_download_candidates(term: str, resident: str, item_blob: dict | None
                                       download_url=f"https://www.youtube.com/watch?v={vid}")]
             return []
 
+    # If the term itself is a URL (e.g. a live radio stream), there's nothing
+    # to cache — skip rather than searching YouTube for the URL string.
+    if term.startswith("http://") or term.startswith("https://"):
+        if "youtube.com" in term or "youtu.be" in term:
+            vid = _extract_youtube_id_from_url(term)
+            if vid and vid not in avoid:
+                return [Candidate(source="yt", source_id=vid,
+                                  download_url=f"https://www.youtube.com/watch?v={vid}")]
+        return []
+
     # Default: treat the term string as a YouTube search query.
     vid = _pick_random_youtube_id(term, avoid)
     if not vid:
