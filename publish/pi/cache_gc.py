@@ -148,6 +148,55 @@ def run_disk_consistency_sweep(currently_playing_filepath: str | None = None) ->
 
 
 # -------------------------------------------------------------------------
+# Sweep 5: total disk cap eviction (LRU across all residents)
+# -------------------------------------------------------------------------
+def run_disk_cap_sweep(currently_playing_filepath: str | None = None) -> int:
+    """
+    Evict the least-recently-played non-protected videos until the total
+    size of VIDEO_CACHE_DIR is under VIDEO_CACHE_MAX_BYTES.
+    Set VIDEO_CACHE_MAX_GB=0 to disable. Returns the number evicted.
+    """
+    cap = cache_db.VIDEO_CACHE_MAX_BYTES
+    if cap <= 0:
+        return 0
+
+    cache_dir = cache_db.VIDEO_CACHE_DIR
+    if not os.path.isdir(cache_dir):
+        return 0
+
+    total = sum(
+        os.path.getsize(os.path.join(cache_dir, f))
+        for f in os.listdir(cache_dir)
+        if f.endswith(".mp4") and os.path.isfile(os.path.join(cache_dir, f))
+    )
+    if total <= cap:
+        return 0
+
+    _log(f"[GC] Cache is {total / 1024**3:.1f} GB, cap is {cap / 1024**3:.1f} GB — evicting LRU videos")
+    removed = 0
+    for v in cache_db.all_evictable_videos_lru():
+        if total <= cap:
+            break
+        fp = v["filepath"]
+        if currently_playing_filepath and fp == currently_playing_filepath:
+            continue
+        size = 0
+        try:
+            if fp and os.path.exists(fp):
+                size = os.path.getsize(fp)
+        except Exception:
+            pass
+        _safe_delete_file(fp)
+        cache_db.delete_video(int(v["id"]))
+        total -= size
+        removed += 1
+    if removed:
+        _log(f"[GC] Disk cap eviction removed {removed} video(s); "
+             f"cache now ~{total / 1024**3:.1f} GB")
+    return removed
+
+
+# -------------------------------------------------------------------------
 # Full sweep
 # -------------------------------------------------------------------------
 def run_full_sweep(currently_playing_filepath: str | None = None) -> dict[str, int]:
@@ -157,6 +206,7 @@ def run_full_sweep(currently_playing_filepath: str | None = None) -> dict[str, i
         "evicted": run_cap_eviction(currently_playing_filepath),
         "undersize": run_undersize_sweep(currently_playing_filepath),
         "dangling": run_disk_consistency_sweep(currently_playing_filepath),
+        "disk_cap": run_disk_cap_sweep(currently_playing_filepath),
     }
 
 

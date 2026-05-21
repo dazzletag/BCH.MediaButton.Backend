@@ -2060,9 +2060,13 @@ class Engine:
                 # Cacheable media (youtube search/URL, or a direct video URL).
                 # Decision flow:
                 #   1) Look up cached videos for this term; prefer LRU cached
-                #      file if one exists. On VLC error, fall through to stream.
-                #   2) Otherwise, only stream if wifi_healthy() passes.
-                #   3) Otherwise skip to the next track.
+                #      file if one exists.
+                #   2) YouTube items: never stream. If no cache hit, fall back to
+                #      any cached video for this resident (keeps the screen alive
+                #      while the downloader fills the cache for this term).
+                #      Skip only if nothing is cached at all.
+                #   3) Direct URL items (backend blobs): play via play_direct()
+                #      when online; skip when offline.
                 self.player.stop_background_radio()
                 ok = False
                 cached_video_id = None
@@ -2091,20 +2095,16 @@ class Engine:
                              f"{os.path.basename(cached_filepath)}")
                     else:
                         # Cached file failed in VLC (corrupted? codec mismatch?).
-                        # Don't tombstone the row — fall through to streaming and
-                        # let GC's disk consistency sweep notice if the file is
-                        # truly gone next tick.
+                        # Don't tombstone — let GC's disk sweep catch it next tick.
                         self.currently_playing_filepath = None
-                        _log(f"[CACHE] Cached playback failed, attempting stream: "
+                        _log(f"[CACHE] Cached playback failed: "
                              f"{os.path.basename(cached_filepath)}")
 
                 if not ok:
-                    if not wifi_healthy():
-                        # Offline mode: fall back to any cached video for this
-                        # resident, picked at random and avoiding the short-term
-                        # recent set so we don't replay back-to-back. This
-                        # degrades the playlist to "whatever we have locally"
-                        # rather than skipping uncached terms one at a time.
+                    if is_youtube:
+                        # Never stream YouTube. Use a random cached video for this
+                        # resident to keep the screen alive while the downloader
+                        # works on this term in the background.
                         avoid = set(recent_for(resident))
                         fallback = cache_db.random_cached_video_for_resident(
                             resident, exclude_source_ids=avoid,
@@ -2116,29 +2116,45 @@ class Engine:
                                 cache_db.mark_video_played(int(fallback["id"]))
                                 if fallback["source_id"]:
                                     remember(resident, fallback["source_id"])
-                                _log(f"[CACHE] Offline fallback for "
-                                     f"'{term_str or media_url}' → "
-                                     f"{os.path.basename(fallback['filepath'])} "
+                                _log(f"[CACHE] No local copy of '{term_str or media_url}'; "
+                                     f"random fallback: {os.path.basename(fallback['filepath'])} "
                                      f"(resident={resident})")
                             else:
                                 self.currently_playing_filepath = None
                         if not ok:
-                            _log(f"[CONNECTIVITY] No network and nothing cached "
+                            radio_url = _pick_radio_bed()
+                            if not radio_url:
+                                _log(f"[CACHE] Nothing cached for {resident} and no radio — skipping")
+                                self.is_playback_active.clear()
+                                continue
+                            _log(f"[CACHE] Nothing cached for {resident}; "
+                                 f"playing radio while downloader catches up")
+                            self.is_playback_active.clear()  # let downloads run at full speed
+                            self.ui.back_to_idle()
+                            self.player.play_radio(radio_url, wid=None)
+                            if sess_photos:
+                                self.ui.start_ambient_slideshow(sess_photos)
+                            waited = 0
+                            while sess["running"] and waited < 120:
+                                time.sleep(5)
+                                waited += 5
+                                if cache_db.random_cached_video_for_resident(resident):
+                                    break
+                            self.player.stop()
+                            self.ui.stop_ambient_slideshow()
+                            continue
+                        try:
+                            video_downloader.kick()
+                        except Exception:
+                            pass
+                    else:
+                        # Direct URL (backend blob or similar). Needs connectivity.
+                        if not wifi_healthy():
+                            _log(f"[CONNECTIVITY] Offline and '{media_url}' not cached "
                                  f"for {resident} — skipping")
                             self.is_playback_active.clear()
                             continue
-                    else:
-                        if is_youtube:
-                            ok = self.player.play_youtube(media_url, resident=resident, wid=wid)
-                        else:
-                            ok = self.player.play_direct(media_url, wid=wid)
-                        if ok:
-                            # Streaming this term — nudge the downloader so a future
-                            # session can serve it from cache.
-                            try:
-                                video_downloader.kick()
-                            except Exception:
-                                pass
+                        ok = self.player.play_direct(media_url, wid=wid)
 
             if not ok:
                 self.is_playback_active.clear()
@@ -2215,9 +2231,10 @@ class RemoteMenuController:
         self.labels = []
         self._radio_stations = self.remote_cfg.get("radio_stations") or []  # [{name, url}, ...]
         self._in_radio_submenu = False
-        # Cached-videos submenu state, populated each time it opens.
         self._in_videos_submenu = False
         self._cached_videos: list = []
+        self._in_photos_submenu = False
+        self._photos_playlist: list = []
         self._last_key_time: dict = {}
         if not self.enabled:
             return
@@ -2225,19 +2242,31 @@ class RemoteMenuController:
         self._start_focus_maintainer()
         # open_menu deferred — called via root.after() in main() after mainloop starts
 
+    def _playlist_photos(self) -> list:
+        """Extract photo items from the current playlist."""
+        photos = []
+        for item in self.playlist:
+            if isinstance(item, dict):
+                t = (item.get("type") or item.get("kind") or item.get("mediaType") or "").lower()
+                if t in {"photo", "image", "picture"}:
+                    photos.append(item)
+            elif isinstance(item, str) and _is_image_url(item):
+                photos.append(item)
+        return photos
+
     def _current_special_items(self) -> list[str]:
-        """Recompute the special-item rows each time the main menu opens, so
-        '📼  Cached Videos' only appears when there's actually something to
-        list, and the radio entry is gated on having radio_stations configured.
-        """
-        items = ["▶  Play All", "⇄  Shuffle"]
+        """Recompute the top-level menu rows each time the menu opens."""
+        items = []
         try:
             if self.resident:
                 cached = cache_db.cached_videos_for_resident(self.resident)
                 if cached:
-                    items.append(f"📼  Cached Videos ({len(cached)})")
+                    items.append(f"📼  Videos ({len(cached)})")
         except Exception as e:
             print(f"[REMOTE] Cached-videos count failed: {e}")
+        photos = self._playlist_photos()
+        if photos:
+            items.append(f"🖼  Photos ({len(photos)})")
         if self._radio_stations:
             items.append("📻  Radio")
         return items
@@ -2307,17 +2336,15 @@ class RemoteMenuController:
     def open_menu(self):
         self._in_radio_submenu = False
         self._in_videos_submenu = False
+        self._in_photos_submenu = False
         self._ensure_playlist()
-        title = f"{self.resident} • Playlist" if self.resident else "Playlist"
+        title = self.resident or "Menu"
         specials = self._current_special_items()
-        if not self.playlist and not self._radio_stations and not any(s.startswith("📼") for s in specials):
-            self.ui.show_idle(ResidentIdentity(name=self.resident or "Guest", key=self.resident or "guest", survey_blob={}), subtitle="No playlist available")
+        if not specials:
+            self.ui.show_idle(ResidentIdentity(name=self.resident or "Guest", key=self.resident or "guest", survey_blob={}), subtitle="Nothing available")
             return
-        # Remember the currently-active special items so play_selected can map
-        # the menu index back to the same list we showed.
         self._active_specials = specials
-        all_labels = specials + self.labels
-        self.ui.show_menu(title, all_labels, selected_index=0, hint="Up/Down to navigate • OK to play • Back to exit")
+        self.ui.show_menu(title, specials, selected_index=0, hint="Up/Down to navigate • OK to select • Back to exit")
 
     def _open_videos_menu(self):
         self._in_videos_submenu = True
@@ -2338,6 +2365,24 @@ class RemoteMenuController:
             labels.append(f"[{dur}]  {title}")
         self.ui.show_menu("📼  Cached Videos", labels, selected_index=0,
                           hint="Up/Down to select • OK to play • Back to return")
+
+    def _open_photos_menu(self):
+        self._in_photos_submenu = True
+        self._photos_playlist = self._playlist_photos()
+        if not self._photos_playlist:
+            self.open_menu()
+            return
+        labels = []
+        for item in self._photos_playlist:
+            if isinstance(item, dict):
+                name = (item.get("name") or item.get("title") or item.get("url") or "(photo)").strip()
+            else:
+                name = str(item)
+            if len(name) > 64:
+                name = name[:61] + "…"
+            labels.append(name)
+        self.ui.show_menu("🖼  Photos", labels, selected_index=0,
+                          hint="Up/Down to select • OK to show • Back to return")
 
     def _open_radio_menu(self):
         self._in_radio_submenu = True
@@ -2375,8 +2420,7 @@ class RemoteMenuController:
                 self.engine.start_manual_session(self.resident or "radio", playlist_override=radio_item, start_index=0, ordered=True)
             return
 
-        # Cached-videos submenu — play the selected file directly via the
-        # engine, wrapped as a single cached-type playlist item.
+        # Cached-videos submenu — play the selected file directly.
         if self._in_videos_submenu:
             if 0 <= idx < len(self._cached_videos):
                 row = self._cached_videos[idx]
@@ -2397,40 +2441,38 @@ class RemoteMenuController:
                 )
             return
 
+        # Photos submenu — play the selected photo (single-item session).
+        if self._in_photos_submenu:
+            if 0 <= idx < len(self._photos_playlist):
+                item = self._photos_playlist[idx]
+                self.ui.hide_menu()
+                self._in_photos_submenu = False
+                self.engine.start_manual_session(
+                    self.resident or "photos",
+                    playlist_override=[item],
+                    start_index=0,
+                    ordered=True,
+                )
+            return
+
         specials = getattr(self, "_active_specials", None) or self._current_special_items()
-        if not self.playlist and not self._radio_stations and not any(s.startswith("📼") for s in specials):
+        if not specials:
             self.open_menu()
             return
-        n_special = len(specials)
-        if idx < n_special:
+        if idx < len(specials):
             label = specials[idx]
-            if label == "📻  Radio":
-                self._open_radio_menu()
-                return
             if label.startswith("📼"):
                 self._open_videos_menu()
-                return
-            self.ui.hide_menu()
-            if label == "▶  Play All":
-                self.engine.start_manual_session(self.resident, playlist_override=self.playlist, start_index=0, ordered=True)
-            elif label == "⇄  Shuffle":
-                shuffled = list(self.playlist)
-                random.shuffle(shuffled)
-                self.engine.start_manual_session(self.resident, playlist_override=shuffled, start_index=0, ordered=True)
-        else:
-            # Individual playlist item — play from that item in order
-            item_idx = max(0, min(idx - n_special, len(self.playlist) - 1))
-            self.ui.hide_menu()
-            self.engine.start_manual_session(self.resident, playlist_override=self.playlist, start_index=item_idx, ordered=True)
+            elif label.startswith("🖼"):
+                self._open_photos_menu()
+            elif label == "📻  Radio":
+                self._open_radio_menu()
 
     def pause_or_resume(self, *_):
         self.engine.player.toggle_pause()
 
     def back(self, *_):
-        if self._in_radio_submenu:
-            self.open_menu()
-            return
-        if self._in_videos_submenu:
+        if self._in_radio_submenu or self._in_videos_submenu or self._in_photos_submenu:
             self.open_menu()
             return
         if self.ui.is_menu_visible():

@@ -45,6 +45,16 @@ VIDEO_CACHE_MIN_AGE_DAYS = int(os.getenv("VIDEO_CACHE_MIN_AGE_DAYS", "7"))
 # real clips.
 VIDEO_CACHE_MIN_FILE_SIZE_BYTES = int(os.getenv("VIDEO_CACHE_MIN_FILE_SIZE_BYTES", "512000"))
 
+# Total disk cap for the video cache directory. Set to 0 to disable.
+VIDEO_CACHE_MAX_BYTES = int(float(os.getenv("VIDEO_CACHE_MAX_GB", "10")) * 1024 ** 3)
+
+# Videos played this many times or more are treated as favourites and are
+# never evicted by any GC sweep (same protection as family uploads).
+VIDEO_CACHE_FAVOURITE_THRESHOLD = int(os.getenv("VIDEO_CACHE_FAVOURITE_THRESHOLD", "3"))
+# Favourite protection lapses if the video hasn't been watched within this
+# many days, making it eligible for eviction again.
+VIDEO_CACHE_FAVOURITE_MAX_AGE_DAYS = int(os.getenv("VIDEO_CACHE_FAVOURITE_MAX_AGE_DAYS", "90"))
+
 
 def _log(msg: str):
     try:
@@ -413,18 +423,21 @@ def terms_below_cap(cap: int, resident: str | None = None) -> list[sqlite3.Row]:
 
 def orphan_videos(resident: str | None = None) -> list[sqlite3.Row]:
     """
-    Cached videos with no active term_videos association and protected = 0.
+    Cached videos with no active term_videos association, protected = 0,
+    and below the favourite threshold.
     Inactive-term links don't count because their parent term row is deleted
     via the reconcile step before GC runs (cascade clears the join).
     """
+    fav_cutoff = (datetime.utcnow() - timedelta(days=VIDEO_CACHE_FAVOURITE_MAX_AGE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
     sql = """
         SELECT v.*
         FROM cached_videos v
         LEFT JOIN term_videos tv ON tv.video_id = v.id
         WHERE v.protected = 0
+          AND (v.play_count < ? OR v.last_played_at IS NULL OR v.last_played_at < ?)
           AND tv.video_id IS NULL
     """
-    params: list = []
+    params: list = [VIDEO_CACHE_FAVOURITE_THRESHOLD, fav_cutoff]
     if resident is not None:
         sql += " AND v.resident = ?"
         params.append(resident)
@@ -435,10 +448,12 @@ def orphan_videos(resident: str | None = None) -> list[sqlite3.Row]:
 def videos_over_cap_for_term(term_id: int, cap: int, min_age_days: int) -> list[sqlite3.Row]:
     """
     Returns the surplus videos for a term that are eligible for eviction:
-    older than the minimum age, ordered worst-first (LRU + oldest download).
+    older than the minimum age, not protected, below the favourite threshold,
+    ordered worst-first (LRU + oldest download).
     Caller deletes them until the cap is met or the list is exhausted.
     """
     cutoff = (datetime.utcnow() - timedelta(days=min_age_days)).strftime("%Y-%m-%d %H:%M:%S")
+    fav_cutoff = (datetime.utcnow() - timedelta(days=VIDEO_CACHE_FAVOURITE_MAX_AGE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
     with _lock:
         rows = list(get_conn().execute(
             """
@@ -447,12 +462,13 @@ def videos_over_cap_for_term(term_id: int, cap: int, min_age_days: int) -> list[
             JOIN term_videos tv ON tv.video_id = v.id
             WHERE tv.term_id = ?
               AND v.protected = 0
+              AND (v.play_count < ? OR v.last_played_at IS NULL OR v.last_played_at < ?)
               AND v.downloaded_at < ?
             ORDER BY (v.last_played_at IS NULL) DESC,
                      v.last_played_at ASC,
                      v.downloaded_at ASC
             """,
-            (term_id, cutoff),
+            (term_id, VIDEO_CACHE_FAVOURITE_THRESHOLD, fav_cutoff, cutoff),
         ))
     # Trim to whatever exceeds the cap, but only after the age filter has
     # already been applied — videos younger than min_age_days are protected
@@ -510,6 +526,25 @@ def random_cached_video_for_resident(
     candidates = [r for r in rows if r["source_id"] not in exclude] or rows
     import random
     return random.choice(candidates)
+
+
+def all_evictable_videos_lru() -> list[sqlite3.Row]:
+    """Non-protected, non-favourite cached videos in LRU order (never-played
+    first, then oldest last-played, then oldest downloaded). Used by the
+    disk-cap sweep to pick what to evict first."""
+    fav_cutoff = (datetime.utcnow() - timedelta(days=VIDEO_CACHE_FAVOURITE_MAX_AGE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    with _lock:
+        return list(get_conn().execute(
+            """
+            SELECT * FROM cached_videos
+            WHERE protected = 0
+              AND (play_count < ? OR last_played_at IS NULL OR last_played_at < ?)
+            ORDER BY (last_played_at IS NULL) DESC,
+                     last_played_at ASC,
+                     downloaded_at ASC
+            """,
+            (VIDEO_CACHE_FAVOURITE_THRESHOLD, fav_cutoff),
+        ))
 
 
 def cached_filepaths() -> set[str]:
