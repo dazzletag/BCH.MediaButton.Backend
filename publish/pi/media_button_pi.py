@@ -1748,7 +1748,11 @@ class Engine:
                 else:
                     plist = []
             sess["playlist"] = plist
-            save_cached_playlist(resident, sv_hash, plist, meta={"source": "llm_big_with_profile"})
+            # Only cache when we have a real LLM result; a fallback-only playlist
+            # (radio URL because LLM failed) must not be cached — we want to retry
+            # the LLM next time rather than accepting the fallback as permanent.
+            if not sess.get("force_radio"):
+                save_cached_playlist(resident, sv_hash, plist, meta={"source": "llm_big_with_profile"})
             try:
                 push_ai_playlist_to_api(resident, plist, survey_hash=sv_hash, model=LLM_MODEL, meta={"source": "llm_big_with_profile"})
             except Exception as e:
