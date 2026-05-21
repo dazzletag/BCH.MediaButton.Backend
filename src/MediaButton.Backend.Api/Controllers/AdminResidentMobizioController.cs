@@ -29,6 +29,29 @@ public class AdminResidentMobizioController : ControllerBase
         _log = log;
     }
 
+    /// <summary>Diagnostic: trace This Is Me field fetch for a resident by known Mobizio IDs.</summary>
+    [HttpGet("{resident}/debug-this-is-me")]
+    public async Task<IActionResult> DebugThisIsMe(string resident, [FromQuery] string caseId, [FromQuery] string tenantCaseId)
+    {
+        var diag = new List<string>();
+        try
+        {
+            var token = await _mobizio.GetTokenForDebugAsync();
+            var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+            http.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+            var fields = await _mobizio.GetThisIsMeFieldsAsync(http, caseId, tenantCaseId, diag);
+            diag.Add($"Fields returned: {fields.Count}");
+            return Ok(new { diag, fields });
+        }
+        catch (Exception ex)
+        {
+            diag.Add($"Exception: {ex.Message}");
+            return StatusCode(500, new { diag });
+        }
+    }
+
     /// <summary>
     /// Fetches recent activity record photos for a resident from Mobizio,
     /// uploads them to Azure Blob Storage, registers MediaAsset records,

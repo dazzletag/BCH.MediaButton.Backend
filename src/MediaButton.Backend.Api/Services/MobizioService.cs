@@ -87,6 +87,8 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
         return new ResidentMobizioProfile(residentName, null, null, fields);
     }
 
+    internal async Task<string> GetTokenForDebugAsync() => await GetTokenAsync();
+
     private async Task<string> GetTokenAsync()
     {
         using var http = httpFactory.CreateClient();
@@ -178,36 +180,34 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
             diag.Add($"Could not find Mobizio case for resident '{residentName}'");
             return [];
         }
-        // Look up the caseDataGroupId for "Social History/Activities" section
-        var sectionsMql = Uri.EscapeDataString("serviceDataGroupLabel=Social History/Activities");
+        // Look up the section ID for "Social History/Activities"
+        var sectionsMql = Uri.EscapeDataString("serviceDataGroup.label~*Activities*");
         var sectionsResp = await http.GetAsync(
-            $"{ApiBase}/v3/cases/{tenantCaseId}/sections/_lite?start=0&limit=10&column=id&direction=1&mql={sectionsMql}");
+            $"{ApiBase}/v3/cases/{tenantCaseId}/sections?start=0&limit=10&column=id&direction=1&mql={sectionsMql}");
 
         if (!sectionsResp.IsSuccessStatusCode)
         {
-            // Retry with numeric caseId
-            sectionsResp = await http.GetAsync(
-                $"{ApiBase}/v3/cases/{caseId}/sections/_lite?start=0&limit=10&column=id&direction=1&mql={sectionsMql}");
+            diag.Add($"Failed to get sections for {tenantCaseId}: {sectionsResp.StatusCode}");
+            return [];
         }
 
-        var sectionsBody = await sectionsResp.Content.ReadAsStringAsync();
-        var sectionsJson = System.Text.Json.JsonSerializer.Deserialize<JsonObject>(sectionsBody);
+        var sectionsJson = await sectionsResp.Content.ReadFromJsonAsync<JsonObject>();
         var sectionResults = sectionsJson?["results"]?.AsArray() ?? [];
 
         if (sectionResults.Count == 0)
         {
-            diag.Add($"No 'Social History/Activities' section found for {tenantCaseId}");
+            diag.Add($"No 'Activities' section found for {tenantCaseId}");
             return [];
         }
 
         var caseDataGroupId = sectionResults[0]?["id"]?.ToString();
         if (string.IsNullOrWhiteSpace(caseDataGroupId))
         {
-            diag.Add("caseDataGroupId missing from section result");
+            diag.Add("section id missing from result");
             return [];
         }
 
-        // Get form versions for the activity record form
+        // Get all form versions for the activity record form
         var versionsResp = await http.GetAsync(
             $"{ApiBase}/v3/forms/{ActivityRecordFormId}/versions?start=0&limit=100&column=id&direction=1");
         if (!versionsResp.IsSuccessStatusCode)
@@ -217,39 +217,39 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
         }
 
         var versionsJson = await versionsResp.Content.ReadFromJsonAsync<JsonObject>();
-        var versionIds = (versionsJson?["results"]?.AsArray() ?? [])
-            .Select(v => v?["id"]?.ToString())
-            .OfType<string>()
+        var versionIds = new HashSet<string>(
+            (versionsJson?["results"]?.AsArray() ?? [])
+                .Select(v => v?["id"]?.ToString())
+                .OfType<string>());
+        diag.Add($"Form {ActivityRecordFormId} has {versionIds.Count} version(s)");
+
+        // Fetch all submitted forms for the section; filter to activity record versions; newest first
+        var allFormsResp = await http.GetAsync(
+            $"{ApiBase}/v3/cases/{tenantCaseId}/sections/{caseDataGroupId}/submittedForms?start=0&limit=500&column=createdDateTime&direction=-1");
+        if (!allFormsResp.IsSuccessStatusCode)
+        {
+            diag.Add($"Failed to get section forms: {allFormsResp.StatusCode}");
+            return [];
+        }
+
+        var allFormsJson = await allFormsResp.Content.ReadFromJsonAsync<JsonObject>();
+        var matchingForms = (allFormsJson?["results"]?.AsArray() ?? [])
+            .Where(f => versionIds.Contains(f?["formVersionId"]?.ToString() ?? ""))
             .ToList();
-        diag.Add($"Form {ActivityRecordFormId} has {versionIds.Count} version(s): {string.Join(", ", versionIds)}");
+        diag.Add($"{matchingForms.Count} activity record form(s) found in section");
 
         // Collect photo elements (componentLabel = "Photo"/"Photos" with encodedValue)
         var output = new List<(int ElementId, byte[] Data, string ContentType)>();
 
-        foreach (var versionId in versionIds)
+        foreach (var form in matchingForms)
         {
             if (output.Count >= limit) break;
 
-            var mql = Uri.EscapeDataString($"formVersionId={versionId},caseDataGroupId={caseDataGroupId}");
-            var formsUrl = $"{ApiBase}/v3/submittedForms?start=0&limit=20&column=createdDateTime&direction=-1&mql={mql}";
-            var formsResp = await http.GetAsync(formsUrl);
-            var formsBody = await formsResp.Content.ReadAsStringAsync();
-            if (!formsResp.IsSuccessStatusCode) continue;
-
-            var formsJson = System.Text.Json.JsonSerializer.Deserialize<JsonObject>(formsBody);
-            var formResults = formsJson?["results"]?.AsArray() ?? [];
-            if (formResults.Count > 0)
-                diag.Add($"v{versionId}: {formResults.Count} form(s)");
-
-            foreach (var form in formResults)
-            {
-                if (output.Count >= limit) break;
-
-                var submittedFormId = form?["id"]?.ToString();
-                if (submittedFormId is null) continue;
+            var submittedFormId = form?["id"]?.ToString();
+            if (submittedFormId is null) continue;
 
                 var elemResp = await http.GetAsync(
-                    $"{ApiBase}/v3/cases/{tenantCaseId}/submittedForms/{submittedFormId}/elements");
+                    $"{ApiBase}/v3/submittedForms/{submittedFormId}/elements");
                 if (!elemResp.IsSuccessStatusCode) continue;
 
                 var elemBody = await elemResp.Content.ReadAsStringAsync();
@@ -300,62 +300,82 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
                         diag.Add($"  form {submittedFormId}: base64 decode failed");
                     }
                 }
-            }
         }
 
         diag.Add($"Collected {output.Count} photo(s) from encodedValue");
         return output;
     }
 
-    private async Task<IReadOnlyDictionary<string, string>> GetThisIsMeFieldsAsync(
-        HttpClient http, string caseId, string tenantCaseId)
+    internal async Task<IReadOnlyDictionary<string, string>> GetThisIsMeFieldsAsync(
+        HttpClient http, string caseId, string tenantCaseId, List<string>? diag = null)
     {
+        // Get version IDs for the This Is Me form so we can match submitted forms
         var versionsResp = await http.GetAsync(
             $"{ApiBase}/v3/forms/{FormId}/versions?start=0&limit=100&column=id&direction=1");
         versionsResp.EnsureSuccessStatusCode();
-
         var versionsJson = await versionsResp.Content.ReadFromJsonAsync<JsonObject>();
-        var versionIds = (versionsJson?["results"]?.AsArray() ?? [])
-            .Select(v => v?["id"]?.ToString())
-            .OfType<string>()
+        var versionIds = new HashSet<string>(
+            (versionsJson?["results"]?.AsArray() ?? [])
+                .Select(v => v?["id"]?.ToString())
+                .OfType<string>());
+        diag?.Add($"Form {FormId} has {versionIds.Count} version(s)");
+
+        // Find the case section that contains This Is Me / Activities forms
+        var sectionMql = Uri.EscapeDataString("serviceDataGroup.label~*Activities*");
+        var sectionUrl = $"{ApiBase}/v3/cases/{tenantCaseId}/sections?start=0&limit=10&column=id&direction=1&mql={sectionMql}";
+        diag?.Add($"Section lookup: {sectionUrl}");
+        var sectionResp = await http.GetAsync(sectionUrl);
+        diag?.Add($"Section response: {sectionResp.StatusCode}");
+        if (!sectionResp.IsSuccessStatusCode) return new Dictionary<string, string>();
+
+        var sectionJson = await sectionResp.Content.ReadFromJsonAsync<JsonObject>();
+        var sectionResults = sectionJson?["results"]?.AsArray() ?? [];
+        diag?.Add($"Sections found: {sectionResults.Count}");
+        var sectionId = sectionResults.Select(s => s?["id"]?.ToString()).OfType<string>().FirstOrDefault();
+        if (sectionId is null) return new Dictionary<string, string>();
+        diag?.Add($"Using section id={sectionId}");
+
+        // Get all submitted forms for that section and filter to This Is Me versions
+        var formsUrl = $"{ApiBase}/v3/cases/{tenantCaseId}/sections/{sectionId}/submittedForms?start=0&limit=500&column=id&direction=1";
+        var formsResp = await http.GetAsync(formsUrl);
+        diag?.Add($"Forms response: {formsResp.StatusCode}");
+        if (!formsResp.IsSuccessStatusCode) return new Dictionary<string, string>();
+
+        var formsJson = await formsResp.Content.ReadFromJsonAsync<JsonObject>();
+        var allForms = (formsJson?["results"]?.AsArray() ?? []).ToList();
+        diag?.Add($"Total forms in section: {allForms.Count}");
+        var matchingForms = allForms
+            .Where(f => versionIds.Contains(f?["formVersionId"]?.ToString() ?? ""))
             .ToList();
+        diag?.Add($"This Is Me forms matched: {matchingForms.Count}");
 
         var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var versionId in versionIds)
+        foreach (var form in matchingForms)
         {
-            var mql = Uri.EscapeDataString($"formVersionId={versionId},caseDataGroupCaseId={caseId}");
-            var formsResp = await http.GetAsync(
-                $"{ApiBase}/v3/submittedForms?start=0&limit=100&column=id&direction=1&mql={mql}");
-            if (!formsResp.IsSuccessStatusCode) continue;
+            var submittedFormId = form?["id"]?.ToString();
+            if (submittedFormId is null) continue;
 
-            var formsJson = await formsResp.Content.ReadFromJsonAsync<JsonObject>();
-            foreach (var form in formsJson?["results"]?.AsArray() ?? [])
+            var elemResp = await http.GetAsync(
+                $"{ApiBase}/v3/submittedForms/{submittedFormId}/elements");
+            if (!elemResp.IsSuccessStatusCode) continue;
+
+            // Elements may come back as an array or as { results: [...] }
+            var elemContent = await elemResp.Content.ReadFromJsonAsync<JsonNode>();
+            var elements = elemContent is JsonArray arr
+                ? arr
+                : elemContent?["results"]?.AsArray() ?? [];
+
+            foreach (var elem in elements)
             {
-                var submittedFormId = form?["id"]?.ToString();
-                if (submittedFormId is null) continue;
+                var label = elem?["componentLabel"]?.GetValue<string>();
+                var value = elem?["valueText"]?.GetValue<string>()
+                            ?? elem?["valueAsString"]?.GetValue<string>();
 
-                var elemResp = await http.GetAsync(
-                    $"{ApiBase}/v3/cases/{tenantCaseId}/submittedForms/{submittedFormId}/elements");
-                if (!elemResp.IsSuccessStatusCode) continue;
-
-                // Elements may come back as an array or as { results: [...] }
-                var elemContent = await elemResp.Content.ReadFromJsonAsync<JsonNode>();
-                var elements = elemContent is JsonArray arr
-                    ? arr
-                    : elemContent?["results"]?.AsArray() ?? [];
-
-                foreach (var elem in elements)
+                if (label is not null && value is not null
+                    && !string.IsNullOrWhiteSpace(value) && !fields.ContainsKey(label))
                 {
-                    var label = elem?["componentLabel"]?.GetValue<string>();
-                    var value = elem?["valueText"]?.GetValue<string>()
-                                ?? elem?["valueAsString"]?.GetValue<string>();
-
-                    if (label is not null && value is not null
-                        && !string.IsNullOrWhiteSpace(value) && !fields.ContainsKey(label))
-                    {
-                        fields[label] = value;
-                    }
+                    fields[label] = value;
                 }
             }
         }

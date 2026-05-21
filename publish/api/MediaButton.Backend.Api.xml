@@ -50,6 +50,9 @@
             (e.g., the portal shows 'deleting…' until the Pi confirms).
             </summary>
         </member>
+        <member name="M:MediaButtonBackend.Controllers.AdminResidentMobizioController.DebugThisIsMe(System.String,System.String,System.String)">
+            <summary>Diagnostic: trace This Is Me field fetch for a resident by known Mobizio IDs.</summary>
+        </member>
         <member name="M:MediaButtonBackend.Controllers.AdminResidentMobizioController.FetchActivityPhotos(System.String)">
             <summary>
             Fetches recent activity record photos for a resident from Mobizio,
@@ -131,7 +134,12 @@
         </member>
         <member name="P:MediaButtonBackend.Models.Device.MobizioId">
             <summary>
-            Mobizio case ID for the assigned resident.
+            Mobizio numeric case ID for the assigned resident.
+            </summary>
+        </member>
+        <member name="P:MediaButtonBackend.Models.Device.MobizioTenantId">
+            <summary>
+            Mobizio tenant case ID (e.g. CASE-29959) — required for case-scoped API endpoints.
             </summary>
         </member>
         <member name="T:MediaButtonBackend.Models.CachedVideo">
@@ -168,10 +176,15 @@
         </member>
         <member name="P:MediaButtonBackend.Models.ResidentPlaylistSnapshot.MobizioId">
             <summary>
-            Mobizio case ID for this resident (populated by the Pi setup wizard).
+            Mobizio numeric case ID for this resident (populated by the Pi setup wizard).
             </summary>
         </member>
-        <member name="M:MediaButtonBackend.Services.MobizioService.GetResidentProfileByCaseIdAsync(System.String,System.String)">
+        <member name="P:MediaButtonBackend.Models.ResidentPlaylistSnapshot.MobizioTenantId">
+            <summary>
+            Mobizio tenant case ID (e.g. CASE-29959) — required for case-scoped API endpoints.
+            </summary>
+        </member>
+        <member name="M:MediaButtonBackend.Services.MobizioService.GetResidentProfileByCaseIdAsync(System.String,System.String,System.String)">
             <summary>
             Fetch the This Is Me profile using a known Mobizio case ID, bypassing the
             full-list name search. Used when the case ID was captured during device setup.
@@ -246,6 +259,18 @@
             <inheritdoc />
         </member>
         <member name="M:MediaButton.Backend.Api.Data.Migrations.AddCachedVideosAndCommands.Down(Microsoft.EntityFrameworkCore.Migrations.MigrationBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="T:MediaButton.Backend.Api.Data.Migrations.AddMobizioTenantId">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.AddMobizioTenantId.Up(Microsoft.EntityFrameworkCore.Migrations.MigrationBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.AddMobizioTenantId.Down(Microsoft.EntityFrameworkCore.Migrations.MigrationBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.AddMobizioTenantId.BuildTargetModel(Microsoft.EntityFrameworkCore.ModelBuilder)">
             <inheritdoc />
         </member>
     </members>
