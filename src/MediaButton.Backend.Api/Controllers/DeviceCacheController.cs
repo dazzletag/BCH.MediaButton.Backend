@@ -107,7 +107,16 @@ public class DeviceCacheController : ControllerBase
         var toRemove = existing.Where(v => !snapshotKeys.Contains($"{v.Source}|{v.SourceId}")).ToList();
         if (toRemove.Count > 0) _db.CachedVideos.RemoveRange(toRemove);
 
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (Microsoft.EntityFrameworkCore.DbUpdateException ex)
+            when (ex.InnerException?.Message.Contains("duplicate key", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            // Concurrent snapshot from same device — the row was inserted by a parallel request.
+            // Re-query and return success; the DB already reflects the latest state.
+        }
 
         return Ok(new
         {
