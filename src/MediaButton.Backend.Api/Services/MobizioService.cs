@@ -244,106 +244,118 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
         }
         diag.Add($"[form {formId}] Using section '{sectionLabel}' (id={sectionId})");
 
-        // Use the form-specific _overview endpoint so we only get submissions for this form ID,
-        // with no version-ID filtering needed.
-        var overviewResp = await http.GetAsync(
-            $"{ApiBase}/v3/cases/{tenantCaseId}/sections/{sectionId}/forms/{formId}/submittedForms/_overview?start=0&limit=100&column=createdDateTime&direction=-1");
-        if (!overviewResp.IsSuccessStatusCode)
+        // Paginate through all submissions for this form (newest first) until we have
+        // enough new photos or have exhausted all submissions.
+        const int pageSize = 100;
+        int pageStart = 0;
+        int totalFound = 0;
+
+        while (output.Count < limit)
         {
-            diag.Add($"[form {formId}] _overview endpoint failed: {overviewResp.StatusCode}");
-            return;
-        }
+            var overviewResp = await http.GetAsync(
+                $"{ApiBase}/v3/cases/{tenantCaseId}/sections/{sectionId}/forms/{formId}/submittedForms/_overview?start={pageStart}&limit={pageSize}&column=createdDateTime&direction=-1");
+            if (!overviewResp.IsSuccessStatusCode)
+            {
+                diag.Add($"[form {formId}] _overview failed: {overviewResp.StatusCode}");
+                break;
+            }
 
-        var overviewJson = await overviewResp.Content.ReadFromJsonAsync<JsonObject>();
-        var submissions = overviewJson?["results"]?.AsArray() ?? [];
-        diag.Add($"[form {formId}] {submissions.Count} submission(s) found");
+            var overviewJson = await overviewResp.Content.ReadFromJsonAsync<JsonObject>();
+            var submissions = overviewJson?["results"]?.AsArray() ?? [];
+            totalFound += submissions.Count;
+            if (submissions.Count == 0) break;
 
-        foreach (var submission in submissions)
-        {
-            if (output.Count >= limit) break;
-
-            var submittedFormId = submission?["id"]?.ToString();
-            if (submittedFormId is null) continue;
-
-            var elemResp = await http.GetAsync(
-                $"{ApiBase}/v3/submittedForms/{submittedFormId}/elements");
-            if (!elemResp.IsSuccessStatusCode) continue;
-
-            var elemBody = await elemResp.Content.ReadAsStringAsync();
-            var elemContent = System.Text.Json.JsonSerializer.Deserialize<JsonNode>(elemBody);
-            var elements = elemContent is JsonArray arr
-                ? arr
-                : elemContent?["results"]?.AsArray() ?? [];
-
-            foreach (var elem in elements)
+            foreach (var submission in submissions)
             {
                 if (output.Count >= limit) break;
 
-                var label = elem?["componentLabel"]?.GetValue<string>() ?? "";
-                var elemType = elem?["type"]?.GetValue<string>() ?? "";
+                var submittedFormId = submission?["id"]?.ToString();
+                if (submittedFormId is null) continue;
 
-                var isPhotoElem = elemType.Equals("photo", StringComparison.OrdinalIgnoreCase)
-                    || label.StartsWith("Photo", StringComparison.OrdinalIgnoreCase);
-                if (!isPhotoElem) continue;
+                var elemResp = await http.GetAsync(
+                    $"{ApiBase}/v3/submittedForms/{submittedFormId}/elements");
+                if (!elemResp.IsSuccessStatusCode) continue;
 
-                var elemId = (int)(elem?["id"]?.GetValue<long?>() ?? 0);
+                var elemBody = await elemResp.Content.ReadAsStringAsync();
+                var elemContent = System.Text.Json.JsonSerializer.Deserialize<JsonNode>(elemBody);
+                var elements = elemContent is JsonArray arr
+                    ? arr
+                    : elemContent?["results"]?.AsArray() ?? [];
 
-                var rawValue = elem?["encodedValue"]?.GetValue<string>();
-                if (string.IsNullOrWhiteSpace(rawValue))
-                    rawValue = elem?["value"]?.GetValue<string>();
-                if (string.IsNullOrWhiteSpace(rawValue))
-                    rawValue = elem?["valueSmallText"]?.GetValue<string>();
-
-                if (string.IsNullOrWhiteSpace(rawValue)) continue;
-
-                if (skipElementIds?.Contains(elemId) == true)
+                foreach (var elem in elements)
                 {
-                    diag.Add($"  elem {elemId}: already imported");
-                    continue;
-                }
+                    if (output.Count >= limit) break;
 
-                byte[] bytes;
-                string contentType = "image/jpeg";
+                    var label = elem?["componentLabel"]?.GetValue<string>() ?? "";
+                    var elemType = elem?["type"]?.GetValue<string>() ?? "";
 
-                if (rawValue.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                    rawValue.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                {
-                    var photoResp = await http.GetAsync(rawValue);
-                    if (!photoResp.IsSuccessStatusCode)
+                    var isPhotoElem = elemType.Equals("photo", StringComparison.OrdinalIgnoreCase)
+                        || label.StartsWith("Photo", StringComparison.OrdinalIgnoreCase);
+                    if (!isPhotoElem) continue;
+
+                    var elemId = (int)(elem?["id"]?.GetValue<long?>() ?? 0);
+
+                    var rawValue = elem?["encodedValue"]?.GetValue<string>();
+                    if (string.IsNullOrWhiteSpace(rawValue))
+                        rawValue = elem?["value"]?.GetValue<string>();
+                    if (string.IsNullOrWhiteSpace(rawValue))
+                        rawValue = elem?["valueSmallText"]?.GetValue<string>();
+
+                    if (string.IsNullOrWhiteSpace(rawValue)) continue;
+
+                    if (skipElementIds?.Contains(elemId) == true)
                     {
-                        diag.Add($"  elem {elemId}: URL fetch failed {photoResp.StatusCode}");
+                        diag.Add($"  elem {elemId}: already imported");
                         continue;
                     }
-                    bytes = await photoResp.Content.ReadAsByteArrayAsync();
-                    contentType = photoResp.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
-                    diag.Add($"  elem {elemId}: fetched from URL, {bytes.Length} bytes, {contentType}");
-                }
-                else
-                {
-                    if (rawValue.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+
+                    byte[] bytes;
+                    string contentType = "image/jpeg";
+
+                    if (rawValue.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                        rawValue.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                     {
-                        var comma = rawValue.IndexOf(',');
-                        if (comma > 0)
+                        var photoResp = await http.GetAsync(rawValue);
+                        if (!photoResp.IsSuccessStatusCode)
                         {
-                            contentType = rawValue[5..comma].Split(';')[0];
-                            rawValue = rawValue[(comma + 1)..];
+                            diag.Add($"  elem {elemId}: URL fetch failed {photoResp.StatusCode}");
+                            continue;
+                        }
+                        bytes = await photoResp.Content.ReadAsByteArrayAsync();
+                        contentType = photoResp.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
+                        diag.Add($"  elem {elemId}: fetched from URL, {bytes.Length} bytes, {contentType}");
+                    }
+                    else
+                    {
+                        if (rawValue.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var comma = rawValue.IndexOf(',');
+                            if (comma > 0)
+                            {
+                                contentType = rawValue[5..comma].Split(';')[0];
+                                rawValue = rawValue[(comma + 1)..];
+                            }
+                        }
+                        try
+                        {
+                            bytes = Convert.FromBase64String(rawValue);
+                            diag.Add($"  elem {elemId}: base64 decoded, {bytes.Length} bytes, {contentType}");
+                        }
+                        catch (FormatException)
+                        {
+                            diag.Add($"  elem {elemId}: base64 decode failed");
+                            continue;
                         }
                     }
-                    try
-                    {
-                        bytes = Convert.FromBase64String(rawValue);
-                        diag.Add($"  elem {elemId}: base64 decoded, {bytes.Length} bytes, {contentType}");
-                    }
-                    catch (FormatException)
-                    {
-                        diag.Add($"  elem {elemId}: base64 decode failed");
-                        continue;
-                    }
-                }
 
-                output.Add((elemId, bytes, contentType));
+                    output.Add((elemId, bytes, contentType));
+                }
             }
+
+            if (submissions.Count < pageSize) break;  // last page
+            pageStart += pageSize;
         }
+        diag.Add($"[form {formId}] scanned {totalFound} submission(s)");
     }
 
     internal async Task<IReadOnlyDictionary<string, string>> GetThisIsMeFieldsAsync(
