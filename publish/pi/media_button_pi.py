@@ -2379,15 +2379,8 @@ class RemoteMenuController:
         if not self._cached_videos:
             self.open_menu()
             return
-        labels = []
-        for row in self._cached_videos:
-            dur = self._format_duration(row["duration_seconds"], row["filesize_bytes"])
-            title = (row["title"] or row["source_id"] or "").strip() or "(untitled)"
-            if len(title) > 64:
-                title = title[:61] + "…"
-            labels.append(f"[{dur}]  {title}")
-        self.ui.show_menu("📼  Cached Videos", labels, selected_index=0,
-                          hint="Up/Down to select • OK to play • Back to return")
+        videos = [{k: row[k] for k in row.keys()} for row in self._cached_videos]
+        self.ui.show_video_card_menu(videos)
 
     def _open_photos_menu(self):
         self._in_photos_submenu = True

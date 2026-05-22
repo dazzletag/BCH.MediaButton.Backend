@@ -452,7 +452,23 @@ class DownloadWorker:
             cache_db.record_term_success(term_id)
             _log(f"[DOWNLOADER] Cached '{title or cand.source_id}' for term '{term}' "
                  f"(resident={resident}, {filesize // 1024} KB)")
+            threading.Thread(target=_extract_thumb, args=(out_path,), daemon=True).start()
             return
+
+
+def _extract_thumb(filepath: str) -> None:
+    """Extract a JPEG thumbnail at ~5 s. No-op if already present or ffmpeg unavailable."""
+    thumb = filepath + ".thumb.jpg"
+    if os.path.exists(thumb):
+        return
+    try:
+        subprocess.run(
+            ["ffmpeg", "-ss", "5", "-i", filepath,
+             "-vframes", "1", "-q:v", "3", "-vf", "scale=320:180", "-y", thumb],
+            capture_output=True, timeout=20,
+        )
+    except Exception:
+        pass
 
 
 def _row_to_dict(r):

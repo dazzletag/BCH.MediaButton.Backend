@@ -222,25 +222,35 @@ class MediaUI:
         self.video_holder = tk.Frame(self.play_frame, bg="black")
         self.video_holder.pack(fill="both", expand=True)
 
-        # ----- Remote menu view (optional) -----
+        # ----- Remote menu view -----
         self.menu_frame = tk.Frame(self.stack, bg=BG)
         self.menu_title_var = tk.StringVar(value="Select program")
-        self.menu_title = tk.Label(self.menu_frame, textvariable=self.menu_title_var, fg=FG, bg=BG, font=("DejaVu Sans", 28, "bold"))
-        self.menu_title.pack(pady=(24, 12))
-        self.menu_list = tk.Listbox(
-            self.menu_frame,
-            font=("DejaVu Sans", 20),
-            fg=FG,
-            bg="#111118",
-            selectbackground=ACCENT,
-            selectforeground="#000",
-            activestyle="none",
-            highlightthickness=0,
-        )
-        self.menu_list.pack(fill="both", expand=True, padx=40, pady=(0, 12))
-        self.menu_hint_var = tk.StringVar(value="Use remote arrows to navigate, OK to play, Back to exit")
-        self.menu_hint = tk.Label(self.menu_frame, textvariable=self.menu_hint_var, fg="#999", bg=BG, font=("DejaVu Sans", 16))
-        self.menu_hint.pack(pady=(0, 16))
+        self.menu_title = tk.Label(
+            self.menu_frame, textvariable=self.menu_title_var,
+            fg=FG, bg=BG, font=("DejaVu Sans", 26, "bold"))
+        self.menu_title.pack(pady=(20, 6))
+        self.menu_canvas = tk.Canvas(self.menu_frame, bg=BG, highlightthickness=0)
+        self.menu_canvas.pack(fill="both", expand=True, padx=20)
+        self.menu_hint_var = tk.StringVar(value="")
+        self.menu_hint = tk.Label(
+            self.menu_frame, textvariable=self.menu_hint_var,
+            fg="#666", bg=BG, font=("DejaVu Sans", 15))
+        self.menu_hint.pack(pady=(4, 14))
+
+        # ----- Card menu view (videos with thumbnails) -----
+        self.card_menu_frame = tk.Frame(self.stack, bg=BG)
+        self.card_title_var = tk.StringVar(value="")
+        self.card_title_lbl = tk.Label(
+            self.card_menu_frame, textvariable=self.card_title_var,
+            fg=FG, bg=BG, font=("DejaVu Sans", 26, "bold"))
+        self.card_title_lbl.pack(pady=(20, 6))
+        self.card_canvas = tk.Canvas(self.card_menu_frame, bg=BG, highlightthickness=0)
+        self.card_canvas.pack(fill="both", expand=True, padx=20)
+        self.card_hint_var = tk.StringVar(value="")
+        self.card_hint_lbl = tk.Label(
+            self.card_menu_frame, textvariable=self.card_hint_var,
+            fg="#666", bg=BG, font=("DejaVu Sans", 15))
+        self.card_hint_lbl.pack(pady=(4, 14))
 
         # Footer
         self.footer = tk.Label(self.stack, text="Bristol Care Homes", fg="#999", bg=BG, font=("DejaVu Sans", 14))
@@ -262,6 +272,11 @@ class MediaUI:
         self._upnext_text: str = ""           # sticky Up Next
         self._prep_anim_id: Optional[str] = None
         self._menu_items: list[str] = []
+        self._menu_selected: int = 0
+        self._menu_mode: str = "list"   # "list" | "card"
+        self._menu_canvas_refs: list = []
+        self._card_data: list = []      # [[title, meta, thumb_pil_or_None], ...]
+        self._card_image_refs: list = []
 
 
         self._show(self.idle_frame)
@@ -487,7 +502,7 @@ class MediaUI:
 
         if self._current_frame is frame:
             return  # already showing; avoid pack thrash (prevents flicker)
-        for child in (self.idle_frame, self.play_frame, self.menu_frame):
+        for child in (self.idle_frame, self.play_frame, self.menu_frame, self.card_menu_frame):
             child.pack_forget()
         frame.pack(fill="both", expand=True)
         self._current_frame = frame
@@ -515,58 +530,199 @@ class MediaUI:
             self.upnext_value.grid_remove()
 
     # ----- Menu helpers -----
+
+    _MENU_ROW_H = 68
+
     def show_menu(self, title: str, items: list[str], selected_index: int = 0, hint: str | None = None):
         def _do():
             self.menu_title_var.set(title or "Select program")
-            self.menu_hint_var.set(hint or "Use arrows to navigate, OK to play, Back to exit")
-            self.menu_list.delete(0, tk.END)
-            self._menu_items = items or []
-            for it in self._menu_items:
-                self.menu_list.insert(tk.END, it)
-            if self._menu_items:
-                safe_idx = max(0, min(selected_index, len(self._menu_items) - 1))
-                try:
-                    self.menu_list.selection_clear(0, tk.END)
-                    self.menu_list.selection_set(safe_idx)
-                    self.menu_list.see(safe_idx)
-                except Exception:
-                    pass
+            self.menu_hint_var.set(hint or "Use arrows to navigate  •  OK to select  •  Back to exit")
+            self._menu_items = list(items or [])
+            self._menu_selected = max(0, min(selected_index, max(0, len(self._menu_items) - 1)))
+            self._menu_mode = "list"
+            self._redraw_menu_canvas()
             self._show(self.menu_frame)
-            self.root.focus_force()  # reclaim focus from VLC so FLIRC events are received
+            self.root.focus_force()
             self.root.update_idletasks()
         self.root.after(0, _do)
+
+    def _redraw_menu_canvas(self):
+        canvas = self.menu_canvas
+        canvas.delete("all")
+        self._menu_canvas_refs = []
+        if not self._menu_items:
+            return
+        canvas.update_idletasks()
+        cw = max(canvas.winfo_width(), 1240)
+        ch = max(canvas.winfo_height(), 400)
+        rh = self._MENU_ROW_H
+        visible = max(1, ch // rh)
+        n = len(self._menu_items)
+        sel = self._menu_selected
+        first = max(0, min(sel - visible // 2, max(0, n - visible)))
+        for i in range(visible + 1):
+            idx = first + i
+            if idx >= n:
+                break
+            y0, y1 = i * rh, i * rh + rh
+            if y0 > ch:
+                break
+            selected = (idx == sel)
+            canvas.create_rectangle(
+                0, y0 + 2, cw, y1 - 2,
+                fill="#141a2a" if selected else BG, outline="")
+            if selected:
+                canvas.create_rectangle(0, y0 + 2, 7, y1 - 2, fill=ACCENT, outline="")
+            else:
+                canvas.create_line(20, y1 - 1, cw - 20, y1 - 1, fill="#1a1a26")
+            canvas.create_text(
+                22, y0 + rh // 2,
+                text=self._menu_items[idx], anchor="w",
+                fill=ACCENT if selected else FG,
+                font=("DejaVu Sans", 22, "bold" if selected else "normal"),
+            )
 
     def highlight_menu(self, delta: int):
         def _do():
             if not self._menu_items:
                 return
-            try:
-                cur = int(self.menu_list.curselection()[0])
-            except Exception:
-                cur = 0
-            new_idx = (cur + delta) % max(len(self._menu_items), 1)
-            try:
-                self.menu_list.selection_clear(0, tk.END)
-                self.menu_list.selection_set(new_idx)
-                self.menu_list.see(new_idx)
-            except Exception:
-                pass
+            self._menu_selected = (self._menu_selected + delta) % max(len(self._menu_items), 1)
+            if self._menu_mode == "card":
+                self._redraw_card_canvas()
+            else:
+                self._redraw_menu_canvas()
         self.root.after(0, _do)
 
     def hide_menu(self):
         self.root.after(0, lambda: self._show(self.idle_frame))
 
     def current_menu_index(self) -> int | None:
-        try:
-            sel = self.menu_list.curselection()
-            if sel:
-                return int(sel[0])
-        except Exception:
-            pass
-        return None
+        if not self._menu_items:
+            return None
+        return self._menu_selected
 
     def is_menu_visible(self) -> bool:
-        return self._current_frame is self.menu_frame
+        return self._current_frame in (self.menu_frame, self.card_menu_frame)
+
+    # ----- Video card menu (thumbnail grid) -----
+
+    _CARD_H  = 130
+    _CARD_GAP = 8
+    _THUMB_W  = 192
+    _THUMB_H  = 108
+
+    def show_video_card_menu(self, videos: list):
+        def _do():
+            self.card_title_var.set("📼  Cached Videos")
+            self.card_hint_var.set("Up/Down to select  •  OK to play  •  Back to return")
+            self._card_data = []
+            self._menu_items = []
+            for row in videos:
+                t = (row.get("title") or row.get("source_id") or "").strip() or "(untitled)"
+                dur = _fmt_duration(row.get("duration_seconds"), row.get("filesize_bytes"))
+                plays = row.get("play_count") or 0
+                meta = dur + (f"   ▶ {plays}×" if plays else "")
+                self._card_data.append([t, meta, None])
+                self._menu_items.append(t)
+            self._menu_selected = 0
+            self._menu_mode = "card"
+            self._redraw_card_canvas()
+            self._show(self.card_menu_frame)
+            self.root.focus_force()
+            self.root.update_idletasks()
+            fps = [row.get("filepath") for row in videos]
+            threading.Thread(target=self._load_thumbs_async, args=(fps,), daemon=True).start()
+        self.root.after(0, _do)
+
+    def _load_thumbs_async(self, filepaths: list):
+        import subprocess as _sp
+        for i, fp in enumerate(filepaths):
+            if not fp or not os.path.exists(fp):
+                continue
+            thumb = fp + ".thumb.jpg"
+            if not os.path.exists(thumb):
+                try:
+                    _sp.run(
+                        ["ffmpeg", "-ss", "5", "-i", fp,
+                         "-vframes", "1", "-q:v", "3", "-vf", "scale=320:180",
+                         "-y", thumb],
+                        capture_output=True, timeout=20,
+                    )
+                except Exception:
+                    continue
+            if not os.path.exists(thumb):
+                continue
+            try:
+                img = Image.open(thumb).convert("RGB")
+                def _upd(idx=i, im=img):
+                    if idx < len(self._card_data) and self._menu_mode == "card":
+                        self._card_data[idx][2] = im
+                        self._redraw_card_canvas()
+                self.root.after(0, _upd)
+            except Exception:
+                pass
+
+    def _redraw_card_canvas(self):
+        canvas = self.card_canvas
+        canvas.delete("all")
+        self._card_image_refs = []
+        if not self._card_data:
+            return
+        canvas.update_idletasks()
+        cw = max(canvas.winfo_width(), 1240)
+        ch = max(canvas.winfo_height(), 400)
+        per = self._CARD_H + self._CARD_GAP
+        rows_visible = max(1, ch // per)
+        n = len(self._card_data)
+        sel = self._menu_selected
+        first = max(0, min(sel - rows_visible // 2, max(0, n - rows_visible)))
+        for i in range(rows_visible + 1):
+            idx = first + i
+            if idx >= n:
+                break
+            y = i * per + 4
+            if y > ch:
+                break
+            title, meta, thumb = self._card_data[idx]
+            img = self._make_card_pil(title, meta, thumb, idx == sel, cw)
+            tk_img = ImageTk.PhotoImage(img)
+            self._card_image_refs.append(tk_img)
+            canvas.create_image(0, y, anchor="nw", image=tk_img)
+
+    def _make_card_pil(self, title: str, meta: str, thumb_pil, selected: bool, card_w: int) -> Image.Image:
+        bg = (18, 24, 40) if selected else (11, 11, 17)
+        card = Image.new("RGB", (card_w, self._CARD_H), bg)
+        draw = ImageDraw.Draw(card)
+        if selected:
+            draw.rectangle([0, 0, 7, self._CARD_H - 1], fill=ACCENT)
+        tx, ty = 18, (self._CARD_H - self._THUMB_H) // 2
+        if thumb_pil:
+            try:
+                card.paste(thumb_pil.resize((self._THUMB_W, self._THUMB_H), Image.LANCZOS), (tx, ty))
+            except Exception:
+                thumb_pil = None
+        if not thumb_pil:
+            ph = Image.new("RGB", (self._THUMB_W, self._THUMB_H), (14, 14, 24))
+            pd = ImageDraw.Draw(ph)
+            pd.rectangle([0, 0, self._THUMB_W - 1, self._THUMB_H - 1], outline=(40, 40, 65))
+            cx, cy = self._THUMB_W // 2, self._THUMB_H // 2
+            pd.polygon([(cx - 18, cy - 22), (cx - 18, cy + 22), (cx + 24, cy)], fill=(55, 55, 90))
+            card.paste(ph, (tx, ty))
+        draw.rectangle(
+            [tx, ty, tx + self._THUMB_W - 1, ty + self._THUMB_H - 1],
+            outline=ACCENT if selected else "#222235",
+        )
+        text_x = tx + self._THUMB_W + 22
+        title_y = ty + 6
+        meta_y  = title_y + 40
+        max_chars = max(20, (card_w - text_x - 20) // 13)
+        draw.text((text_x, title_y), title[:max_chars],
+                  font=_safe_font(22, bold=True), fill=ACCENT if selected else FG)
+        draw.text((text_x, meta_y), meta,
+                  font=_safe_font(17), fill="#8888aa")
+        if not selected:
+            draw.line([(18, self._CARD_H - 1), (card_w - 18, self._CARD_H - 1)], fill="#181826")
+        return card
 
 # convenience wrappers
     def set_upnext(self, text: str):
@@ -909,6 +1065,17 @@ class MediaUI:
         os._exit(0)
 
 # ---------- Font / drawing helpers ----------
+
+def _fmt_duration(secs, size_bytes) -> str:
+    parts = []
+    if secs:
+        m, s = divmod(int(secs), 60)
+        h, m = divmod(m, 60)
+        parts.append(f"{h}:{m:02}:{s:02}" if h else f"{m}:{s:02}")
+    if size_bytes:
+        parts.append(f"{size_bytes / 1_048_576:.0f} MB")
+    return "  ".join(parts) if parts else ""
+
 
 def _safe_font(size=64, bold=False):
     try:
