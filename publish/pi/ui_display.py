@@ -606,7 +606,7 @@ class MediaUI:
 
     # ----- Video card menu (thumbnail grid) -----
 
-    _CARD_H  = 130
+    _CARD_H  = 150
     _CARD_GAP = 8
     _THUMB_W  = 192
     _THUMB_H  = 108
@@ -713,13 +713,13 @@ class MediaUI:
             outline=ACCENT if selected else "#222235",
         )
         text_x = tx + self._THUMB_W + 22
-        title_y = ty + 6
-        meta_y  = title_y + 40
+        title_y = ty + 4
+        meta_y  = title_y + 46
         max_chars = max(20, (card_w - text_x - 20) // 13)
         draw.text((text_x, title_y), title[:max_chars],
                   font=_safe_font(22, bold=True), fill=ACCENT if selected else FG)
         draw.text((text_x, meta_y), meta,
-                  font=_safe_font(17), fill="#8888aa")
+                  font=_safe_font(22), fill="#aaaacc")
         if not selected:
             draw.line([(18, self._CARD_H - 1), (card_w - 18, self._CARD_H - 1)], fill="#181826")
         return card
