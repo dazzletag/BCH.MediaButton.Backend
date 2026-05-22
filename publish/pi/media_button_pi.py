@@ -2238,10 +2238,11 @@ class Engine:
 # Remote control (FLIRC / TV remote)
 # =========================
 class RemoteMenuController:
-    def __init__(self, engine: Engine, ui: MediaUI, config: dict):
+    def __init__(self, engine: Engine, ui: MediaUI, config: dict, menu_active: threading.Event | None = None):
         self.engine = engine
         self.ui = ui
         self.config = config
+        self.menu_active = menu_active
         self.mode = config.get("control_mode", "beacon")
         self.enabled = self.mode == "remote_menu"
         self.remote_cfg = config.get("remote_control", {}) if isinstance(config.get("remote_control", {}), dict) else {}
@@ -2330,6 +2331,14 @@ class RemoteMenuController:
             pass
         return None
 
+    def _set_menu_active(self, active: bool):
+        if self.menu_active is None:
+            return
+        if active:
+            self.menu_active.set()
+        else:
+            self.menu_active.clear()
+
     def _label_for_item(self, item) -> str:
         try:
             if isinstance(item, dict):
@@ -2367,6 +2376,7 @@ class RemoteMenuController:
             self.ui.show_idle(ResidentIdentity(name=self.resident or "Guest", key=self.resident or "guest", survey_blob={}), subtitle="Nothing available")
             return
         self._active_specials = specials
+        self._set_menu_active(True)
         self.ui.show_menu(title, specials, selected_index=0, hint="Up/Down to navigate • OK to select • Back to exit")
 
     def _open_videos_menu(self):
@@ -2391,6 +2401,7 @@ class RemoteMenuController:
             "_meta_override": f"{n} video{'s' if n != 1 else ''}  •  random order",
         }
         videos = [shuffle_card] + [{k: row[k] for k in row.keys()} for row in self._cached_videos]
+        self._set_menu_active(True)
         self.ui.show_video_card_menu(videos)
 
     def _open_photos_menu(self):
@@ -2408,17 +2419,20 @@ class RemoteMenuController:
             if len(name) > 64:
                 name = name[:61] + "…"
             labels.append(name)
+        self._set_menu_active(True)
         self.ui.show_menu("🖼  Photos", labels, selected_index=0,
                           hint="Up/Down to select • OK to show • Back to return")
 
     def _open_radio_menu(self):
         self._in_radio_submenu = True
         labels = [s["name"] for s in self._radio_stations]
+        self._set_menu_active(True)
         self.ui.show_menu("📻  Radio", labels, selected_index=0, hint="Up/Down to select • OK to play • Back to return")
 
     def toggle_menu(self, *_):
         if self.ui.is_menu_visible():
             self.ui.hide_menu()
+            self._set_menu_active(False)
         else:
             self.open_menu()
 
@@ -2442,6 +2456,7 @@ class RemoteMenuController:
                 if url.startswith("radio:"):
                     url = url[6:]
                 self.ui.hide_menu()
+                self._set_menu_active(False)
                 self._in_radio_submenu = False
                 radio_item = [{"type": "radio", "url": url, "name": station["name"]}]
                 self.engine.start_manual_session(self.resident or "radio", playlist_override=radio_item, start_index=0, ordered=True)
@@ -2459,6 +2474,7 @@ class RemoteMenuController:
                     for r in rows
                 ]
                 self.ui.hide_menu()
+                self._set_menu_active(False)
                 self._in_videos_submenu = False
                 self.engine.start_manual_session(
                     self.resident or "cached",
@@ -2476,6 +2492,7 @@ class RemoteMenuController:
                     "duration": row["duration_seconds"],
                 }
                 self.ui.hide_menu()
+                self._set_menu_active(False)
                 self._in_videos_submenu = False
                 self.engine.start_manual_session(
                     self.resident or "cached",
@@ -2490,6 +2507,7 @@ class RemoteMenuController:
             if 0 <= idx < len(self._photos_playlist):
                 item = self._photos_playlist[idx]
                 self.ui.hide_menu()
+                self._set_menu_active(False)
                 self._in_photos_submenu = False
                 self.engine.start_manual_session(
                     self.resident or "photos",
@@ -2521,6 +2539,7 @@ class RemoteMenuController:
             return
         if self.ui.is_menu_visible():
             self.ui.hide_menu()
+            self._set_menu_active(False)
         else:
             # Stop all sessions and return to idle
             for res in list(self.engine.sessions.keys()):
@@ -2650,7 +2669,8 @@ def main():
 
     # Build engine with UI
     ENGINE = Engine(SURVEY, PLAYER, CONFIG, ui=ui)
-    remote_controller = RemoteMenuController(ENGINE, ui, CONFIG)
+    _menu_active_event = threading.Event()
+    remote_controller = RemoteMenuController(ENGINE, ui, CONFIG, menu_active=_menu_active_event)
 
     # Initialise the local video cache DB and start the download worker.
     # The worker throttles its yt-dlp calls while ENGINE.is_playback_active is
@@ -2660,6 +2680,7 @@ def main():
         cache_db.init_db()
         video_downloader.start(
             playback_active=ENGINE.is_playback_active,
+            menu_active=_menu_active_event,
             get_active_residents=lambda: list(ENGINE.sessions.keys()),
             is_online=wifi_healthy,
         )

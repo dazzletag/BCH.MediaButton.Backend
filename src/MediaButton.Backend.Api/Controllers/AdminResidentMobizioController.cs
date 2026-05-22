@@ -29,6 +29,65 @@ public class AdminResidentMobizioController : ControllerBase
         _log = log;
     }
 
+    /// <summary>
+    /// Diagnostic: list all form sections for a resident and the distinct form IDs used in each,
+    /// so you can identify the Well-being (or any other) form ID for configuration.
+    /// </summary>
+    [HttpGet("{resident}/debug-sections")]
+    public async Task<IActionResult> DebugSections(string resident, [FromQuery] string tenantCaseId)
+    {
+        if (string.IsNullOrWhiteSpace(tenantCaseId))
+            return BadRequest("tenantCaseId query param required (e.g. CASE-29959)");
+
+        var diag = new List<string>();
+        try
+        {
+            var token = await _mobizio.GetTokenForDebugAsync();
+            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+            http.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+            // List all sections for the case
+            var sectionsResp = await http.GetAsync(
+                $"https://cloud7.mobizio.com/rest/v3/cases/{tenantCaseId}/sections?start=0&limit=100&column=id&direction=1");
+            sectionsResp.EnsureSuccessStatusCode();
+            var sectionsJson = await sectionsResp.Content.ReadFromJsonAsync<System.Text.Json.Nodes.JsonObject>();
+            var sections = sectionsJson?["results"]?.AsArray() ?? [];
+
+            var result = new List<object>();
+            foreach (var section in sections)
+            {
+                var sectionId = section?["id"]?.ToString();
+                var sectionLabel = section?["serviceDataGroup"]?["label"]?.ToString()
+                                ?? section?["label"]?.ToString() ?? "(unknown)";
+                if (sectionId is null) continue;
+
+                // Fetch a few submitted forms to see what form IDs appear
+                var formsResp = await http.GetAsync(
+                    $"https://cloud7.mobizio.com/rest/v3/cases/{tenantCaseId}/sections/{sectionId}/submittedForms?start=0&limit=5&column=createdDateTime&direction=-1");
+                if (!formsResp.IsSuccessStatusCode) continue;
+
+                var formsJson = await formsResp.Content.ReadFromJsonAsync<System.Text.Json.Nodes.JsonObject>();
+                var formVersionIds = (formsJson?["results"]?.AsArray() ?? [])
+                    .Select(f => new {
+                        submittedFormId = f?["id"]?.ToString(),
+                        formVersionId   = f?["formVersionId"]?.ToString(),
+                        createdDateTime = f?["createdDateTime"]?.ToString(),
+                    })
+                    .ToList();
+
+                result.Add(new { sectionId, sectionLabel, recentSubmissions = formVersionIds });
+            }
+
+            return Ok(new { tenantCaseId, sections = result });
+        }
+        catch (Exception ex)
+        {
+            diag.Add($"Exception: {ex.Message}");
+            return StatusCode(500, new { diag });
+        }
+    }
+
     /// <summary>Diagnostic: trace This Is Me field fetch for a resident by known Mobizio IDs.</summary>
     [HttpGet("{resident}/debug-this-is-me")]
     public async Task<IActionResult> DebugThisIsMe(string resident, [FromQuery] string caseId, [FromQuery] string tenantCaseId)

@@ -4,8 +4,10 @@ Background downloader for the Pi-local video cache.
 
 Owns a worker thread that picks the (resident, term) pair with the fewest
 cached videos, resolves a YouTube candidate via yt-dlp, downloads it to
-.data/video_cache/yt_<videoid>.mp4 and records it in cache_db. Throttles to
-VIDEO_CACHE_THROTTLE_RATE while VLC is actively playing.
+.data/video_cache/yt_<videoid>.mp4 and records it in cache_db. Pauses
+completely while VLC is actively playing or the remote menu is open;
+throttles to VIDEO_CACHE_THROTTLE_RATE if a download was already in-flight
+when playback began.
 
 ==========================================================================
 Future extension point — central curated content (post-merge)
@@ -301,6 +303,7 @@ class DownloadWorker:
         self,
         *,
         playback_active: threading.Event,
+        menu_active: threading.Event | None = None,
         get_active_residents,           # callable -> list[str]
         is_online=None,                 # optional callable -> bool
         per_term_cap: int = cache_db.VIDEO_CACHE_PER_TERM_CAP,
@@ -308,6 +311,7 @@ class DownloadWorker:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self.playback_active = playback_active
+        self.menu_active = menu_active
         self.get_active_residents = get_active_residents
         # When provided, the worker checks this before each pick and stays
         # idle if it returns False. Spares the log from a parade of
@@ -376,6 +380,14 @@ class DownloadWorker:
                     self._wake.clear()
                     continue
 
+                # Hold off while video is playing or the remote menu is open
+                while not self._stop.is_set():
+                    if not self.playback_active.is_set() and not (self.menu_active and self.menu_active.is_set()):
+                        break
+                    self._stop.wait(timeout=1.0)
+                if self._stop.is_set():
+                    break
+
                 self._download_one(target)
             except Exception as e:
                 _log(f"[DOWNLOADER] Worker loop error: {e}")
@@ -428,7 +440,7 @@ class DownloadWorker:
                 except Exception:
                     pass
 
-            throttle = self.playback_active.is_set()
+            throttle = self.playback_active.is_set() or bool(self.menu_active and self.menu_active.is_set())
             ok, title, duration = download_candidate(cand, out_path, throttle=throttle)
             if not ok:
                 cooled = cache_db.record_term_failure(
@@ -484,12 +496,14 @@ _worker: DownloadWorker | None = None
 def start(
     playback_active: threading.Event,
     get_active_residents,
+    menu_active: threading.Event | None = None,
     is_online=None,
 ) -> DownloadWorker:
     global _worker
     if _worker is None:
         _worker = DownloadWorker(
             playback_active=playback_active,
+            menu_active=menu_active,
             get_active_residents=get_active_residents,
             is_online=is_online,
         )
