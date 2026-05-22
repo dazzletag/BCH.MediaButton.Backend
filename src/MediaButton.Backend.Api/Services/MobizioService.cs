@@ -17,6 +17,7 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
 
     private int FormId => configuration.GetValue("Mobizio:ThisIsMeFormId", 1021596);
     private int ActivityRecordFormId => configuration.GetValue("Mobizio:ActivityRecordFormId", 1024129);
+    private int WellBeingFormId => configuration.GetValue("Mobizio:WellBeingFormId", 1034032);
     private int ActivityPhotoLimit => configuration.GetValue("Mobizio:ActivityPhotoLimit", 5);
     private string Username => configuration["Mobizio:Username"] ?? "";
     private string Password => configuration["Mobizio:Password"] ?? "";
@@ -192,130 +193,157 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
             diag.Add($"Could not find Mobizio case for resident '{residentName}'");
             return [];
         }
-        // Look up the section ID for "Social History/Activities"
-        var sectionsMql = Uri.EscapeDataString("serviceDataGroup.label~*Activities*");
-        var sectionsResp = await http.GetAsync(
-            $"{ApiBase}/v3/cases/{tenantCaseId}/sections?start=0&limit=10&column=id&direction=1&mql={sectionsMql}");
 
-        if (!sectionsResp.IsSuccessStatusCode)
-        {
-            diag.Add($"Failed to get sections for {tenantCaseId}: {sectionsResp.StatusCode}");
-            return [];
-        }
+        // Scan each form type independently so neither crowds out the other.
+        var perTypeLimit = Math.Max(1, limit / 2);
+        diag.Add($"Scanning Activity Record (form {ActivityRecordFormId}) + Well-being (form {WellBeingFormId}), {perTypeLimit} slots each");
 
-        var sectionsJson = await sectionsResp.Content.ReadFromJsonAsync<JsonObject>();
-        var sectionResults = sectionsJson?["results"]?.AsArray() ?? [];
-
-        if (sectionResults.Count == 0)
-        {
-            diag.Add($"No 'Activities' section found for {tenantCaseId}");
-            return [];
-        }
-
-        var caseDataGroupId = sectionResults[0]?["id"]?.ToString();
-        if (string.IsNullOrWhiteSpace(caseDataGroupId))
-        {
-            diag.Add("section id missing from result");
-            return [];
-        }
-
-        // Get all form versions for the activity record form
-        var versionsResp = await http.GetAsync(
-            $"{ApiBase}/v3/forms/{ActivityRecordFormId}/versions?start=0&limit=100&column=id&direction=1");
-        if (!versionsResp.IsSuccessStatusCode)
-        {
-            diag.Add($"Failed to get form versions for form {ActivityRecordFormId}: {versionsResp.StatusCode}");
-            return [];
-        }
-
-        var versionsJson = await versionsResp.Content.ReadFromJsonAsync<JsonObject>();
-        var versionIds = new HashSet<string>(
-            (versionsJson?["results"]?.AsArray() ?? [])
-                .Select(v => v?["id"]?.ToString())
-                .OfType<string>());
-        diag.Add($"Form {ActivityRecordFormId} has {versionIds.Count} version(s)");
-
-        // Fetch all submitted forms for the section; filter to activity record versions; newest first
-        var allFormsResp = await http.GetAsync(
-            $"{ApiBase}/v3/cases/{tenantCaseId}/sections/{caseDataGroupId}/submittedForms?start=0&limit=500&column=createdDateTime&direction=-1");
-        if (!allFormsResp.IsSuccessStatusCode)
-        {
-            diag.Add($"Failed to get section forms: {allFormsResp.StatusCode}");
-            return [];
-        }
-
-        var allFormsJson = await allFormsResp.Content.ReadFromJsonAsync<JsonObject>();
-        var matchingForms = (allFormsJson?["results"]?.AsArray() ?? [])
-            .Where(f => versionIds.Contains(f?["formVersionId"]?.ToString() ?? ""))
-            .ToList();
-        diag.Add($"{matchingForms.Count} activity record form(s) found in section");
-
-        // Collect photo elements (componentLabel = "Photo"/"Photos" with encodedValue)
         var output = new List<(int ElementId, byte[] Data, string ContentType)>();
+        // Activity Record lives in the Activities section
+        await CollectSectionPhotosAsync(
+            http, tenantCaseId, ["*Activities*"], ActivityRecordFormId,
+            perTypeLimit, skipElementIds, diag, output);
+        // Well-being is also in the Activities section (confirmed via Mobizio API)
+        await CollectSectionPhotosAsync(
+            http, tenantCaseId, ["*Activities*"], WellBeingFormId,
+            perTypeLimit, skipElementIds, diag, output);
 
-        foreach (var form in matchingForms)
+        diag.Add($"Collected {output.Count} photo(s) total");
+        return output;
+    }
+
+    private async Task CollectSectionPhotosAsync(
+        HttpClient http, string tenantCaseId,
+        string[] sectionMqls, int formId,
+        int limit, HashSet<int>? skipElementIds,
+        List<string> diag, List<(int, byte[], string)> output)
+    {
+        string? sectionId = null;
+        string? sectionLabel = null;
+        foreach (var mql in sectionMqls)
+        {
+            var escapedMql = Uri.EscapeDataString($"serviceDataGroup.label~{mql}");
+            var sectionsResp = await http.GetAsync(
+                $"{ApiBase}/v3/cases/{tenantCaseId}/sections?start=0&limit=10&column=id&direction=1&mql={escapedMql}");
+            if (!sectionsResp.IsSuccessStatusCode) continue;
+
+            var sectionsJson = await sectionsResp.Content.ReadFromJsonAsync<JsonObject>();
+            var sectionResults = sectionsJson?["results"]?.AsArray() ?? [];
+            if (sectionResults.Count == 0) continue;
+
+            sectionId = sectionResults[0]?["id"]?.ToString();
+            sectionLabel = sectionResults[0]?["serviceDataGroup"]?["label"]?.ToString()
+                        ?? sectionResults[0]?["label"]?.ToString() ?? mql;
+            if (!string.IsNullOrWhiteSpace(sectionId)) break;
+        }
+
+        if (string.IsNullOrWhiteSpace(sectionId))
+        {
+            diag.Add($"[form {formId}] No section found for patterns: {string.Join(", ", sectionMqls)}");
+            return;
+        }
+        diag.Add($"[form {formId}] Using section '{sectionLabel}' (id={sectionId})");
+
+        // Use the form-specific _overview endpoint so we only get submissions for this form ID,
+        // with no version-ID filtering needed.
+        var overviewResp = await http.GetAsync(
+            $"{ApiBase}/v3/cases/{tenantCaseId}/sections/{sectionId}/forms/{formId}/submittedForms/_overview?start=0&limit=100&column=createdDateTime&direction=-1");
+        if (!overviewResp.IsSuccessStatusCode)
+        {
+            diag.Add($"[form {formId}] _overview endpoint failed: {overviewResp.StatusCode}");
+            return;
+        }
+
+        var overviewJson = await overviewResp.Content.ReadFromJsonAsync<JsonObject>();
+        var submissions = overviewJson?["results"]?.AsArray() ?? [];
+        diag.Add($"[form {formId}] {submissions.Count} submission(s) found");
+
+        foreach (var submission in submissions)
         {
             if (output.Count >= limit) break;
 
-            var submittedFormId = form?["id"]?.ToString();
+            var submittedFormId = submission?["id"]?.ToString();
             if (submittedFormId is null) continue;
 
-                var elemResp = await http.GetAsync(
-                    $"{ApiBase}/v3/submittedForms/{submittedFormId}/elements");
-                if (!elemResp.IsSuccessStatusCode) continue;
+            var elemResp = await http.GetAsync(
+                $"{ApiBase}/v3/submittedForms/{submittedFormId}/elements");
+            if (!elemResp.IsSuccessStatusCode) continue;
 
-                var elemBody = await elemResp.Content.ReadAsStringAsync();
-                var elemContent = System.Text.Json.JsonSerializer.Deserialize<JsonNode>(elemBody);
-                var elements = elemContent is JsonArray arr
-                    ? arr
-                    : elemContent?["results"]?.AsArray() ?? [];
+            var elemBody = await elemResp.Content.ReadAsStringAsync();
+            var elemContent = System.Text.Json.JsonSerializer.Deserialize<JsonNode>(elemBody);
+            var elements = elemContent is JsonArray arr
+                ? arr
+                : elemContent?["results"]?.AsArray() ?? [];
 
-                foreach (var elem in elements)
+            foreach (var elem in elements)
+            {
+                if (output.Count >= limit) break;
+
+                var label = elem?["componentLabel"]?.GetValue<string>() ?? "";
+                var elemType = elem?["type"]?.GetValue<string>() ?? "";
+
+                var isPhotoElem = elemType.Equals("photo", StringComparison.OrdinalIgnoreCase)
+                    || label.StartsWith("Photo", StringComparison.OrdinalIgnoreCase);
+                if (!isPhotoElem) continue;
+
+                var elemId = (int)(elem?["id"]?.GetValue<long?>() ?? 0);
+
+                var rawValue = elem?["encodedValue"]?.GetValue<string>();
+                if (string.IsNullOrWhiteSpace(rawValue))
+                    rawValue = elem?["value"]?.GetValue<string>();
+                if (string.IsNullOrWhiteSpace(rawValue))
+                    rawValue = elem?["valueSmallText"]?.GetValue<string>();
+
+                if (string.IsNullOrWhiteSpace(rawValue)) continue;
+
+                if (skipElementIds?.Contains(elemId) == true)
                 {
-                    if (output.Count >= limit) break;
+                    diag.Add($"  elem {elemId}: already imported");
+                    continue;
+                }
 
-                    var label = elem?["componentLabel"]?.GetValue<string>() ?? "";
-                    if (!label.Equals("Photo", StringComparison.OrdinalIgnoreCase) &&
-                        !label.Equals("Photos", StringComparison.OrdinalIgnoreCase))
-                        continue;
+                byte[] bytes;
+                string contentType = "image/jpeg";
 
-                    var encoded = elem?["encodedValue"]?.GetValue<string>();
-                    if (string.IsNullOrWhiteSpace(encoded)) continue;
-
-                    // Strip data URL prefix if present (e.g. "data:image/jpeg;base64,...")
-                    string contentType = "image/jpeg";
-                    if (encoded.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                if (rawValue.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                    rawValue.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    var photoResp = await http.GetAsync(rawValue);
+                    if (!photoResp.IsSuccessStatusCode)
                     {
-                        var comma = encoded.IndexOf(',');
+                        diag.Add($"  elem {elemId}: URL fetch failed {photoResp.StatusCode}");
+                        continue;
+                    }
+                    bytes = await photoResp.Content.ReadAsByteArrayAsync();
+                    contentType = photoResp.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
+                    diag.Add($"  elem {elemId}: fetched from URL, {bytes.Length} bytes, {contentType}");
+                }
+                else
+                {
+                    if (rawValue.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var comma = rawValue.IndexOf(',');
                         if (comma > 0)
                         {
-                            var header = encoded[5..comma]; // e.g. "image/png;base64"
-                            contentType = header.Split(';')[0];
-                            encoded = encoded[(comma + 1)..];
+                            contentType = rawValue[5..comma].Split(';')[0];
+                            rawValue = rawValue[(comma + 1)..];
                         }
                     }
-
                     try
                     {
-                        var elemId = elem?["id"]?.GetValue<long?>() ?? 0;
-                        if (skipElementIds?.Contains((int)elemId) == true)
-                        {
-                            diag.Add($"  form {submittedFormId} elem {elemId}: skipping (already imported)");
-                            continue;
-                        }
-                        var bytes = Convert.FromBase64String(encoded);
-                        diag.Add($"  form {submittedFormId} elem {elemId}: photo {bytes.Length} bytes, {contentType}");
-                        output.Add(((int)elemId, bytes, contentType));
+                        bytes = Convert.FromBase64String(rawValue);
+                        diag.Add($"  elem {elemId}: base64 decoded, {bytes.Length} bytes, {contentType}");
                     }
                     catch (FormatException)
                     {
-                        diag.Add($"  form {submittedFormId}: base64 decode failed");
+                        diag.Add($"  elem {elemId}: base64 decode failed");
+                        continue;
                     }
                 }
-        }
 
-        diag.Add($"Collected {output.Count} photo(s) from encodedValue");
-        return output;
+                output.Add((elemId, bytes, contentType));
+            }
+        }
     }
 
     internal async Task<IReadOnlyDictionary<string, string>> GetThisIsMeFieldsAsync(
