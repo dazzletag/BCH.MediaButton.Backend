@@ -190,6 +190,31 @@
             Mobizio tenant case ID (e.g. CASE-29959) — required for case-scoped API endpoints.
             </summary>
         </member>
+        <member name="P:MediaButtonBackend.Models.ResidentPlaylistSnapshot.CareHomeId">
+            <summary>Care home this resident is assigned to (used to scope Activities-team access).</summary>
+        </member>
+        <member name="T:MediaButtonBackend.Models.UserProfile">
+            <summary>
+            Portal user profile. Relative users see only their granted residents;
+            Activities users see all residents at their assigned care home.
+            Admins (Azure AD Admin role) bypass this table entirely.
+            </summary>
+        </member>
+        <member name="P:MediaButtonBackend.Models.UserProfile.AzureAdObjectId">
+            <summary>Azure AD object ID (oid claim). Populated on first sign-in; null until then.</summary>
+        </member>
+        <member name="P:MediaButtonBackend.Models.UserProfile.AzureAdEmail">
+            <summary>Azure AD UPN / email — used as the lookup key when OID is not yet set.</summary>
+        </member>
+        <member name="P:MediaButtonBackend.Models.UserProfile.Role">
+            <summary>Activities | Relative</summary>
+        </member>
+        <member name="P:MediaButtonBackend.Models.UserProfile.CareHomeId">
+            <summary>For Activities users: restricts access to residents at this care home.</summary>
+        </member>
+        <member name="T:MediaButtonBackend.Models.ResidentAccessGrant">
+            <summary>Grants a Relative user access to a specific resident.</summary>
+        </member>
         <member name="M:MediaButtonBackend.Services.MobizioService.GetResidentProfileByCaseIdAsync(System.String,System.String,System.String)">
             <summary>
             Fetch the This Is Me profile using a known Mobizio case ID, bypassing the
@@ -205,6 +230,19 @@
         <member name="T:MediaButtonBackend.Services.StorageCorsInitializer">
             <summary>
             Ensures Blob Storage CORS rules allow our frontend origins to PUT directly using SAS.
+            </summary>
+        </member>
+        <member name="T:MediaButtonBackend.Services.UserAccessService">
+            <summary>
+            Centralises resident-access checks so Relative and Activities users
+            only see the residents they are authorised to access.
+            Admin users (Azure AD "Admin" role) always bypass these checks.
+            </summary>
+        </member>
+        <member name="M:MediaButtonBackend.Services.UserAccessService.GetAllowedResidentsAsync(System.Security.Claims.ClaimsPrincipal)">
+            <summary>
+            Returns a list of resident keys the caller may access.
+            Returns null to indicate "all residents" (admin path).
             </summary>
         </member>
         <member name="T:MediaButton.Backend.Api.Data.Migrations.InitialCreate">
@@ -277,6 +315,18 @@
             <inheritdoc />
         </member>
         <member name="M:MediaButton.Backend.Api.Data.Migrations.AddMobizioTenantId.BuildTargetModel(Microsoft.EntityFrameworkCore.ModelBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="T:MediaButton.Backend.Api.Data.Migrations.AddUserManagement">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.AddUserManagement.Up(Microsoft.EntityFrameworkCore.Migrations.MigrationBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.AddUserManagement.Down(Microsoft.EntityFrameworkCore.Migrations.MigrationBuilder)">
+            <inheritdoc />
+        </member>
+        <member name="M:MediaButton.Backend.Api.Data.Migrations.AddUserManagement.BuildTargetModel(Microsoft.EntityFrameworkCore.ModelBuilder)">
             <inheritdoc />
         </member>
     </members>
