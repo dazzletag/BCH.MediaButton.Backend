@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { InteractionStatus } from "@azure/msal-browser";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import Dashboard from "./views/Dashboard";
 import Devices from "./views/Devices";
 import Users from "./views/Users";
+import { useApiClient } from "./hooks/useApiClient";
 import { loginRequest } from "./msalConfig";
 import "./styles/layout.css";
 
@@ -72,16 +73,19 @@ function Landing() {
 
 function AuthenticatedApp() {
   const { instance, accounts } = useMsal();
+  const { call } = useApiClient();
   const [tab, setTab] = useState<Tab>("media");
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const signOut = () => instance.logoutRedirect();
   const account = accounts[0];
   const accountName = account?.name ?? "Signed in";
 
-  const isAdmin = (account?.idTokenClaims as Record<string, unknown> | undefined)
-    ?.roles instanceof Array
-    ? ((account.idTokenClaims as Record<string, unknown>).roles as string[]).includes("Admin")
-    : false;
+  useEffect(() => {
+    call<{ isAdmin: boolean }>({ url: "/api/admin/me", method: "GET" })
+      .then((res) => setIsAdmin(res.isAdmin))
+      .catch(() => setIsAdmin(false));
+  }, [call]);
 
   return (
     <div className="page">
