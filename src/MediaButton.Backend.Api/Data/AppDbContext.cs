@@ -16,6 +16,9 @@ public class AppDbContext : DbContext
     public DbSet<ResidentPlaylistSnapshot> ResidentPlaylists => Set<ResidentPlaylistSnapshot>();
     public DbSet<CachedVideo> CachedVideos => Set<CachedVideo>();
     public DbSet<DeviceCacheCommand> DeviceCacheCommands => Set<DeviceCacheCommand>();
+    public DbSet<CareHome> CareHomes => Set<CareHome>();
+    public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
+    public DbSet<ResidentAccessGrant> ResidentAccessGrants => Set<ResidentAccessGrant>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -87,6 +90,40 @@ public class AppDbContext : DbContext
             b.Property(c => c.CreatedBy).HasMaxLength(200);
             b.Property(c => c.Status).IsRequired().HasMaxLength(20);
             b.HasIndex(c => new { c.DeviceId, c.Status });
+        });
+
+        modelBuilder.Entity<CareHome>(b =>
+        {
+            b.HasKey(c => c.Id);
+            b.Property(c => c.Name).IsRequired().HasMaxLength(200);
+            b.HasIndex(c => c.Name).IsUnique();
+        });
+
+        modelBuilder.Entity<UserProfile>(b =>
+        {
+            b.HasKey(u => u.Id);
+            b.Property(u => u.AzureAdObjectId).HasMaxLength(100);
+            b.Property(u => u.AzureAdEmail).IsRequired().HasMaxLength(200);
+            b.Property(u => u.DisplayName).HasMaxLength(200);
+            b.Property(u => u.Role).IsRequired().HasMaxLength(20);
+            b.HasIndex(u => u.AzureAdEmail).IsUnique();
+            b.HasIndex(u => u.AzureAdObjectId);
+            b.HasOne(u => u.CareHome)
+                .WithMany()
+                .HasForeignKey(u => u.CareHomeId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<ResidentAccessGrant>(b =>
+        {
+            b.HasKey(g => g.Id);
+            b.Property(g => g.ResidentKey).IsRequired().HasMaxLength(200);
+            b.Property(g => g.GrantedBy).HasMaxLength(200);
+            b.HasIndex(g => new { g.UserProfileId, g.ResidentKey }).IsUnique();
+            b.HasOne(g => g.UserProfile)
+                .WithMany(u => u.AccessGrants)
+                .HasForeignKey(g => g.UserProfileId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

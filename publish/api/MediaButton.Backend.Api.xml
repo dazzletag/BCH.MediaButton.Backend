@@ -50,6 +50,12 @@
             (e.g., the portal shows 'deleting…' until the Pi confirms).
             </summary>
         </member>
+        <member name="M:MediaButtonBackend.Controllers.AdminResidentMobizioController.DebugSections(System.String,System.String)">
+            <summary>
+            Diagnostic: list all form sections for a resident and the distinct form IDs used in each,
+            so you can identify the Well-being (or any other) form ID for configuration.
+            </summary>
+        </member>
         <member name="M:MediaButtonBackend.Controllers.AdminResidentMobizioController.DebugThisIsMe(System.String,System.String,System.String)">
             <summary>Diagnostic: trace This Is Me field fetch for a resident by known Mobizio IDs.</summary>
         </member>

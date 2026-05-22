@@ -93,3 +93,26 @@ export type DeviceCacheCommand = {
   createdAt: string;
   status: "pending" | "acked" | "applied" | "failed" | "expired";
 };
+
+export type CareHome = {
+  id: string;
+  name: string;
+};
+
+export type UserProfile = {
+  id: string;
+  azureAdEmail: string;
+  displayName?: string | null;
+  role: "Activities" | "Relative";
+  careHomeId?: string | null;
+  careHomeName?: string | null;
+  residents: string[];
+};
+
+export type ResidentAccessGrant = {
+  id: string;
+  userProfileId: string;
+  residentKey: string;
+  grantedAt: string;
+  grantedBy?: string | null;
+};

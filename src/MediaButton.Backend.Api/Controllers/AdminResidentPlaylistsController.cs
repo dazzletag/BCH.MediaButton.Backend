@@ -2,6 +2,7 @@ using System.Text.Json;
 using MediaButtonBackend.Api.Models;
 using MediaButtonBackend.Data;
 using MediaButtonBackend.Models;
+using MediaButtonBackend.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -14,21 +15,25 @@ namespace MediaButtonBackend.Controllers;
 public class AdminResidentPlaylistsController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly UserAccessService _access;
     private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
 
-    public AdminResidentPlaylistsController(AppDbContext db)
+    public AdminResidentPlaylistsController(AppDbContext db, UserAccessService access)
     {
         _db = db;
+        _access = access;
     }
 
     [HttpGet]
     public async Task<IActionResult> ListResidents()
     {
-        var residents = await _db.ResidentPlaylists
-            .Select(r => r.Resident)
-            .OrderBy(r => r)
-            .ToListAsync();
+        var allowed = await _access.GetAllowedResidentsAsync(User);
 
+        IQueryable<string> query = _db.ResidentPlaylists.Select(r => r.Resident);
+        if (allowed != null)
+            query = query.Where(r => allowed.Contains(r));
+
+        var residents = await query.OrderBy(r => r).ToListAsync();
         return Ok(residents);
     }
 

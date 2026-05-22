@@ -232,4 +232,72 @@ public class ResidentPlaylistSnapshot
     /// </summary>
     [MaxLength(100)]
     public string? MobizioTenantId { get; set; }
+
+    /// <summary>Care home this resident is assigned to (used to scope Activities-team access).</summary>
+    public Guid? CareHomeId { get; set; }
+}
+
+public class CareHome
+{
+    [Key]
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    [Required]
+    [MaxLength(200)]
+    public string Name { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Portal user profile. Relative users see only their granted residents;
+/// Activities users see all residents at their assigned care home.
+/// Admins (Azure AD Admin role) bypass this table entirely.
+/// </summary>
+public class UserProfile
+{
+    [Key]
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    /// <summary>Azure AD object ID (oid claim). Populated on first sign-in; null until then.</summary>
+    [MaxLength(100)]
+    public string? AzureAdObjectId { get; set; }
+
+    /// <summary>Azure AD UPN / email — used as the lookup key when OID is not yet set.</summary>
+    [Required]
+    [MaxLength(200)]
+    public string AzureAdEmail { get; set; } = string.Empty;
+
+    [MaxLength(200)]
+    public string? DisplayName { get; set; }
+
+    /// <summary>Activities | Relative</summary>
+    [Required]
+    [MaxLength(20)]
+    public string Role { get; set; } = "Relative";
+
+    /// <summary>For Activities users: restricts access to residents at this care home.</summary>
+    public Guid? CareHomeId { get; set; }
+    public CareHome? CareHome { get; set; }
+
+    public ICollection<ResidentAccessGrant> AccessGrants { get; set; } = new List<ResidentAccessGrant>();
+}
+
+/// <summary>Grants a Relative user access to a specific resident.</summary>
+public class ResidentAccessGrant
+{
+    [Key]
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    [Required]
+    public Guid UserProfileId { get; set; }
+
+    public UserProfile? UserProfile { get; set; }
+
+    [Required]
+    [MaxLength(200)]
+    public string ResidentKey { get; set; } = string.Empty;
+
+    public DateTimeOffset GrantedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    [MaxLength(200)]
+    public string? GrantedBy { get; set; }
 }

@@ -79,6 +79,7 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddScoped<StorageSasService>();
 builder.Services.AddScoped<StorageCorsInitializer>();
 builder.Services.AddScoped<MediaButtonBackend.Services.MobizioService>();
+builder.Services.AddScoped<MediaButtonBackend.Services.UserAccessService>();
 builder.Services.AddHttpClient();
 
 var app = builder.Build();

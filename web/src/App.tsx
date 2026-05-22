@@ -3,10 +3,11 @@ import { InteractionStatus } from "@azure/msal-browser";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import Dashboard from "./views/Dashboard";
 import Devices from "./views/Devices";
+import Users from "./views/Users";
 import { loginRequest } from "./msalConfig";
 import "./styles/layout.css";
 
-type Tab = "media" | "devices";
+type Tab = "media" | "devices" | "users";
 
 function Landing() {
   const { instance, inProgress } = useMsal();
@@ -74,7 +75,13 @@ function AuthenticatedApp() {
   const [tab, setTab] = useState<Tab>("media");
 
   const signOut = () => instance.logoutRedirect();
-  const accountName = accounts[0]?.name ?? "Signed in";
+  const account = accounts[0];
+  const accountName = account?.name ?? "Signed in";
+
+  const isAdmin = (account?.idTokenClaims as Record<string, unknown> | undefined)
+    ?.roles instanceof Array
+    ? ((account.idTokenClaims as Record<string, unknown>).roles as string[]).includes("Admin")
+    : false;
 
   return (
     <div className="page">
@@ -101,13 +108,24 @@ function AuthenticatedApp() {
           >
             Devices
           </button>
+          {isAdmin && (
+            <button
+              className={`btn ${tab === "users" ? "primary" : "ghost"}`}
+              style={{ borderRadius: 10 }}
+              onClick={() => setTab("users")}
+            >
+              Users
+            </button>
+          )}
         </nav>
         <div className="nav-actions">
           <span className="muted" style={{ fontSize: 14 }}>{accountName}</span>
           <button className="btn ghost" onClick={signOut}>Sign out</button>
         </div>
       </header>
-      {tab === "media" ? <Dashboard /> : <Devices />}
+      {tab === "media" && <Dashboard />}
+      {tab === "devices" && <Devices />}
+      {tab === "users" && <Users />}
     </div>
   );
 }
