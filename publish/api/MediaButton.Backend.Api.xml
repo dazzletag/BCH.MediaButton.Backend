@@ -66,6 +66,19 @@
             and returns the new media IDs ready to be added to the resident's playlist.
             </summary>
         </member>
+        <member name="M:MediaButtonBackend.Controllers.AdminSyncController.CaseStructure">
+            <summary>
+            Diagnostic: returns raw top-level field names from the first Mobizio case,
+            so we can confirm the branch field name.
+            </summary>
+        </member>
+        <member name="M:MediaButtonBackend.Controllers.AdminSyncController.SyncCareHomes">
+            <summary>
+            Reads all active cases from Mobizio, auto-creates CareHome records for each
+            distinct branch name found, and sets CareHomeId on each ResidentPlaylistSnapshot
+            that matches a resident name. Returns a summary of what was created/updated.
+            </summary>
+        </member>
         <member name="T:MediaButtonBackend.Controllers.DeviceCacheController">
              <summary>
              Pi-facing endpoints for the local video cache.
@@ -220,6 +233,9 @@
             Fetch the This Is Me profile using a known Mobizio case ID, bypassing the
             full-list name search. Used when the case ID was captured during device setup.
             </summary>
+        </member>
+        <member name="M:MediaButtonBackend.Services.MobizioService.GetCaseStructureSampleAsync">
+            <summary>Returns the top-level keys and branch-like field values from the first case, for diagnostics.</summary>
         </member>
         <member name="M:MediaButtonBackend.Services.MobizioService.GetActivityPhotoUrlsAsync(System.String,System.Collections.Generic.List{System.String},System.Collections.Generic.HashSet{System.Int32},System.Nullable{System.Int32},System.String,System.String)">
             <summary>

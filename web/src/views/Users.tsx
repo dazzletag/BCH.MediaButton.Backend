@@ -36,6 +36,9 @@ export default function Users() {
   const [editCareHomeId, setEditCareHomeId] = useState<string>("");
   const [savingUser, setSavingUser] = useState(false);
 
+  // Mobizio sync
+  const [syncing, setSyncing] = useState(false);
+
   // Adding a resident grant
   const [grantUserId, setGrantUserId] = useState<string | null>(null);
   const [grantResident, setGrantResident] = useState("");
@@ -74,6 +77,27 @@ export default function Users() {
     loadUsers();
     loadResidents();
   }, [loadCareHomes, loadUsers, loadResidents]);
+
+  const syncFromMobizio = async () => {
+    setSyncing(true);
+    setError(null);
+    try {
+      const result = await call<{ homesCreated: number; residentsAssigned: number; residentsNotFound: number; diag: string[] }>({
+        url: "/api/admin/sync/care-homes-from-mobizio",
+        method: "POST",
+        timeout: 120000,
+      });
+      const msg = result.homesCreated === 0 && result.residentsAssigned === 0
+        ? result.diag.find(d => d.includes("Branch values")) ?? "No branch data found — residents may not have a branch assigned in Mobizio."
+        : `Synced: ${result.homesCreated} home(s) created, ${result.residentsAssigned} resident(s) assigned.`;
+      setSaveMsg(msg);
+      await loadCareHomes();
+    } catch (err: any) {
+      setError(err?.response?.data?.error ?? "Sync failed.");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const addCareHome = async () => {
     if (!newHomeName.trim()) return;
@@ -251,8 +275,16 @@ export default function Users() {
         <div className="card glass">
           <div className="card-header">
             <p className="card-title">Care homes</p>
-            <span className="tag">{careHomes.length} home(s)</span>
+            <div className="nav-actions" style={{ gap: 8 }}>
+              <span className="tag">{careHomes.length} home(s)</span>
+              <button className="btn ghost" style={{ padding: "4px 12px", fontSize: 13 }} disabled={syncing} onClick={syncFromMobizio}>
+                {syncing ? "Syncing..." : "Sync from Mobizio"}
+              </button>
+            </div>
           </div>
+          <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+            Homes and resident assignments are read from the branch field in Mobizio. Hit Sync to pull them in automatically.
+          </p>
 
           <div className="list" style={{ marginBottom: 16 }}>
             {careHomes.map((h) => (

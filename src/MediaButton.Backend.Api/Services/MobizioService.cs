@@ -9,7 +9,7 @@ public record ResidentMobizioProfile(
     string? Gender,
     IReadOnlyDictionary<string, string> FormFields);
 
-public record MobizioResidentSummary(string Name, string CaseId, string? TenantCaseId, string? Dob);
+public record MobizioResidentSummary(string Name, string CaseId, string? TenantCaseId, string? Dob, string? Branch);
 
 public class MobizioService(IConfiguration configuration, IHttpClientFactory httpFactory, ILogger<MobizioService> logger)
 {
@@ -49,7 +49,14 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
             var caseId       = item?["id"]?.ToString() ?? "";
             var tenantCaseId = item?["tenantCaseId"]?.GetValue<string>();
             var dob          = customer?["dob"]?.GetValue<string>();
-            residents.Add(new MobizioResidentSummary(name, caseId, tenantCaseId, dob));
+
+            // Try common Mobizio field names for the care home / branch
+            var branch = item?["branch"]?["name"]?.GetValue<string>()
+                      ?? item?["branch"]?["label"]?.GetValue<string>()
+                      ?? item?["location"]?["name"]?.GetValue<string>()
+                      ?? item?["serviceProvider"]?["name"]?.GetValue<string>();
+
+            residents.Add(new MobizioResidentSummary(name, caseId, tenantCaseId, dob, branch));
         }
 
         return residents.OrderBy(r => r.Name).ToList();
@@ -89,6 +96,30 @@ public class MobizioService(IConfiguration configuration, IHttpClientFactory htt
     }
 
     internal async Task<string> GetTokenForDebugAsync() => await GetTokenAsync();
+
+    /// <summary>Returns the top-level keys and branch-like field values from the first case, for diagnostics.</summary>
+    public async Task<object> GetCaseStructureSampleAsync()
+    {
+        var token = await GetTokenAsync();
+        using var http = httpFactory.CreateClient();
+        http.Timeout = TimeSpan.FromSeconds(30);
+        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var resp = await http.GetAsync($"{ApiBase}/v3/cases?start=0&limit=1&column=id&direction=1&mql=archived%3Dfalse");
+        resp.EnsureSuccessStatusCode();
+        var json = await resp.Content.ReadFromJsonAsync<JsonObject>();
+        var first = json?["results"]?.AsArray().FirstOrDefault();
+        if (first is null) return new { error = "No cases found" };
+
+        // Return top-level keys and the full values of anything that looks like a branch/location
+        var keys = first.AsObject().Select(kvp => new
+        {
+            key = kvp.Key,
+            valuePreview = kvp.Value?.ToJsonString()?[..Math.Min(200, kvp.Value.ToJsonString().Length)]
+        }).ToList();
+
+        return new { topLevelFields = keys };
+    }
 
     private async Task<string> GetTokenAsync()
     {
