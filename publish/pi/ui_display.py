@@ -1069,9 +1069,14 @@ class MediaUI:
 def _fmt_duration(secs, size_bytes) -> str:
     parts = []
     if secs:
-        m, s = divmod(int(secs), 60)
-        h, m = divmod(m, 60)
-        parts.append(f"{h}:{m:02}:{s:02}" if h else f"{m}:{s:02}")
+        total_m = int(secs) // 60
+        h, m = divmod(total_m, 60)
+        if h and m:
+            parts.append(f"{h} hour{'s' if h != 1 else ''} {m} mins")
+        elif h:
+            parts.append(f"{h} hour{'s' if h != 1 else ''}")
+        else:
+            parts.append(f"{max(total_m, 1)} min{'s' if total_m != 1 else ''}")
     if size_bytes:
         parts.append(f"{size_bytes / 1_048_576:.0f} MB")
     return "  ".join(parts) if parts else ""
