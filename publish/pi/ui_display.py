@@ -619,10 +619,14 @@ class MediaUI:
             self._menu_items = []
             for row in videos:
                 t = (row.get("title") or row.get("source_id") or "").strip() or "(untitled)"
-                dur = _fmt_duration(row.get("duration_seconds"), row.get("filesize_bytes"))
-                plays = row.get("play_count") or 0
-                meta = dur + (f"   ▶ {plays}×" if plays else "")
-                self._card_data.append([t, meta, None])
+                if row.get("_shuffle"):
+                    meta = row.get("_meta_override", "")
+                    self._card_data.append([t, meta, "shuffle"])
+                else:
+                    dur = _fmt_duration(row.get("duration_seconds"), row.get("filesize_bytes"))
+                    plays = row.get("play_count") or 0
+                    meta = dur + (f"   ▶ {plays}×" if plays else "")
+                    self._card_data.append([t, meta, None])
                 self._menu_items.append(t)
             self._menu_selected = 0
             self._menu_mode = "card"
@@ -696,12 +700,25 @@ class MediaUI:
         if selected:
             draw.rectangle([0, 0, 7, self._CARD_H - 1], fill=ACCENT)
         tx, ty = 18, (self._CARD_H - self._THUMB_H) // 2
-        if thumb_pil:
+        if thumb_pil == "shuffle":
+            ph = Image.new("RGB", (self._THUMB_W, self._THUMB_H), (10, 14, 26))
+            pd = ImageDraw.Draw(ph)
+            pd.rectangle([0, 0, self._THUMB_W - 1, self._THUMB_H - 1], outline=ACCENT)
+            f_big = _safe_font(22, bold=True)
+            f_sm  = _safe_font(15)
+            tw, th = _measure_text(pd, "SHUFFLE", f_big)
+            px = (self._THUMB_W - tw) // 2
+            py = self._THUMB_H // 2 - th - 4
+            pd.text((px, py), "SHUFFLE", font=f_big, fill=ACCENT)
+            aw, _ = _measure_text(pd, "ALL", f_sm)
+            pd.text(((self._THUMB_W - aw) // 2, py + th + 6), "ALL", font=f_sm, fill="#aaaacc")
+            card.paste(ph, (tx, ty))
+        elif isinstance(thumb_pil, Image.Image):
             try:
                 card.paste(thumb_pil.resize((self._THUMB_W, self._THUMB_H), Image.LANCZOS), (tx, ty))
             except Exception:
                 thumb_pil = None
-        if not thumb_pil:
+        if thumb_pil is None:
             ph = Image.new("RGB", (self._THUMB_W, self._THUMB_H), (14, 14, 24))
             pd = ImageDraw.Draw(ph)
             pd.rectangle([0, 0, self._THUMB_W - 1, self._THUMB_H - 1], outline=(40, 40, 65))

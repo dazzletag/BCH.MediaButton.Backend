@@ -2379,7 +2379,18 @@ class RemoteMenuController:
         if not self._cached_videos:
             self.open_menu()
             return
-        videos = [{k: row[k] for k in row.keys()} for row in self._cached_videos]
+        n = len(self._cached_videos)
+        shuffle_card = {
+            "title": "Shuffle All",
+            "source_id": "shuffle",
+            "duration_seconds": None,
+            "filesize_bytes": None,
+            "play_count": 0,
+            "filepath": None,
+            "_shuffle": True,
+            "_meta_override": f"{n} video{'s' if n != 1 else ''}  •  random order",
+        }
+        videos = [shuffle_card] + [{k: row[k] for k in row.keys()} for row in self._cached_videos]
         self.ui.show_video_card_menu(videos)
 
     def _open_photos_menu(self):
@@ -2436,10 +2447,27 @@ class RemoteMenuController:
                 self.engine.start_manual_session(self.resident or "radio", playlist_override=radio_item, start_index=0, ordered=True)
             return
 
-        # Cached-videos submenu — play the selected file directly.
+        # Cached-videos submenu — index 0 = shuffle all, index 1+ = individual video.
         if self._in_videos_submenu:
-            if 0 <= idx < len(self._cached_videos):
-                row = self._cached_videos[idx]
+            if idx == 0:
+                import random as _random
+                rows = list(self._cached_videos)
+                _random.shuffle(rows)
+                playlist = [
+                    {"type": "cached", "id": int(r["id"]), "filepath": r["filepath"],
+                     "name": r["title"] or r["source_id"], "duration": r["duration_seconds"]}
+                    for r in rows
+                ]
+                self.ui.hide_menu()
+                self._in_videos_submenu = False
+                self.engine.start_manual_session(
+                    self.resident or "cached",
+                    playlist_override=playlist,
+                    start_index=0,
+                    ordered=True,
+                )
+            elif 0 < idx <= len(self._cached_videos):
+                row = self._cached_videos[idx - 1]  # offset by 1 for shuffle card
                 item = {
                     "type": "cached",
                     "id": int(row["id"]),
