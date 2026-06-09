@@ -197,6 +197,43 @@ def run_disk_cap_sweep(currently_playing_filepath: str | None = None) -> int:
 
 
 # -------------------------------------------------------------------------
+# Stale partial-download cleanup
+# -------------------------------------------------------------------------
+_STALE_PART_EXTENSIONS = (".part", ".ytdl", ".tmp")
+_STALE_PART_MIN_AGE_SECONDS = int(os.getenv("VIDEO_CACHE_STALE_PART_AGE", str(4 * 3600)))
+
+
+def run_stale_parts_sweep() -> int:
+    """
+    Delete yt-dlp work files (.part, .ytdl, .tmp) that are older than
+    VIDEO_CACHE_STALE_PART_AGE seconds (default 4 h). Files younger than
+    that threshold belong to an active or very recent download and are left
+    alone. Returns the number of files removed.
+    """
+    cache_dir = cache_db.VIDEO_CACHE_DIR
+    if not os.path.isdir(cache_dir):
+        return 0
+
+    now = time.time()
+    removed = 0
+    for fname in os.listdir(cache_dir):
+        if not any(fname.endswith(ext) for ext in _STALE_PART_EXTENSIONS):
+            continue
+        fp = os.path.join(cache_dir, fname)
+        try:
+            age = now - os.path.getmtime(fp)
+            if age < _STALE_PART_MIN_AGE_SECONDS:
+                continue
+            os.remove(fp)
+            removed += 1
+        except Exception:
+            pass
+    if removed:
+        _log(f"[GC] Removed {removed} stale partial download file(s)")
+    return removed
+
+
+# -------------------------------------------------------------------------
 # Full sweep
 # -------------------------------------------------------------------------
 def run_full_sweep(currently_playing_filepath: str | None = None) -> dict[str, int]:
@@ -207,6 +244,7 @@ def run_full_sweep(currently_playing_filepath: str | None = None) -> dict[str, i
         "undersize": run_undersize_sweep(currently_playing_filepath),
         "dangling": run_disk_consistency_sweep(currently_playing_filepath),
         "disk_cap": run_disk_cap_sweep(currently_playing_filepath),
+        "stale_parts": run_stale_parts_sweep(),
     }
 
 
