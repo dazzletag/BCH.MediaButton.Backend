@@ -95,6 +95,70 @@ public class DeviceResidentPlaylistsController : ControllerBase
         return Ok(new DeviceManualPlaylistResponse(key, resolved, snapshot?.ManualUpdatedAt, snapshot?.ManualUpdatedBy));
     }
 
+    /// <summary>
+    /// Called by the Pi after AI term generation. Appends any missing YouTube
+    /// search terms to the manual playlist so they are visible and editable in
+    /// the portal. Existing items are never removed or reordered.
+    /// ManualUpdatedAt is intentionally NOT changed — this is a transparent
+    /// background action, not a user-driven edit.
+    /// </summary>
+    [HttpPost("{resident}/suggest-terms")]
+    public async Task<IActionResult> SuggestTerms(string deviceId, string resident, [FromBody] SuggestTermsPayload payload)
+    {
+        var authedDevice = HttpContext.Items["DeviceId"] as string;
+        if (!string.Equals(authedDevice, deviceId, StringComparison.OrdinalIgnoreCase))
+            return Unauthorized("Device mismatch.");
+
+        if (payload?.Terms == null || payload.Terms.Count == 0)
+            return BadRequest("Terms are required.");
+
+        var key = NormalizeResident(resident);
+        var snapshot = await _db.ResidentPlaylists.FirstOrDefaultAsync(r => r.Resident == key);
+        var isNew = snapshot == null;
+        snapshot ??= new ResidentPlaylistSnapshot { Resident = key };
+
+        var existing = ParseManual(snapshot.ManualPlaylistJson);
+
+        // Collect all query strings already in the playlist to avoid duplicates
+        var existingQueries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in existing)
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                existingQueries.Add(item.GetString() ?? "");
+            }
+            else if (item.ValueKind == JsonValueKind.Object)
+            {
+                if (item.TryGetProperty("query", out var q) && q.ValueKind == JsonValueKind.String)
+                    existingQueries.Add(q.GetString() ?? "");
+            }
+        }
+
+        var merged = new List<object>(existing.Select(j => (object)j));
+        int added = 0;
+        foreach (var term in payload.Terms)
+        {
+            var t = (term ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(t) || existingQueries.Contains(t)) continue;
+            merged.Add(new { type = "youtube", query = t, source = "ai" });
+            existingQueries.Add(t);
+            added++;
+        }
+
+        if (added == 0)
+            return NoContent();
+
+        snapshot.ManualPlaylistJson = JsonSerializer.Serialize(merged, _jsonOptions);
+
+        if (isNew)
+            _db.ResidentPlaylists.Add(snapshot);
+        else
+            _db.ResidentPlaylists.Update(snapshot);
+
+        await _db.SaveChangesAsync();
+        return Ok(new { added });
+    }
+
     private static string NormalizeResident(string resident) =>
         (resident ?? string.Empty).Trim();
 

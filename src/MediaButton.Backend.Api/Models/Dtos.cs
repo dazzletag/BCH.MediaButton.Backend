@@ -40,6 +40,8 @@ public record AiPlaylistPayload(
 
 public record ManualPlaylistUpdate(List<JsonElement> Items);
 
+public record SuggestTermsPayload(List<string> Terms);
+
 public record ResidentPlaylistAssignment(string? PlaylistId, List<string>? RadioFavorites, List<string>? PlaylistUrls, string? SeasonalTheme, string? Resident);
 
 public record ManualPlaylistResponse(string Resident, IReadOnlyList<object?> Items, DateTimeOffset? UpdatedAtUtc, string? UpdatedBy, DateTimeOffset? LastPolledAt);

@@ -820,6 +820,27 @@ def _device_headers():
         return {}
     return {"X-DEVICE-KEY": DEVICE_KEY}
 
+def push_suggested_terms_to_api(resident: str, terms: list[str]):
+    """Push AI-generated YouTube search terms to the portal manual playlist.
+    The server appends any terms not already present so they are visible and
+    editable by relatives/staff. ManualUpdatedAt is not changed server-side."""
+    if not API_BASE or not DEVICE_ID or not DEVICE_KEY or not terms:
+        return
+    try:
+        url = (f"{API_BASE}/api/device/{urllib.parse.quote(DEVICE_ID)}"
+               f"/resident/{urllib.parse.quote(resident)}/suggest-terms")
+        r = requests.post(url, headers=_device_headers(), json={"terms": terms}, timeout=10)
+        if r.status_code == 204:
+            print(f"[API] Suggest-terms for {resident}: all terms already present")
+        elif r.status_code == 200:
+            added = r.json().get("added", 0)
+            print(f"[API] Suggest-terms for {resident}: {added} term(s) added to portal playlist")
+        else:
+            print(f"[API] Suggest-terms for {resident}: {r.status_code}")
+    except Exception as e:
+        print(f"[API] Suggest-terms failed for {resident}: {e}")
+
+
 def push_ai_playlist_to_api(resident: str, playlist: list[str], survey_hash: str | None, model: str | None, meta: dict | None = None):
     if not API_BASE or not DEVICE_ID or not DEVICE_KEY or not playlist:
         return
@@ -1634,6 +1655,11 @@ class Engine:
 
             if count:
                 _log(f"[CACHE] LLM bootstrap: registered {count} term(s) for {resident}")
+                # Push to portal so terms are visible/editable by relatives
+                try:
+                    push_suggested_terms_to_api(resident, [t for t in plist if isinstance(t, str) and t.strip()])
+                except Exception as e:
+                    _log(f"[CACHE] LLM bootstrap: suggest-terms push failed: {e}")
                 try:
                     video_downloader.kick()
                 except Exception:
