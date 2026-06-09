@@ -2907,11 +2907,22 @@ def main():
     # active (button held).
     try:
         cache_db.init_db()
+        # Residents explicitly configured on this device — the downloader
+        # restricts background fetching to these names only so it never
+        # builds up a cache for residents that belong to other Pis.
+        _configured_residents: list[str] = []
+        _rc_resident = CONFIG.get("remote_control", {}).get("resident")
+        if _rc_resident:
+            _configured_residents.append(_rc_resident)
+        for _name in (CONFIG.get("residents") or {}).keys():
+            if _name not in _configured_residents:
+                _configured_residents.append(_name)
         video_downloader.start(
             playback_active=ENGINE.is_playback_active,
             menu_active=_menu_active_event,
             get_active_residents=lambda: list(ENGINE.sessions.keys()),
             is_online=wifi_healthy,
+            allowed_residents=_configured_residents or None,
         )
         # One full GC sweep at startup, then a slow timer for safety-net
         # cleanup. The timer reads ENGINE.currently_playing_filepath on

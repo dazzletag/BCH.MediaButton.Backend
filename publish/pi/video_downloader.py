@@ -307,6 +307,7 @@ class DownloadWorker:
         get_active_residents,           # callable -> list[str]
         is_online=None,                 # optional callable -> bool
         per_term_cap: int = cache_db.VIDEO_CACHE_PER_TERM_CAP,
+        allowed_residents: list[str] | None = None,
     ):
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -318,6 +319,9 @@ class DownloadWorker:
         # yt-dlp failures while the Pi has no network.
         self.is_online = is_online
         self.per_term_cap = per_term_cap
+        # When set, background downloads are restricted to these residents
+        # only — terms for other residents in the DB are ignored.
+        self.allowed_residents = allowed_residents or None
         self._thread: threading.Thread | None = None
 
     def start(self):
@@ -355,6 +359,10 @@ class DownloadWorker:
         except Exception:
             active = []
 
+        # Filter active residents to the allowed set when configured
+        if self.allowed_residents is not None:
+            active = [r for r in active if r in self.allowed_residents]
+
         for resident in active:
             rows = cache_db.terms_below_cap(self.per_term_cap, resident=resident)
             for r in rows:
@@ -362,12 +370,23 @@ class DownloadWorker:
                     continue
                 return _row_to_dict(r)
 
-        # Global pass for everyone else
-        rows = cache_db.terms_below_cap(self.per_term_cap)
-        for r in rows:
-            if cache_db.term_in_cooldown(int(r["term_id"])):
-                continue
-            return _row_to_dict(r)
+        # Background pass — restricted to allowed_residents when configured,
+        # otherwise covers every resident in the DB.
+        if self.allowed_residents is not None:
+            for resident in self.allowed_residents:
+                if resident in active:
+                    continue  # already checked in priority pass above
+                rows = cache_db.terms_below_cap(self.per_term_cap, resident=resident)
+                for r in rows:
+                    if cache_db.term_in_cooldown(int(r["term_id"])):
+                        continue
+                    return _row_to_dict(r)
+        else:
+            rows = cache_db.terms_below_cap(self.per_term_cap)
+            for r in rows:
+                if cache_db.term_in_cooldown(int(r["term_id"])):
+                    continue
+                return _row_to_dict(r)
         return None
 
     def _run(self):
@@ -498,6 +517,7 @@ def start(
     get_active_residents,
     menu_active: threading.Event | None = None,
     is_online=None,
+    allowed_residents: list[str] | None = None,
 ) -> DownloadWorker:
     global _worker
     if _worker is None:
@@ -506,6 +526,7 @@ def start(
             menu_active=menu_active,
             get_active_residents=get_active_residents,
             is_online=is_online,
+            allowed_residents=allowed_residents,
         )
     _worker.start()
     return _worker
