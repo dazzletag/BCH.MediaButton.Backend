@@ -2263,6 +2263,8 @@ class RemoteMenuController:
         self._in_video_action_submenu = False
         self._in_delete_confirm = False
         self._action_target_video: dict | None = None
+        self._in_photo_slideshow = False
+        self._photo_sl_index = 0
         if not self.enabled:
             return
         self._bind_keys()
@@ -2375,6 +2377,8 @@ class RemoteMenuController:
         self._in_video_action_submenu = False
         self._in_delete_confirm = False
         self._action_target_video = None
+        self._in_photo_slideshow = False
+        self._photo_sl_index = 0
         self._ensure_playlist()
         title = self.resident or "Menu"
         specials = self._current_special_items()
@@ -2422,18 +2426,21 @@ class RemoteMenuController:
         if not self._photos_playlist:
             self.open_menu()
             return
-        labels = []
-        for item in self._photos_playlist:
-            if isinstance(item, dict):
-                name = (item.get("name") or item.get("title") or item.get("url") or "(photo)").strip()
-            else:
-                name = str(item)
-            if len(name) > 64:
-                name = name[:61] + "…"
-            labels.append(name)
+        self._in_photo_slideshow = True
         self._set_menu_active(True)
-        self.ui.show_menu("🖼  Photos", labels, selected_index=0,
-                          hint="Up/Down to select • OK to show • Back to return")
+        self._show_photo_at_index(0)
+
+    def _show_photo_at_index(self, idx: int):
+        n = len(self._photos_playlist)
+        if not n:
+            return
+        self._photo_sl_index = idx % n
+        item = self._photos_playlist[self._photo_sl_index]
+        url = (item.get("url") or item.get("mediaUrl") or "") if isinstance(item, dict) else str(item)
+        if not url:
+            return
+        counter = f"{self._photo_sl_index + 1} / {n}"
+        self.ui.show_photo_fullscreen(url, counter=counter)
 
     def _open_radio_menu(self):
         self._in_radio_submenu = True
@@ -2475,12 +2482,22 @@ class RemoteMenuController:
             self.open_menu()
 
     def move_selection(self, delta: int, *_):
+        if self._in_photo_slideshow:
+            if self._photos_playlist:
+                self._show_photo_at_index(self._photo_sl_index + delta)
+            return
         if not self.ui.is_menu_visible():
             self.open_menu()
             return
         self.ui.highlight_menu(delta)
 
     def play_selected(self, *_):
+        if self._in_photo_slideshow:
+            self._in_photo_slideshow = False
+            self._in_photos_submenu = False
+            self._set_menu_active(False)
+            self.open_menu()
+            return
         if not self.ui.is_menu_visible():
             self.open_menu()
             return
@@ -2610,6 +2627,12 @@ class RemoteMenuController:
         self.engine.player.toggle_pause()
 
     def back(self, *_):
+        if self._in_photo_slideshow:
+            self._in_photo_slideshow = False
+            self._in_photos_submenu = False
+            self._set_menu_active(False)
+            self.open_menu()
+            return
         if self._in_delete_confirm:
             self._in_delete_confirm = False
             self._in_video_action_submenu = True

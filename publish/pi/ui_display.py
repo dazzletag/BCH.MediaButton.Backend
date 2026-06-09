@@ -252,6 +252,13 @@ class MediaUI:
             fg="#666", bg=BG, font=("DejaVu Sans", 15))
         self.card_hint_lbl.pack(pady=(4, 14))
 
+        # ----- Full-screen photo frame (remote photo navigation) -----
+        self.photo_full_frame = tk.Frame(self.stack, bg="black")
+        self.photo_full_label = tk.Label(self.photo_full_frame, bg="black")
+        self.photo_full_label.pack(fill="both", expand=True)
+        self._photo_full_ref = None   # prevent GC
+        self._photo_gen = 0           # generation counter; stale fetches are dropped
+
         # Footer
         self.footer = tk.Label(self.stack, text="Bristol Care Homes", fg="#999", bg=BG, font=("DejaVu Sans", 14))
         self.footer.place(relx=1.0, rely=1.0, anchor="se", x=-16, y=-12)
@@ -502,7 +509,8 @@ class MediaUI:
 
         if self._current_frame is frame:
             return  # already showing; avoid pack thrash (prevents flicker)
-        for child in (self.idle_frame, self.play_frame, self.menu_frame, self.card_menu_frame):
+        for child in (self.idle_frame, self.play_frame, self.menu_frame,
+                      self.card_menu_frame, self.photo_full_frame):
             child.pack_forget()
         frame.pack(fill="both", expand=True)
         self._current_frame = frame
@@ -1064,6 +1072,61 @@ class MediaUI:
         self.root.after(0, _do)
 
 
+
+    def show_photo_fullscreen(self, url: str, counter: str = ""):
+        """Fetch a photo and fill the screen edge-to-edge (black letterbox).
+        counter is an optional overlay string, e.g. '2 / 8'.
+        Thread-safe; stale fetches from rapid navigation are silently dropped."""
+        self._photo_gen += 1
+        my_gen = self._photo_gen
+
+        def _fetch():
+            try:
+                resp = requests.get(url, timeout=12)
+                resp.raise_for_status()
+                img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+            except Exception as e:
+                print(f"[UI] Fullscreen photo fetch failed: {e}")
+                return
+
+            def _display(im=img):
+                if my_gen != self._photo_gen:
+                    return  # superseded by a newer navigation press
+                try:
+                    self.root.update_idletasks()
+                    sw = max(self.root.winfo_screenwidth(), 640)
+                    sh = max(self.root.winfo_screenheight(), 480)
+                    im_w, im_h = im.size
+                    scale = min(sw / im_w, sh / im_h)
+                    new_w = max(1, int(im_w * scale))
+                    new_h = max(1, int(im_h * scale))
+                    resized = im.resize((new_w, new_h), Image.LANCZOS)
+                    bg = Image.new("RGB", (sw, sh), (0, 0, 0))
+                    bg.paste(resized, ((sw - new_w) // 2, (sh - new_h) // 2))
+                    if counter:
+                        draw = ImageDraw.Draw(bg)
+                        font = _safe_font(28)
+                        tw, th = _measure_text(draw, counter, font)
+                        # subtle semi-transparent pill behind text
+                        pad = 10
+                        draw.rectangle(
+                            [sw - tw - pad * 2 - 16, sh - th - pad * 2 - 12,
+                             sw - 16, sh - 12],
+                            fill=(0, 0, 0, 160),
+                        )
+                        draw.text((sw - tw - pad - 16, sh - th - pad - 12),
+                                  counter, font=font, fill="white")
+                    tk_img = ImageTk.PhotoImage(bg)
+                    self._photo_full_ref = tk_img
+                    self.photo_full_label.configure(image=tk_img)
+                    self.photo_full_label.image = tk_img
+                    self._show(self.photo_full_frame)
+                except Exception as e:
+                    print(f"[UI] Fullscreen photo display failed: {e}")
+
+            self.root.after(0, _display)
+
+        threading.Thread(target=_fetch, daemon=True).start()
 
     @staticmethod
     def _vibe_line(s: dict) -> str:
