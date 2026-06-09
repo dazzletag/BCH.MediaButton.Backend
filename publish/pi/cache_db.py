@@ -576,18 +576,24 @@ def cached_filepaths() -> set[str]:
 # -------------------------------------------------------------------------
 def reconcile_resident_terms(resident: str, terms_with_blobs: list[tuple[str, dict | None]]):
     """
-    Make playlist_terms for `resident` match the supplied list:
+    Sync playlist_terms for `resident` against the supplied list:
       - upsert each term (first_seen_at preserved, last_seen_at bumped, active=1)
-      - mark every other term for this resident as active=0
-      - hard-delete the now-inactive rows (cascade clears term_videos)
-    Returns the number of rows whose link table was cleared.
+      - mark terms NOT in the list as active=0 so the downloader stops fetching
+        for them
+
+    Intentionally does NOT delete inactive term rows or their term_videos links.
+    Keeping the links means existing videos remain playable and are invisible to
+    the orphan sweep — they can only be evicted by the disk-cap LRU sweep when
+    space is actually needed. This prevents a relative adding one new search term
+    (or a photo/radio item that makes the cacheable set smaller) from wiping the
+    entire video cache.
     """
     active_terms = [t for t, _ in terms_with_blobs]
     with _lock:
         for term, blob in terms_with_blobs:
             register_term(resident, term, blob)
         mark_terms_inactive(resident, active_terms)
-        return delete_inactive_terms(resident)
+    return 0
 
 
 # -------------------------------------------------------------------------

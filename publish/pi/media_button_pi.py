@@ -1532,20 +1532,16 @@ class Engine:
         the downloader knows what to fetch. Called by each caller of
         _make_session once the final playlist is settled.
 
-        Runs reconciliation: any term previously known for this resident that
-        isn't in the new playlist is marked inactive and its term_videos rows
-        are cascade-deleted, leaving the videos themselves as orphans for the
-        GC pass to handle.
+        Terms in the new playlist are upserted (active=1). Terms previously
+        registered but no longer in the playlist are marked inactive (the
+        downloader stops fetching for them) but their term_videos links and
+        cached_videos rows are kept intact — existing videos remain playable
+        and are not swept as orphans. Only the disk-cap LRU sweep can evict
+        them when storage pressure demands it.
 
-        DEFENSIVE GUARD: if the cacheable set is empty, we DO NOT reconcile.
-        An empty cacheable set never means 'wipe this resident's cache' — it
-        means either:
-          (a) a one-off manual play of a non-cacheable item type (cached,
-              radio, photo) via the portal command queue or the remote
-              menu's Cached Videos / Radio submenus, or
-          (b) a transient hiccup where the LLM playlist hasn't loaded yet.
-        In either case the right behaviour is to leave the existing term
-        set (and the videos linked to it) untouched.
+        If the cacheable set is empty we skip entirely: that means the session
+        is all photos / radio / one-off plays, and touching the term set would
+        be wrong.
         """
         resident = sess.get("resident")
         playlist = sess.get("playlist") or []
@@ -1564,24 +1560,15 @@ class Engine:
             terms_with_blobs.append((term, blob))
 
         if not terms_with_blobs:
-            _log(f"[CACHE] Skipping term reconcile for {resident}: "
-                 f"no cacheable items in this session (one-off play or "
-                 f"non-video playlist) — keeping existing terms")
+            _log(f"[CACHE] No cacheable items for {resident} — leaving existing terms untouched")
             return
 
         try:
-            removed = cache_db.reconcile_resident_terms(resident, terms_with_blobs)
-            _log(f"[CACHE] Reconciled {len(terms_with_blobs)} term(s) for {resident}; "
-                 f"{removed} inactive term row(s) cleared")
+            cache_db.reconcile_resident_terms(resident, terms_with_blobs)
+            _log(f"[CACHE] Registered {len(terms_with_blobs)} term(s) for {resident} "
+                 f"(removed terms marked inactive; their videos kept)")
         except Exception as e:
-            _log(f"[CACHE] Term reconciliation failed for {resident}: {e}")
-        # Reconciliation just unlinked any term_videos whose term went away,
-        # so the videos are orphans now — clear them out before the disk
-        # fills up. Skip the file currently being rendered.
-        try:
-            cache_gc.run_orphan_sweep(self.currently_playing_filepath)
-        except Exception as e:
-            _log(f"[CACHE] Orphan sweep failed for {resident}: {e}")
+            _log(f"[CACHE] Term registration failed for {resident}: {e}")
         # Nudge the downloader so it picks up new terms immediately rather
         # than waiting for its next idle tick.
         try:
