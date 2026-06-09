@@ -144,7 +144,24 @@ CREATE INDEX IF NOT EXISTS idx_playlist_terms_resident  ON playlist_terms(reside
 def _init_schema(conn: sqlite3.Connection):
     with _lock:
         conn.executescript(_SCHEMA)
+        _apply_migrations(conn)
     _log(f"[CACHE] DB ready at {VIDEO_CACHE_DB_PATH}")
+
+
+def _apply_migrations(conn: sqlite3.Connection):
+    """Add columns absent from older DB instances (CREATE TABLE IF NOT EXISTS never adds columns)."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(cached_videos)")}
+    for col, ddl in [
+        ("filesize_bytes",     "INTEGER"),
+        ("duration_seconds",   "INTEGER"),
+        ("last_played_at",     "TIMESTAMP"),
+        ("play_count",         "INTEGER NOT NULL DEFAULT 0"),
+        ("protected",          "INTEGER NOT NULL DEFAULT 0"),
+        ("central_curated_id", "TEXT"),
+    ]:
+        if col not in cols:
+            conn.execute(f"ALTER TABLE cached_videos ADD COLUMN {col} {ddl}")
+            _log(f"[CACHE] Migration: added cached_videos.{col}")
 
 
 def init_db():

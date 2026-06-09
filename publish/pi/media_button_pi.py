@@ -2269,6 +2269,7 @@ class RemoteMenuController:
             return
         self._bind_keys()
         self._start_focus_maintainer()
+        self._start_playlist_poller()
         # open_menu deferred — called via root.after() in main() after mainloop starts
 
     def _playlist_photos(self) -> list:
@@ -2356,10 +2357,24 @@ class RemoteMenuController:
         except Exception:
             return str(item)
 
+    def _refresh_radio_stations(self):
+        """Merge radio items from self.playlist into _radio_stations for menu display."""
+        config_stations = list(self.remote_cfg.get("radio_stations") or [])
+        seen_urls = {s.get("url", "") for s in config_stations}
+        for item in self.playlist:
+            if isinstance(item, dict) and item.get("type") == "radio":
+                url = item.get("url", "")
+                name = item.get("name") or item.get("title") or url
+                if url and url not in seen_urls:
+                    config_stations.append({"name": name, "url": url})
+                    seen_urls.add(url)
+        self._radio_stations = config_stations
+
     def _ensure_playlist(self):
         if not self.resident:
             self.playlist = []
             self.labels = []
+            self._refresh_radio_stations()
             return
         try:
             sess = self.engine.prepare_session(self.resident, ordered=True, start_index=0)
@@ -2369,6 +2384,7 @@ class RemoteMenuController:
             print(f"[REMOTE] Failed to build playlist: {e}")
             self.playlist = []
             self.labels = []
+        self._refresh_radio_stations()
 
     def open_menu(self):
         self._in_radio_submenu = False
@@ -2664,6 +2680,30 @@ class RemoteMenuController:
             self._last_key_time[name] = now
             handler(*args)
         return _wrapper
+
+    def _start_playlist_poller(self):
+        """Background thread: re-fetch the manual playlist every 5 minutes so
+        LastPolledAt stays current in the portal even when the menu is idle."""
+        _POLL_INTERVAL = 300  # seconds
+
+        def _poll():
+            while True:
+                try:
+                    import time as _time
+                    _time.sleep(_POLL_INTERVAL)
+                    if self.resident:
+                        items = fetch_manual_playlist_from_api(self.resident)
+                        if items:
+                            norm = normalize_playlist_items(items)
+                            persist_manual_playlist(self.resident, norm)
+                            self.playlist = norm
+                            self.labels = [self._label_for_item(i) for i in self.playlist]
+                            self._refresh_radio_stations()
+                            print(f"[REMOTE] Background playlist poll: {len(norm)} item(s)")
+                except Exception as e:
+                    print(f"[REMOTE] Background playlist poll error: {e}")
+
+        threading.Thread(target=_poll, name="PlaylistPoller", daemon=True).start()
 
     def _start_focus_maintainer(self):
         """Periodically reclaim Tk focus so FLIRC events aren't captured by VLC sub-windows."""
