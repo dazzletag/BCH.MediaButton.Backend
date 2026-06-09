@@ -588,6 +588,7 @@ class MediaUI:
                 text=self._menu_items[idx], anchor="w",
                 fill=ACCENT if selected else FG,
                 font=("DejaVu Sans", 32, "bold" if selected else "normal"),
+                width=cw - 44,
             )
 
     def highlight_menu(self, delta: int):
