@@ -2260,6 +2260,9 @@ class RemoteMenuController:
         self._in_photos_submenu = False
         self._photos_playlist: list = []
         self._last_key_time: dict = {}
+        self._in_video_action_submenu = False
+        self._in_delete_confirm = False
+        self._action_target_video: dict | None = None
         if not self.enabled:
             return
         self._bind_keys()
@@ -2369,6 +2372,9 @@ class RemoteMenuController:
         self._in_radio_submenu = False
         self._in_videos_submenu = False
         self._in_photos_submenu = False
+        self._in_video_action_submenu = False
+        self._in_delete_confirm = False
+        self._action_target_video = None
         self._ensure_playlist()
         title = self.resident or "Menu"
         specials = self._current_special_items()
@@ -2381,6 +2387,9 @@ class RemoteMenuController:
 
     def _open_videos_menu(self):
         self._in_videos_submenu = True
+        self._in_video_action_submenu = False
+        self._in_delete_confirm = False
+        self._action_target_video = None
         try:
             self._cached_videos = cache_db.cached_videos_for_resident(self.resident or "")
         except Exception as e:
@@ -2390,19 +2399,22 @@ class RemoteMenuController:
             self.open_menu()
             return
         n = len(self._cached_videos)
-        shuffle_card = {
-            "title": "Shuffle All",
-            "source_id": "shuffle",
-            "duration_seconds": None,
-            "filesize_bytes": None,
-            "play_count": 0,
-            "filepath": None,
-            "_shuffle": True,
-            "_meta_override": f"{n} video{'s' if n != 1 else ''}  •  random order",
-        }
-        videos = [shuffle_card] + [{k: row[k] for k in row.keys()} for row in self._cached_videos]
+        labels = [f"⟳  Shuffle All  ({n} video{'s' if n != 1 else ''})"]
+        for row in self._cached_videos:
+            vid_id = int(row["id"])
+            title = (row["title"] or row["source_id"] or "").strip() or "(untitled)"
+            dur = self._format_duration(row["duration_seconds"], row["filesize_bytes"])
+            label = f"#{vid_id}  {title}"
+            if dur and dur != "?:??":
+                label += f"   {dur}"
+            labels.append(label)
         self._set_menu_active(True)
-        self.ui.show_video_card_menu(videos)
+        self.ui.show_menu(
+            "📼  Saved Videos",
+            labels,
+            selected_index=0,
+            hint="Up/Down to select  •  OK to choose  •  Back to return",
+        )
 
     def _open_photos_menu(self):
         self._in_photos_submenu = True
@@ -2429,6 +2441,32 @@ class RemoteMenuController:
         self._set_menu_active(True)
         self.ui.show_menu("📻  Radio", labels, selected_index=0, hint="Up/Down to select • OK to play • Back to return")
 
+    def _show_video_action_menu(self):
+        row = self._action_target_video
+        vid_id = int(row["id"])
+        title = (row.get("title") or row.get("source_id") or "").strip() or "(untitled)"
+        display = title if len(title) <= 40 else title[:37] + "…"
+        self._set_menu_active(True)
+        self.ui.show_menu(
+            f"#{vid_id}  {display}",
+            ["▶  Play", "🗑  Delete"],
+            selected_index=0,
+            hint="OK to confirm  •  Back to return",
+        )
+
+    def _show_delete_confirm_menu(self):
+        row = self._action_target_video
+        vid_id = int(row["id"])
+        title = (row.get("title") or row.get("source_id") or "").strip() or "(untitled)"
+        display = title if len(title) <= 48 else title[:45] + "…"
+        self._set_menu_active(True)
+        self.ui.show_menu(
+            f"Delete #{vid_id}?",
+            ["Yes, delete it", "No, keep it"],
+            selected_index=1,
+            hint=display,
+        )
+
     def toggle_menu(self, *_):
         if self.ui.is_menu_visible():
             self.ui.hide_menu()
@@ -2448,6 +2486,57 @@ class RemoteMenuController:
             return
         idx = self.ui.current_menu_index() or 0
 
+        # Delete confirmation
+        if self._in_delete_confirm:
+            if idx == 0:  # Yes, delete
+                row = self._action_target_video
+                vid_id = int(row["id"])
+                fp = cache_db.delete_video(vid_id)
+                if fp:
+                    for p in (fp, fp + ".thumb.jpg"):
+                        try:
+                            if os.path.exists(p):
+                                os.remove(p)
+                        except Exception:
+                            pass
+                    print(f"[REMOTE] Deleted video #{vid_id}")
+                self._in_delete_confirm = False
+                self._action_target_video = None
+                self._open_videos_menu()
+            else:  # No, keep it
+                self._in_delete_confirm = False
+                self._in_video_action_submenu = True
+                self._show_video_action_menu()
+            return
+
+        # Video action submenu (Play / Delete)
+        if self._in_video_action_submenu:
+            if idx == 0:  # Play
+                row = self._action_target_video
+                item = {
+                    "type": "cached",
+                    "id": int(row["id"]),
+                    "filepath": row["filepath"],
+                    "name": row.get("title") or row.get("source_id"),
+                    "duration": row.get("duration_seconds"),
+                }
+                self.ui.hide_menu()
+                self._set_menu_active(False)
+                self._in_video_action_submenu = False
+                self._in_videos_submenu = False
+                self._action_target_video = None
+                self.engine.start_manual_session(
+                    self.resident or "cached",
+                    playlist_override=[item],
+                    start_index=0,
+                    ordered=True,
+                )
+            elif idx == 1:  # Delete
+                self._in_video_action_submenu = False
+                self._in_delete_confirm = True
+                self._show_delete_confirm_menu()
+            return
+
         # Radio submenu — play selected station
         if self._in_radio_submenu:
             if 0 <= idx < len(self._radio_stations):
@@ -2462,7 +2551,7 @@ class RemoteMenuController:
                 self.engine.start_manual_session(self.resident or "radio", playlist_override=radio_item, start_index=0, ordered=True)
             return
 
-        # Cached-videos submenu — index 0 = shuffle all, index 1+ = individual video.
+        # Cached-videos submenu — index 0 = shuffle all, index 1+ = show action menu.
         if self._in_videos_submenu:
             if idx == 0:
                 import random as _random
@@ -2483,23 +2572,10 @@ class RemoteMenuController:
                     ordered=True,
                 )
             elif 0 < idx <= len(self._cached_videos):
-                row = self._cached_videos[idx - 1]  # offset by 1 for shuffle card
-                item = {
-                    "type": "cached",
-                    "id": int(row["id"]),
-                    "filepath": row["filepath"],
-                    "name": row["title"] or row["source_id"],
-                    "duration": row["duration_seconds"],
-                }
-                self.ui.hide_menu()
-                self._set_menu_active(False)
-                self._in_videos_submenu = False
-                self.engine.start_manual_session(
-                    self.resident or "cached",
-                    playlist_override=[item],
-                    start_index=0,
-                    ordered=True,
-                )
+                raw = self._cached_videos[idx - 1]
+                self._action_target_video = {k: raw[k] for k in raw.keys()}
+                self._in_video_action_submenu = True
+                self._show_video_action_menu()
             return
 
         # Photos submenu — play the selected photo (single-item session).
@@ -2534,6 +2610,16 @@ class RemoteMenuController:
         self.engine.player.toggle_pause()
 
     def back(self, *_):
+        if self._in_delete_confirm:
+            self._in_delete_confirm = False
+            self._in_video_action_submenu = True
+            self._show_video_action_menu()
+            return
+        if self._in_video_action_submenu:
+            self._in_video_action_submenu = False
+            self._action_target_video = None
+            self._open_videos_menu()
+            return
         if self._in_radio_submenu or self._in_videos_submenu or self._in_photos_submenu:
             self.open_menu()
             return

@@ -227,14 +227,14 @@ class MediaUI:
         self.menu_title_var = tk.StringVar(value="Select program")
         self.menu_title = tk.Label(
             self.menu_frame, textvariable=self.menu_title_var,
-            fg=FG, bg=BG, font=("DejaVu Sans", 26, "bold"))
+            fg=FG, bg=BG, font=("DejaVu Sans", 36, "bold"))
         self.menu_title.pack(pady=(20, 6))
         self.menu_canvas = tk.Canvas(self.menu_frame, bg=BG, highlightthickness=0)
         self.menu_canvas.pack(fill="both", expand=True, padx=20)
         self.menu_hint_var = tk.StringVar(value="")
         self.menu_hint = tk.Label(
             self.menu_frame, textvariable=self.menu_hint_var,
-            fg="#666", bg=BG, font=("DejaVu Sans", 15))
+            fg="#666", bg=BG, font=("DejaVu Sans", 20))
         self.menu_hint.pack(pady=(4, 14))
 
         # ----- Card menu view (videos with thumbnails) -----
@@ -531,7 +531,7 @@ class MediaUI:
 
     # ----- Menu helpers -----
 
-    _MENU_ROW_H = 68
+    _MENU_ROW_H = 90
 
     def show_menu(self, title: str, items: list[str], selected_index: int = 0, hint: str | None = None):
         def _do():
@@ -579,7 +579,7 @@ class MediaUI:
                 22, y0 + rh // 2,
                 text=self._menu_items[idx], anchor="w",
                 fill=ACCENT if selected else FG,
-                font=("DejaVu Sans", 22, "bold" if selected else "normal"),
+                font=("DejaVu Sans", 32, "bold" if selected else "normal"),
             )
 
     def highlight_menu(self, delta: int):
