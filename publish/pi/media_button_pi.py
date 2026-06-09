@@ -1560,7 +1560,24 @@ class Engine:
             terms_with_blobs.append((term, blob))
 
         if not terms_with_blobs:
-            _log(f"[CACHE] No cacheable items for {resident} — leaving existing terms untouched")
+            # Manual playlist is all photos / radio / one-off plays.
+            # If we already have active terms (from a previous run or LLM
+            # bootstrap) leave them alone — the downloader will keep filling
+            # them.  If there are NO active terms the resident's downloads
+            # would stall forever, so ask the LLM for search terms in the
+            # background without touching the display playlist.
+            existing = cache_db.active_terms_for_resident(resident)
+            if existing:
+                _log(f"[CACHE] No cacheable items for {resident} — "
+                     f"{len(existing)} active term(s) kept")
+            else:
+                _log(f"[CACHE] No cacheable items and no active terms for "
+                     f"{resident} — scheduling AI term bootstrap")
+                threading.Thread(
+                    target=self._bootstrap_llm_terms,
+                    args=(resident,),
+                    daemon=True,
+                ).start()
             return
 
         try:
@@ -1575,6 +1592,56 @@ class Engine:
             video_downloader.kick()
         except Exception:
             pass
+
+    def _bootstrap_llm_terms(self, resident: str):
+        """Register AI-generated YouTube search terms for a resident whose
+        manual playlist has no cacheable items and has no active DB terms.
+        Uses the local LLM playlist cache if available; calls the LLM only
+        when no cache exists.  Runs on a background thread."""
+        try:
+            cached = load_cached_playlist(resident)
+            plist = (cached.get("playlist") or []) if cached else []
+
+            if not plist:
+                _log(f"[CACHE] LLM bootstrap: calling LLM for {resident}")
+                survey_row = self.survey.row_for(resident) or {}
+                profile = (fetch_resident_profile_from_api(resident)
+                           or THIS_IS_ME.row_for(resident) or {})
+                plist = llm_build_big_playlist(
+                    resident, survey_row=survey_row, profile=profile,
+                    want=BIG_PLAYLIST_SIZE,
+                )
+                if plist:
+                    sv_hash = sha256_of({
+                        "survey_row": survey_row,
+                        "this_is_me_profile": profile,
+                    })
+                    save_cached_playlist(
+                        resident, sv_hash, plist,
+                        meta={"source": "llm_bootstrap"},
+                    )
+
+            if not plist:
+                _log(f"[CACHE] LLM bootstrap: no terms generated for {resident}")
+                return
+
+            count = 0
+            for term in plist:
+                if isinstance(term, str) and term.strip():
+                    t = term.strip()
+                    cache_db.register_term(resident, t, {"type": "youtube", "query": t})
+                    count += 1
+
+            if count:
+                _log(f"[CACHE] LLM bootstrap: registered {count} term(s) for {resident}")
+                try:
+                    video_downloader.kick()
+                except Exception:
+                    pass
+            else:
+                _log(f"[CACHE] LLM bootstrap: no valid terms for {resident}")
+        except Exception as e:
+            _log(f"[CACHE] LLM bootstrap failed for {resident}: {e}")
 
     def prepare_session(self, resident: str, *, playlist_override=None, ordered: bool = False, start_index: int = 0):
         """
