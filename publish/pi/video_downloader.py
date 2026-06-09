@@ -399,9 +399,11 @@ class DownloadWorker:
                     self._wake.clear()
                     continue
 
-                # Hold off while video is playing or the remote menu is open
+                # Hold off only while a video is actively playing.
+                # Menu-open alone does not pause — downloads continue at
+                # throttled rate so the Pi stays responsive.
                 while not self._stop.is_set():
-                    if not self.playback_active.is_set() and not (self.menu_active and self.menu_active.is_set()):
+                    if not self.playback_active.is_set():
                         break
                     self._stop.wait(timeout=1.0)
                 if self._stop.is_set():
