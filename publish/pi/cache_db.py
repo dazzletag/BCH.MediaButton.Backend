@@ -506,14 +506,15 @@ def video_count_for_term(term_id: int) -> int:
 
 def cached_videos_for_resident(resident: str) -> list[sqlite3.Row]:
     """All cached videos for this resident, ordered for menu display.
-    Longest first (duration DESC, NULLs last), then alphabetical within
-    equal durations. Position in this list is used as the display number."""
+    Oldest download first (downloaded_at ASC, id ASC as a stable tiebreak),
+    so the resident's first cached video is position 1, the next 2, and so on.
+    The caller numbers items by their position in this list."""
     with _lock:
         return list(get_conn().execute(
             """
             SELECT * FROM cached_videos
             WHERE resident = ?
-            ORDER BY duration_seconds DESC, LOWER(title) ASC
+            ORDER BY downloaded_at ASC, id ASC
             """,
             (resident,),
         ))

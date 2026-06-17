@@ -2500,8 +2500,8 @@ class RemoteMenuController:
             return
         n = len(self._cached_videos)
         labels = [f"⟳  Shuffle All  ({n} video{'s' if n != 1 else ''})"]
-        for row in self._cached_videos:
-            num = int(row["id"])
+        for pos, row in enumerate(self._cached_videos, start=1):
+            num = pos
             title = (row["title"] or row["source_id"] or "").strip() or "(untitled)"
             dur = self._format_duration(row["duration_seconds"], row["filesize_bytes"])
             label = f"#{num}  {title}"
@@ -2546,7 +2546,7 @@ class RemoteMenuController:
 
     def _show_video_action_menu(self):
         row = self._action_target_video
-        num = int(row["id"])
+        num = int(row.get("_num") or row["id"])
         title = (row.get("title") or row.get("source_id") or "").strip() or "(untitled)"
         display = title if len(title) <= 40 else title[:37] + "…"
         self._set_menu_active(True)
@@ -2559,7 +2559,7 @@ class RemoteMenuController:
 
     def _show_delete_confirm_menu(self):
         row = self._action_target_video
-        num = int(row["id"])
+        num = int(row.get("_num") or row["id"])
         title = (row.get("title") or row.get("source_id") or "").strip() or "(untitled)"
         display = title if len(title) <= 48 else title[:45] + "…"
         self._set_menu_active(True)
@@ -2687,6 +2687,9 @@ class RemoteMenuController:
             elif 0 < idx <= len(self._cached_videos):
                 raw = self._cached_videos[idx - 1]
                 self._action_target_video = {k: raw[k] for k in raw.keys()}
+                # Display number is the 1-based position in the list (idx 1 = #1),
+                # not the gappy DB id — keep it consistent with the list above.
+                self._action_target_video["_num"] = idx
                 self._in_video_action_submenu = True
                 self._show_video_action_menu()
             return
