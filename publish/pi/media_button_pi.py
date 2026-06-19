@@ -97,6 +97,44 @@ DEFAULT_RADIO_URL = os.getenv("DEFAULT_RADIO_URL", "")
 VOLUME_PERCENT = int(os.getenv("VOLUME_PERCENT", "80"))
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-41-mini-2025-04-14")
 YT_DLP_BIN = os.getenv("YT_DLP_BIN", os.path.join(os.path.dirname(sys.executable), "yt-dlp"))
+
+
+def _refresh_yt_dlp(min_interval_hours: int = 12) -> None:
+    # YouTube rotates signature / PO-token formats every few weeks and an aged
+    # yt-dlp silently fails to download. requirements.txt only sets a floor, so
+    # `pip install -r` never upgrades an already-installed copy — refresh it
+    # here on boot. Throttled by a stamp file so a crash-restart loop doesn't
+    # hammer PyPI.
+    venv_dir = os.path.dirname(os.path.dirname(YT_DLP_BIN))
+    stamp = os.path.join(venv_dir, ".yt_dlp_refresh_stamp")
+    try:
+        if time.time() - os.path.getmtime(stamp) < min_interval_hours * 3600:
+            return
+    except OSError:
+        pass
+    pip_bin = os.path.join(os.path.dirname(YT_DLP_BIN), "pip")
+    if not os.path.exists(pip_bin):
+        return
+    print("[BOOT] Refreshing yt-dlp from PyPI…")
+    try:
+        result = subprocess.run(
+            [pip_bin, "install", "--quiet", "--upgrade", "yt-dlp"],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode == 0:
+            print("[BOOT] yt-dlp refresh OK.")
+            try:
+                with open(stamp, "w") as f:
+                    f.write(str(int(time.time())))
+            except OSError:
+                pass
+        else:
+            tail = (result.stderr or result.stdout or "").strip()[:200]
+            print(f"[BOOT] yt-dlp refresh failed (code {result.returncode}): {tail}")
+    except subprocess.TimeoutExpired:
+        print("[BOOT] yt-dlp refresh timed out after 120s — skipping.")
+    except Exception as e:
+        print(f"[BOOT] yt-dlp refresh failed: {e}")
 YT_EXTRACTOR_ARGS = os.getenv("YT_EXTRACTOR_ARGS", "youtube:player_client=web")
 YT_FORCE_IPV4 = os.getenv("YT_FORCE_IPV4", "0") == "1"
 YT_FORMAT = os.getenv("YT_FORMAT", "bv*[ext=mp4][height<=720][fps<=30][vcodec^=avc1]+ba/b")
@@ -2881,6 +2919,8 @@ def _run_ble_loop(listener: BeaconListener):
 def main():
     global ENGINE
     control_mode = CONFIG.get("control_mode", "beacon")
+
+    _refresh_yt_dlp()
 
     # initial sync
     if TENANT_ID and CLIENT_ID and CLIENT_SECRET and DRIVE_ID and (ITEM_ID or ITEM_PATH):
