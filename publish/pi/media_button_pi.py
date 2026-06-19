@@ -1354,15 +1354,23 @@ class BeaconParser:
 
     @staticmethod
     def ibeacon_from_manufacturer(data: dict):
+        # iBeacon-formatted payloads usually appear under Apple's company ID
+        # (0x004C), but cheap clones advertise under reserved/unassigned IDs
+        # such as 0xFFFF. Detect by the 0x02 0x15 prefix + 23-byte length.
         try:
             mfg = data.get("manufacturer_data", {})
-            payload = mfg.get(76) or mfg.get(0x004C)
-            if payload and len(payload) >= 23 and payload[0] == 0x02 and payload[1] == 0x15:
-                uuid = payload[2:18].hex()
-                uuid_fmt = f"{uuid[0:8]}-{uuid[8:12]}-{uuid[12:16]}-{uuid[16:20]}-{uuid[20:32]}"
-                major = int.from_bytes(payload[18:20], "big")
-                minor = int.from_bytes(payload[20:22], "big")
-                return f"ibeacon:{uuid_fmt}-{major:04d}-{minor:04d}"
+            for payload in mfg.values():
+                if (
+                    payload
+                    and len(payload) >= 23
+                    and payload[0] == 0x02
+                    and payload[1] == 0x15
+                ):
+                    uuid = payload[2:18].hex()
+                    uuid_fmt = f"{uuid[0:8]}-{uuid[8:12]}-{uuid[12:16]}-{uuid[16:20]}-{uuid[20:32]}"
+                    major = int.from_bytes(payload[18:20], "big")
+                    minor = int.from_bytes(payload[20:22], "big")
+                    return f"ibeacon:{uuid_fmt}-{major:04d}-{minor:04d}"
         except Exception:
             pass
         return None
