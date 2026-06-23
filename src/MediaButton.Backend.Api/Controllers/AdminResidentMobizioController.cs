@@ -112,6 +112,61 @@ public class AdminResidentMobizioController : ControllerBase
     }
 
     /// <summary>
+    /// Hard-delete a resident from the portal. Wipes the playlist snapshot,
+    /// cache mirror rows, relative-user access grants, and detaches any Pi
+    /// device assigned to them. Used to clean up duplicate / mistyped names
+    /// (e.g. Nicholas vs Nicolas) that the setup wizard created.
+    /// Admin-only because it's destructive and cross-tenant.
+    /// </summary>
+    [HttpDelete("{resident}")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<IActionResult> Delete(string resident)
+    {
+        var residentKey = (resident ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(residentKey))
+            return BadRequest("Resident name is required.");
+
+        var snapshot = await _db.ResidentPlaylists
+            .FirstOrDefaultAsync(r => r.Resident == residentKey);
+        if (snapshot is null)
+            return NotFound(new { error = $"Resident '{residentKey}' not found." });
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+
+        var devicesDetached = await _db.Devices
+            .Where(d => d.ResidentKey == residentKey)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.ResidentKey, (string?)null));
+
+        var cachedVideosDeleted = await _db.CachedVideos
+            .Where(v => v.Resident == residentKey)
+            .ExecuteDeleteAsync();
+
+        var grantsDeleted = await _db.ResidentAccessGrants
+            .Where(g => g.ResidentKey == residentKey)
+            .ExecuteDeleteAsync();
+
+        _db.ResidentPlaylists.Remove(snapshot);
+        await _db.SaveChangesAsync();
+
+        await tx.CommitAsync();
+
+        _log.LogWarning(
+            "[Admin] Deleted resident '{Resident}' by {User} — devices detached: {Devices}, " +
+            "cached videos: {Videos}, access grants: {Grants}",
+            residentKey, User.Identity?.Name ?? "(unknown)",
+            devicesDetached, cachedVideosDeleted, grantsDeleted);
+
+        return Ok(new
+        {
+            resident = residentKey,
+            devicesDetached,
+            cachedVideosDeleted,
+            accessGrantsDeleted = grantsDeleted,
+            playlistSnapshotDeleted = true,
+        });
+    }
+
+    /// <summary>
     /// Fetches recent activity record photos for a resident from Mobizio,
     /// uploads them to Azure Blob Storage, registers MediaAsset records,
     /// and returns the new media IDs ready to be added to the resident's playlist.
