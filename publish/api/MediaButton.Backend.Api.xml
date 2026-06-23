@@ -59,6 +59,18 @@
         <member name="M:MediaButtonBackend.Controllers.AdminResidentMobizioController.DebugThisIsMe(System.String,System.String,System.String)">
             <summary>Diagnostic: trace This Is Me field fetch for a resident by known Mobizio IDs.</summary>
         </member>
+        <member name="M:MediaButtonBackend.Controllers.AdminResidentMobizioController.GetCareHome(System.String)">
+            <summary>
+            Get the care home currently assigned to a resident.
+            </summary>
+        </member>
+        <member name="M:MediaButtonBackend.Controllers.AdminResidentMobizioController.SetCareHome(System.String,MediaButtonBackend.Controllers.SetCareHomeRequest)">
+            <summary>
+            Set (or clear) the care home assigned to a resident. Activities users
+            of the target home will start seeing the resident in their list on
+            their next call to /api/admin/residents.
+            </summary>
+        </member>
         <member name="M:MediaButtonBackend.Controllers.AdminResidentMobizioController.Delete(System.String)">
             <summary>
             Hard-delete a resident from the portal. Wipes the playlist snapshot,

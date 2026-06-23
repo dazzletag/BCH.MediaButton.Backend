@@ -112,6 +112,68 @@ public class AdminResidentMobizioController : ControllerBase
     }
 
     /// <summary>
+    /// Get the care home currently assigned to a resident.
+    /// </summary>
+    [HttpGet("{resident}/care-home")]
+    public async Task<IActionResult> GetCareHome(string resident)
+    {
+        var residentKey = (resident ?? string.Empty).Trim();
+        var snapshot = await _db.ResidentPlaylists.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Resident == residentKey);
+        if (snapshot is null)
+            return NotFound(new { error = $"Resident '{residentKey}' not found." });
+
+        string? careHomeName = null;
+        if (snapshot.CareHomeId.HasValue)
+            careHomeName = await _db.CareHomes.AsNoTracking()
+                .Where(c => c.Id == snapshot.CareHomeId.Value)
+                .Select(c => c.Name)
+                .FirstOrDefaultAsync();
+
+        return Ok(new
+        {
+            resident = residentKey,
+            careHomeId = snapshot.CareHomeId,
+            careHomeName,
+        });
+    }
+
+    /// <summary>
+    /// Set (or clear) the care home assigned to a resident. Activities users
+    /// of the target home will start seeing the resident in their list on
+    /// their next call to /api/admin/residents.
+    /// </summary>
+    [HttpPut("{resident}/care-home")]
+    [Authorize(Policy = "AdminOnly")]
+    public async Task<IActionResult> SetCareHome(string resident, [FromBody] SetCareHomeRequest req)
+    {
+        var residentKey = (resident ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(residentKey))
+            return BadRequest("Resident name is required.");
+
+        var snapshot = await _db.ResidentPlaylists
+            .FirstOrDefaultAsync(r => r.Resident == residentKey);
+        if (snapshot is null)
+            return NotFound(new { error = $"Resident '{residentKey}' not found." });
+
+        if (req.CareHomeId.HasValue)
+        {
+            var exists = await _db.CareHomes.AnyAsync(c => c.Id == req.CareHomeId.Value);
+            if (!exists)
+                return BadRequest(new { error = "Care home not found." });
+        }
+
+        snapshot.CareHomeId = req.CareHomeId;
+        await _db.SaveChangesAsync();
+
+        _log.LogInformation(
+            "[Admin] Set CareHomeId={CareHomeId} on resident '{Resident}' by {User}",
+            snapshot.CareHomeId, residentKey, User.Identity?.Name ?? "(unknown)");
+
+        return Ok(new { resident = residentKey, careHomeId = snapshot.CareHomeId });
+    }
+
+    /// <summary>
     /// Hard-delete a resident from the portal. Wipes the playlist snapshot,
     /// cache mirror rows, relative-user access grants, and detaches any Pi
     /// device assigned to them. Used to clean up duplicate / mistyped names
@@ -284,3 +346,5 @@ public class AdminResidentMobizioController : ControllerBase
         return Ok(new { count = mediaIds.Count, mediaIds, diag });
     }
 }
+
+public record SetCareHomeRequest(Guid? CareHomeId);
