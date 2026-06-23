@@ -42,21 +42,16 @@ builder.Services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSch
 
 builder.Services.AddAuthorization(options =>
 {
+    // "AdminOrRelative" is now a misnomer kept for compatibility with the
+    // [Authorize(Policy = ...)] attributes already on every controller. The
+    // policy actually accepts any legitimate app user: AD role-holders
+    // (Admin / Relative / Activities) OR a UserProfile row in the DB. The
+    // DB path means adding a user via the Users tab in the portal is
+    // sufficient — no Azure AD enterprise-app role assignment needed.
     options.AddPolicy("AdminOrRelative", policy =>
     {
         policy.RequireAuthenticatedUser();
-        policy.RequireAssertion(ctx =>
-        {
-            // Roles can arrive as either the raw "roles" claim or the mapped ClaimTypes.Role.
-            var roleValues = ctx.User.Claims
-                .Where(c =>
-                    string.Equals(c.Type, "roles", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(c.Type, System.Security.Claims.ClaimTypes.Role, StringComparison.OrdinalIgnoreCase))
-                .Select(c => c.Value)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            return roleValues.Contains("Admin") || roleValues.Contains("Relative");
-        });
+        policy.Requirements.Add(new MediaButtonBackend.Services.AppUserRequirement());
     });
 
     options.AddPolicy("AdminOnly", policy =>
@@ -80,6 +75,8 @@ builder.Services.AddScoped<StorageSasService>();
 builder.Services.AddScoped<StorageCorsInitializer>();
 builder.Services.AddScoped<MediaButtonBackend.Services.MobizioService>();
 builder.Services.AddScoped<MediaButtonBackend.Services.UserAccessService>();
+builder.Services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler,
+    MediaButtonBackend.Services.AppUserHandler>();
 builder.Services.AddHttpClient();
 
 var app = builder.Build();

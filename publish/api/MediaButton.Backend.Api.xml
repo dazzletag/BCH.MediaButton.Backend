@@ -246,6 +246,16 @@
         <member name="T:MediaButtonBackend.Models.ResidentAccessGrant">
             <summary>Grants a Relative user access to a specific resident.</summary>
         </member>
+        <member name="T:MediaButtonBackend.Services.AppUserRequirement">
+            <summary>
+            Marker requirement used by the "AdminOrRelative" policy. The matching
+            handler accepts a caller as a legitimate app user if they either carry
+            an AD app-role claim of Admin/Relative/Activities, or have a matching
+            row in UserProfile (added via the Users tab in the portal). The DB
+            path means a fresh Activities user doesn't need a separate enterprise
+            app role assignment to sign in.
+            </summary>
+        </member>
         <member name="M:MediaButtonBackend.Services.MobizioService.GetResidentProfileByCaseIdAsync(System.String,System.String,System.String)">
             <summary>
             Fetch the This Is Me profile using a known Mobizio case ID, bypassing the

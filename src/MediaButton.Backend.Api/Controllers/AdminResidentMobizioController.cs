@@ -131,24 +131,30 @@ public class AdminResidentMobizioController : ControllerBase
         if (snapshot is null)
             return NotFound(new { error = $"Resident '{residentKey}' not found." });
 
-        await using var tx = await _db.Database.BeginTransactionAsync();
+        // Use change-tracked CRUD rather than ExecuteUpdate/ExecuteDelete +
+        // an explicit BeginTransaction. The ExecuteX bulk APIs don't enlist
+        // in the explicit transaction on every provider and can deadlock
+        // against it on SQL Server. A single SaveChangesAsync wraps the
+        // whole set of mutations in one implicit transaction.
+        var devices = await _db.Devices
+            .Where(d => d.ResidentKey == residentKey).ToListAsync();
+        foreach (var device in devices)
+            device.ResidentKey = null;
 
-        var devicesDetached = await _db.Devices
-            .Where(d => d.ResidentKey == residentKey)
-            .ExecuteUpdateAsync(s => s.SetProperty(d => d.ResidentKey, (string?)null));
+        var cachedVideos = await _db.CachedVideos
+            .Where(v => v.Resident == residentKey).ToListAsync();
+        _db.CachedVideos.RemoveRange(cachedVideos);
 
-        var cachedVideosDeleted = await _db.CachedVideos
-            .Where(v => v.Resident == residentKey)
-            .ExecuteDeleteAsync();
-
-        var grantsDeleted = await _db.ResidentAccessGrants
-            .Where(g => g.ResidentKey == residentKey)
-            .ExecuteDeleteAsync();
+        var grants = await _db.ResidentAccessGrants
+            .Where(g => g.ResidentKey == residentKey).ToListAsync();
+        _db.ResidentAccessGrants.RemoveRange(grants);
 
         _db.ResidentPlaylists.Remove(snapshot);
         await _db.SaveChangesAsync();
 
-        await tx.CommitAsync();
+        var devicesDetached = devices.Count;
+        var cachedVideosDeleted = cachedVideos.Count;
+        var grantsDeleted = grants.Count;
 
         _log.LogWarning(
             "[Admin] Deleted resident '{Resident}' by {User} — devices detached: {Devices}, " +
