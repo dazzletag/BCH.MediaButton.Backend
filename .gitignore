@@ -32,6 +32,7 @@ obj/
 # Environment and secrets
 .env
 .env.*
+!.env.example
 
 # IDE/editor
 .vscode/
