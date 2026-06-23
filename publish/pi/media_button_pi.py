@@ -1562,10 +1562,17 @@ class Engine:
     def _presence_watchdog(self):
         """
         For a switch-powered beacon, absence means OFF.
-        Stop playback within ~1 second of absence.
+
+        BLE scan misses are common under load (VLC playback, 2.4 GHz WiFi
+        interference, bluetoothd duty cycles) and cheap iBeacons typically
+        advertise at ~1 Hz, so the timeout needs to absorb several missed
+        adverts. Default 5 s ≈ 5× typical advert interval; tune via
+        `absence_timeout` in config.yaml if a specific beacon needs more or
+        less. Watchdog ticks every 0.5 s — the operator releasing the
+        switch sees the video stop within absence_timeout + 0.5 s.
         """
-        ABSENCE_TIMEOUT = 1.2  # second without packets = button off
-        CHECK = 0.2            # check 5 times a second
+        ABSENCE_TIMEOUT = float(self.config.get("absence_timeout", 5.0))
+        CHECK = 0.5
 
         while True:
             try:
@@ -1573,10 +1580,11 @@ class Engine:
 
                 for resident in list(LAST_SEEN.keys()):
                     last_seen = LAST_SEEN.get(resident, 0)
+                    gap = now - last_seen
 
-                # Switch turned OFF
-                    if now - last_seen > ABSENCE_TIMEOUT:
-                        print(f"[WATCHDOG] {resident} switch OFF — stopping session.")
+                    if gap > ABSENCE_TIMEOUT:
+                        print(f"[WATCHDOG] {resident} switch OFF "
+                              f"({gap:.1f}s since last advert) — stopping session.")
                         self._stop_session(resident, from_thread=False)
                         LAST_SEEN.pop(resident, None)
                         LAST_OFF[resident] = now
