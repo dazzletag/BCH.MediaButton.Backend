@@ -224,10 +224,16 @@ def download_candidate(
     out_path: str,
     *,
     throttle: bool,
+    playback_active: "threading.Event | None" = None,
 ) -> tuple[bool, str | None, int | None]:
     """
     Fetch a single Candidate to out_path. Tries the extractor fallback chain
     in order. Returns (success, title, duration_seconds).
+
+    When playback_active is supplied, the in-flight yt-dlp subprocess is
+    terminated as soon as the event is set — even throttled at 500K/s a
+    running yt-dlp competes with VLC for CPU and network and causes
+    playback stutters. The worker retries the download once playback ends.
     """
     if candidate.source != "yt":
         # Phase 5+ would add: source == 'azure' → blob fetch via requests.
@@ -266,10 +272,54 @@ def download_candidate(
 
         _log(f"[DOWNLOADER] yt-dlp ({'throttled' if throttle else 'unthrottled'}) "
              f"extractor={extractor or 'default'} → {os.path.basename(out_path)}")
+
+        rc: int | None = None
+        interrupted = False
+        timed_out = False
         try:
-            subprocess.check_call(
-                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, timeout=1800,
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
             )
+            deadline = time.monotonic() + 1800
+            while True:
+                try:
+                    rc = proc.wait(timeout=1.0)
+                    break
+                except subprocess.TimeoutExpired:
+                    if playback_active is not None and playback_active.is_set():
+                        _log("[DOWNLOADER] Playback started — aborting in-flight download")
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                            proc.wait()
+                        interrupted = True
+                        break
+                    if time.monotonic() > deadline:
+                        proc.kill()
+                        proc.wait()
+                        timed_out = True
+                        break
+        except Exception as e:
+            _log(f"[DOWNLOADER] yt-dlp launch failed: {e} — trying next extractor")
+            rc = -1
+
+        if interrupted:
+            # Discard the partial file so a future attempt starts clean. The
+            # worker will go back to waiting on playback_active and re-pick
+            # the term when playback ends.
+            for path in (out_path, out_path + ".part"):
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except Exception:
+                    pass
+            return False, None, None
+
+        if timed_out:
+            _log("[DOWNLOADER] yt-dlp timed out — trying next extractor")
+        elif rc == 0:
             if os.path.exists(out_path):
                 size = os.path.getsize(out_path)
                 if size >= cache_db.VIDEO_CACHE_MIN_FILE_SIZE_BYTES:
@@ -279,10 +329,9 @@ def download_candidate(
                 _log(f"[DOWNLOADER] yt-dlp produced an undersize file "
                      f"({size} B < {cache_db.VIDEO_CACHE_MIN_FILE_SIZE_BYTES} B); "
                      f"discarding and trying next extractor")
-        except subprocess.TimeoutExpired:
-            _log("[DOWNLOADER] yt-dlp timed out — trying next extractor")
-        except subprocess.CalledProcessError as e:
-            _log(f"[DOWNLOADER] yt-dlp failed (exit {e.returncode}) — trying next extractor")
+        elif rc is not None:
+            _log(f"[DOWNLOADER] yt-dlp failed (exit {rc}) — trying next extractor")
+
         # Clean up the rejected/partial output (and any leftover .part) before
         # the next attempt.
         for path in (out_path, out_path + ".part"):
@@ -461,9 +510,19 @@ class DownloadWorker:
                 except Exception:
                     pass
 
-            throttle = self.playback_active.is_set() or bool(self.menu_active and self.menu_active.is_set())
-            ok, title, duration = download_candidate(cand, out_path, throttle=throttle)
+            throttle = bool(self.menu_active and self.menu_active.is_set())
+            ok, title, duration = download_candidate(
+                cand, out_path,
+                throttle=throttle,
+                playback_active=self.playback_active,
+            )
             if not ok:
+                if self.playback_active.is_set():
+                    # Aborted by playback — not a real failure; the worker
+                    # will wait for playback to end and re-pick the term.
+                    _log(f"[DOWNLOADER] Held off term '{term}' (resident={resident}) "
+                         f"until playback ends")
+                    return
                 cooled = cache_db.record_term_failure(
                     term_id, DOWNLOADER_FAILURE_COOLDOWN, DOWNLOADER_FAILURE_THRESHOLD
                 )
