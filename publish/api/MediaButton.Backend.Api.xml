@@ -59,6 +59,15 @@
         <member name="M:MediaButtonBackend.Controllers.AdminResidentMobizioController.DebugThisIsMe(System.String,System.String,System.String)">
             <summary>Diagnostic: trace This Is Me field fetch for a resident by known Mobizio IDs.</summary>
         </member>
+        <member name="M:MediaButtonBackend.Controllers.AdminResidentMobizioController.Delete(System.String)">
+            <summary>
+            Hard-delete a resident from the portal. Wipes the playlist snapshot,
+            cache mirror rows, relative-user access grants, and detaches any Pi
+            device assigned to them. Used to clean up duplicate / mistyped names
+            (e.g. Nicholas vs Nicolas) that the setup wizard created.
+            Admin-only because it's destructive and cross-tenant.
+            </summary>
+        </member>
         <member name="M:MediaButtonBackend.Controllers.AdminResidentMobizioController.FetchActivityPhotos(System.String)">
             <summary>
             Fetches recent activity record photos for a resident from Mobizio,
@@ -128,6 +137,15 @@
             <summary>
             Returns the "This is Me" profile for a resident from Mobizio care planning.
             The Pi uses this to personalise AI playlist generation without needing a local Excel file.
+            </summary>
+        </member>
+        <member name="M:MediaButtonBackend.Controllers.DeviceResidentPlaylistsController.SuggestTerms(System.String,System.String,MediaButtonBackend.Api.Models.SuggestTermsPayload)">
+            <summary>
+            Called by the Pi after AI term generation. Appends any missing YouTube
+            search terms to the manual playlist so they are visible and editable in
+            the portal. Existing items are never removed or reordered.
+            ManualUpdatedAt is intentionally NOT changed — this is a transparent
+            background action, not a user-driven edit.
             </summary>
         </member>
         <member name="T:MediaButtonBackend.Api.Models.CachedVideoSnapshotItem">
