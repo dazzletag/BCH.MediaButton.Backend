@@ -84,7 +84,7 @@ function formatRelative(iso?: string | null): string {
   return `${d}d ago`;
 }
 
-export default function Dashboard() {
+export default function Dashboard({ isAdmin = false }: { isAdmin?: boolean }) {
   const isAuthed = useIsAuthenticated();
   const { accounts } = useMsal();
   const { call } = useApiClient();
@@ -401,6 +401,56 @@ export default function Dashboard() {
     await saveResidentManual(updated);
     setSaveMessage(toAdd.length ? `${toAdd.length} radio station(s) added to playlist.` : "Radio stations already in playlist.");
   }, [radioFavorites, manualText, residentQuery, saveResidentManual]);
+
+  const deleteResident = useCallback(async () => {
+    const r = residentQuery.trim();
+    if (!r) return;
+    const first = window.confirm(
+      `Delete resident "${r}" from the portal?\n\n` +
+      `This removes their playlist snapshot, cache mirror rows, access grants, ` +
+      `and detaches any Pi assigned to them. It cannot be undone.`
+    );
+    if (!first) return;
+    const second = window.prompt(`Type the resident name to confirm: ${r}`);
+    if (second !== r) {
+      if (second !== null) setError("Name didn't match — delete cancelled.");
+      return;
+    }
+    setError(null);
+    setSaveMessage(null);
+    try {
+      const result = await call<{
+        resident: string;
+        devicesDetached: number;
+        cachedVideosDeleted: number;
+        accessGrantsDeleted: number;
+      }>({
+        url: `/api/admin/residents/${encodeURIComponent(r)}`,
+        method: "DELETE",
+      });
+      setSaveMessage(
+        `Deleted "${result.resident}" — ${result.devicesDetached} device(s) detached, ` +
+        `${result.cachedVideosDeleted} cached video row(s), ` +
+        `${result.accessGrantsDeleted} access grant(s).`
+      );
+      setResidentQuery("");
+      setManualText("");
+      setManualMeta({});
+      setCacheVideos([]);
+      setCacheDevices([]);
+      setCacheLastSeen(null);
+      setAiPlaylist(null);
+      try {
+        const residents = await call<ResidentList>({ url: "/api/admin/residents", method: "GET" });
+        setResidentList(residents || []);
+      } catch (refreshErr) {
+        console.error("Failed to refresh resident list", refreshErr);
+      }
+    } catch (err) {
+      console.error(err);
+      setError("Failed to delete resident.");
+    }
+  }, [call, residentQuery]);
 
   const applySeasonalToPlaylist = useCallback(async () => {
     if (!residentQuery.trim()) {
@@ -725,6 +775,17 @@ export default function Dashboard() {
               <button className="btn ghost" type="button" disabled={loadingResident} onClick={loadResidentManual}>
                 {loadingResident ? "Loading..." : "Load current playlist"}
               </button>
+              {isAdmin && residentQuery.trim() && (
+                <button
+                  className="btn ghost"
+                  type="button"
+                  onClick={deleteResident}
+                  style={{ color: "var(--warning, #ff6b6b)", borderColor: "var(--warning, #ff6b6b)" }}
+                  title="Hard-delete this resident from the portal"
+                >
+                  Delete resident
+                </button>
+              )}
             </div>
           </div>
         </div>

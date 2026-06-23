@@ -127,7 +127,7 @@ function AuthenticatedApp() {
           <button className="btn ghost" onClick={signOut}>Sign out</button>
         </div>
       </header>
-      {tab === "media" && <Dashboard />}
+      {tab === "media" && <Dashboard isAdmin={isAdmin} />}
       {tab === "devices" && <Devices />}
       {tab === "users" && <Users />}
     </div>
