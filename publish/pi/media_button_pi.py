@@ -2843,14 +2843,25 @@ class RemoteMenuController:
         threading.Thread(target=_poll, name="PlaylistPoller", daemon=True).start()
 
     def _start_focus_maintainer(self):
-        """Periodically reclaim Tk focus so FLIRC events aren't captured by VLC sub-windows."""
+        """Keep keyboard input routed to the Tk window so FLIRC remote presses
+        can never leak to the desktop (PCManFM was treating Enter-on-the-trash
+        as 'open trash'). Two reinforcing measures:
+
+        1. focus_force every 100ms — narrows the race window where the WM
+           hands focus to a sibling window between ticks.
+        2. grab_set_global — Tk's kiosk-mode primitive that routes ALL
+           keyboard events screen-wide to this window regardless of focus.
+           Has to be reapplied periodically because window-manager events
+           can release the grab.
+        """
         def _tick():
             try:
                 self.ui.root.focus_force()
+                self.ui.root.grab_set_global()
             except Exception:
                 pass
-            self.ui.root.after(400, _tick)
-        self.ui.root.after(400, _tick)
+            self.ui.root.after(100, _tick)
+        self.ui.root.after(100, _tick)
 
     def _bind_keys(self):
         bindings = [
