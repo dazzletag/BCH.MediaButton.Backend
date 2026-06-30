@@ -1061,7 +1061,18 @@ class MediaPlayer:
         # Allow VLC to send audio to Pulse sink if you set PULSE_SINK
         # Force software decode to avoid v4l2m2m failures on some Pis
         aout = AUDIO_OUT or "pulse"
-        opts = [f"--aout={aout}", "--avcodec-hw=none"]
+        # --no-keyboard-events / --no-mouse-events stop libvlc's child X
+        # window from swallowing input. Without these, once a video starts
+        # rendering, FLIRC remote keys land on VLC's output window and
+        # never reach Tk's bind_all handlers (remote stops working
+        # mid-playback). With them, libvlc ignores the events so X11
+        # bubbles them up to the Tk parent normally.
+        opts = [
+            f"--aout={aout}",
+            "--avcodec-hw=none",
+            "--no-keyboard-events",
+            "--no-mouse-events",
+        ]
         chosen_device = AUDIO_DEVICE
         if aout.startswith("alsa") and not chosen_device:
             chosen_device = _detect_alsa_device()
