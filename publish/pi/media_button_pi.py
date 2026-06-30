@@ -99,6 +99,23 @@ LLM_MODEL = os.getenv("LLM_MODEL", "gpt-41-mini-2025-04-14")
 YT_DLP_BIN = os.getenv("YT_DLP_BIN", os.path.join(os.path.dirname(sys.executable), "yt-dlp"))
 
 
+def _ensure_max_audio_volume() -> None:
+    # Some HDMI TVs apply heavy DRC on PC-class inputs; we want max gain at
+    # the source so operators only have to fight TV-side attenuation. The
+    # Pi ships with Master / PipeWire sink defaults around 40%, which leaves
+    # the signal at ~−24 dB before it even reaches the TV — barely audible
+    # on the worst sets. Run on every boot; no-op once levels are already
+    # at 100%.
+    for cmd in (
+        ["amixer", "-q", "sset", "Master", "100%", "unmute"],
+        ["pactl", "set-sink-volume", "@DEFAULT_SINK@", "100%"],
+    ):
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=5, check=False)
+        except Exception as e:
+            print(f"[BOOT] Audio level command {cmd[0]} failed: {e}")
+
+
 def _refresh_yt_dlp(min_interval_hours: int = 12) -> None:
     # YouTube rotates signature / PO-token formats every few weeks and an aged
     # yt-dlp silently fails to download. requirements.txt only sets a floor, so
@@ -2951,6 +2968,7 @@ def main():
     control_mode = CONFIG.get("control_mode", "beacon")
 
     _refresh_yt_dlp()
+    _ensure_max_audio_volume()
 
     # initial sync
     if TENANT_ID and CLIENT_ID and CLIENT_SECRET and DRIVE_ID and (ITEM_ID or ITEM_PATH):
