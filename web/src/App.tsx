@@ -4,11 +4,12 @@ import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import Dashboard from "./views/Dashboard";
 import Devices from "./views/Devices";
 import Users from "./views/Users";
+import Reporting from "./views/Reporting";
 import { useApiClient } from "./hooks/useApiClient";
 import { loginRequest } from "./msalConfig";
 import "./styles/layout.css";
 
-type Tab = "media" | "devices" | "users";
+type Tab = "media" | "devices" | "reporting" | "users";
 
 function Landing() {
   const { instance, inProgress } = useMsal();
@@ -112,6 +113,13 @@ function AuthenticatedApp() {
           >
             Devices
           </button>
+          <button
+            className={`btn ${tab === "reporting" ? "primary" : "ghost"}`}
+            style={{ borderRadius: 10 }}
+            onClick={() => setTab("reporting")}
+          >
+            Reporting
+          </button>
           {isAdmin && (
             <button
               className={`btn ${tab === "users" ? "primary" : "ghost"}`}
@@ -129,6 +137,7 @@ function AuthenticatedApp() {
       </header>
       {tab === "media" && <Dashboard isAdmin={isAdmin} />}
       {tab === "devices" && <Devices />}
+      {tab === "reporting" && <Reporting isAdmin={isAdmin} />}
       {tab === "users" && <Users />}
     </div>
   );

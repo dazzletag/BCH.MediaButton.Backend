@@ -116,3 +116,78 @@ export type ResidentAccessGrant = {
   grantedAt: string;
   grantedBy?: string | null;
 };
+
+// --- Reporting (engagement & usage) ---
+
+export type ReportKpis = {
+  totalPlays: number;
+  estimatedWatchSeconds: number;
+  uniqueVideos: number;
+  libraryBytes: number;
+  activeResidents: number;
+  totalResidents: number;
+  onlineDevices: number;
+  activeDevices: number;
+  deviceCount: number;
+  neverPlayedVideos: number;
+  avgPlaysPerActiveResident: number;
+};
+
+export type ReportCareHome = {
+  careHomeId: string | null;
+  name: string;
+  residents: number;
+  activeResidents: number;
+  devices: number;
+  plays: number;
+  watchSeconds: number;
+  videos: number;
+  libraryBytes: number;
+  lastActive: string | null;
+};
+
+export type ReportResident = {
+  resident: string;
+  careHomeName: string | null;
+  plays: number;
+  watchSeconds: number;
+  videos: number;
+  libraryBytes: number;
+  devices: number;
+  lastActive: string | null;
+  topTerm: string | null;
+};
+
+export type ReportVideo = {
+  title: string;
+  source: string;
+  sourceId: string;
+  term: string | null;
+  resident: string;
+  plays: number;
+  watchSeconds: number;
+  lastPlayedAt: string | null;
+};
+
+export type ReportTerm = { term: string; plays: number; videos: number };
+export type ReportSource = { source: string; plays: number; videos: number };
+export type ReportGrowthPoint = { date: string; added: number; bytes: number };
+export type ReportRecency = { last7: number; last30: number; older: number; never: number };
+
+export type ReportSummary = {
+  scope: {
+    isAdmin: boolean;
+    residentCount: number;
+    careHomeCount: number;
+    deviceCount: number;
+    generatedAtUtc: string;
+  };
+  kpis: ReportKpis;
+  careHomes: ReportCareHome[];
+  residents: ReportResident[];
+  topVideos: ReportVideo[];
+  topTerms: ReportTerm[];
+  sourceSplit: ReportSource[];
+  libraryGrowth: ReportGrowthPoint[];
+  playRecency: ReportRecency;
+};
