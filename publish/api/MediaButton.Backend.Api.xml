@@ -50,6 +50,7 @@
             (e.g., the portal shows 'deleting…' until the Pi confirms).
             </summary>
         </member>
+        <!-- Badly formed XML comment ignored for member "T:MediaButtonBackend.Controllers.AdminReportingController" -->
         <member name="M:MediaButtonBackend.Controllers.AdminResidentMobizioController.DebugSections(System.String,System.String)">
             <summary>
             Diagnostic: list all form sections for a resident and the distinct form IDs used in each,
@@ -158,6 +159,15 @@
             the portal. Existing items are never removed or reordered.
             ManualUpdatedAt is intentionally NOT changed — this is a transparent
             background action, not a user-driven edit.
+            </summary>
+        </member>
+        <member name="M:MediaButtonBackend.Controllers.DeviceResidentPlaylistsController.RefreshOwnMediaUrl(System.String)">
+            <summary>
+            Playlist items that were saved with a fully signed blob URL keep that
+            SAS forever, so the link dies once its TTL passes (photos imported in
+            July stopped loading on the devices in August). Mint a fresh one for
+            blobs of ours; anything else — a radio stream, a YouTube link, a plain
+            search term — is returned unchanged.
             </summary>
         </member>
         <member name="T:MediaButtonBackend.Api.Models.CachedVideoSnapshotItem">
@@ -286,6 +296,17 @@
         <member name="T:MediaButtonBackend.Services.StorageCorsInitializer">
             <summary>
             Ensures Blob Storage CORS rules allow our frontend origins to PUT directly using SAS.
+            </summary>
+        </member>
+        <member name="M:MediaButtonBackend.Services.StorageSasService.TryRefreshReadSasUri(System.String,System.Collections.Generic.IEnumerable{System.String},System.Nullable{System.Int32})">
+            <summary>
+            Re-sign an absolute blob URL that points at our own storage account.
+            Playlist items are stored with the signed URL they had when they were
+            saved, so the SAS is frozen at that moment and the link is dead once its
+            TTL passes — re-signing on the way out keeps saved media playable
+            indefinitely. Returns null when the URL is not a blob of ours in one of
+            <paramref name="allowedContainers"/>, so callers can pass the original
+            value through untouched.
             </summary>
         </member>
         <member name="T:MediaButtonBackend.Services.UserAccessService">
