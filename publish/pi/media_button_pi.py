@@ -751,10 +751,23 @@ def load_manual_playlist(resident: str) -> list[str] | None:
 
     return None
 
-def persist_manual_playlist(resident: str, items: list[str]):
+def persist_manual_playlist(resident: str, items: list):
     """
     Persist manual playlist. If any entry is a dict/list, write JSON manifest; otherwise keep legacy txt.
+    An empty list clears the snapshot: without this the device replays a cache
+    that can be months old, and any signed media URL in it has long expired.
     """
+    if not items:
+        for path in (manual_playlist_json_path_for(resident), manual_playlist_path_for(resident)):
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except Exception as e:
+                print(f"[MANUAL] Failed to clear {path}: {e}")
+        print(f"[MANUAL] Cleared manual playlist for {resident} — portal list is empty")
+        _persist_debug_playlist(resident, [])
+        return
+
     has_structured = any(isinstance(x, (dict, list)) for x in items)
     if has_structured:
         path = manual_playlist_json_path_for(resident)
@@ -916,14 +929,23 @@ def push_ai_playlist_to_api(resident: str, playlist: list[str], survey_hash: str
     except Exception as e:
         print(f"[API] Failed to push AI playlist for {resident}: {e}")
 
-def fetch_manual_playlist_from_api(resident: str) -> list[str]:
+def fetch_manual_playlist_from_api(resident: str) -> list | None:
+    """Fetch the resident's manual playlist from the portal.
+
+    Returns the items on success — including [] when the portal genuinely has
+    an empty playlist — and None when the API could not be reached or answered
+    with an error. Callers must keep the two apart: an empty list is an
+    instruction to clear the local snapshot, whereas an unreachable API has to
+    leave it alone so the device keeps playing offline.
+    """
     if not API_BASE or not DEVICE_ID or not DEVICE_KEY:
-        return []
+        return None
     try:
         url = f"{API_BASE}/api/device/{urllib.parse.quote(DEVICE_ID)}/resident/{urllib.parse.quote(resident)}/manual-playlist"
         r = requests.get(url, headers=_device_headers(), timeout=10)
         if r.status_code != 200:
-            return []
+            print(f"[MANUAL] API returned {r.status_code} for {resident} — keeping local playlist")
+            return None
         data = r.json()
 
         # API can respond with either a bare list or { items: [...] }
@@ -945,7 +967,7 @@ def fetch_manual_playlist_from_api(resident: str) -> list[str]:
         return parsed
     except Exception as e:
         print(f"[API] Failed to fetch manual playlist for {resident}: {e}")
-        return []
+        return None
 
 # =========================
 # Mobizio "This is Me" profile (replaces local This_is_Me.xlsx)
@@ -1865,7 +1887,7 @@ class Engine:
         # Manual playlist override – takes priority over AI/cache
         try:
             remote_manual = fetch_manual_playlist_from_api(resident)
-            if remote_manual:
+            if remote_manual is not None:
                 norm_remote = normalize_playlist_items(remote_manual)
                 persist_manual_playlist(resident, norm_remote)
                 _persist_debug_playlist(resident, norm_remote)
@@ -2783,17 +2805,37 @@ class RemoteMenuController:
         self._set_menu_active(True)
         self._show_photo_at_index(0)
 
-    def _show_photo_at_index(self, idx: int):
+    def _show_photo_at_index(self, idx: int, _tried: int = 0, _step: int = 1):
+        """Show one photo. Unreachable photos (expired signed URL, no network)
+        are skipped rather than leaving the screen unchanged, which is
+        indistinguishable from the Photos menu item doing nothing. If every
+        photo fails we say so and go back to the menu."""
         n = len(self._photos_playlist)
         if not n:
             return
+        if _tried >= n:
+            print("[REMOTE] No photo in the playlist could be loaded")
+            self._in_photo_slideshow = False
+            self._in_photos_submenu = False
+            self.ui.show_idle(
+                ResidentIdentity(name=self.resident or "Guest", key=self.resident or "guest", survey_blob={}),
+                subtitle="Photos are unavailable just now",
+            )
+            self.ui.root.after(3000, self.open_menu)
+            return
+
         self._photo_sl_index = idx % n
         item = self._photos_playlist[self._photo_sl_index]
         url = (item.get("url") or item.get("mediaUrl") or "") if isinstance(item, dict) else str(item)
         if not url:
+            self._show_photo_at_index(self._photo_sl_index + _step, _tried + 1, _step)
             return
         counter = f"{self._photo_sl_index + 1} / {n}"
-        self.ui.show_photo_fullscreen(url, counter=counter)
+        self.ui.show_photo_fullscreen(
+            url,
+            counter=counter,
+            on_error=lambda: self._show_photo_at_index(self._photo_sl_index + _step, _tried + 1, _step),
+        )
 
     def _open_radio_menu(self):
         self._in_radio_submenu = True
@@ -2837,7 +2879,9 @@ class RemoteMenuController:
     def move_selection(self, delta: int, *_):
         if self._in_photo_slideshow:
             if self._photos_playlist:
-                self._show_photo_at_index(self._photo_sl_index + delta)
+                # _step carries the direction so a failed photo skips onward
+                # the way the resident was already navigating.
+                self._show_photo_at_index(self._photo_sl_index + delta, _step=delta or 1)
             return
         if not self.ui.is_menu_visible():
             self.open_menu()
@@ -3033,7 +3077,7 @@ class RemoteMenuController:
                     _time.sleep(_POLL_INTERVAL)
                     if self.resident:
                         items = fetch_manual_playlist_from_api(self.resident)
-                        if items:
+                        if items is not None:
                             norm = normalize_playlist_items(items)
                             persist_manual_playlist(self.resident, norm)
                             self.playlist = norm

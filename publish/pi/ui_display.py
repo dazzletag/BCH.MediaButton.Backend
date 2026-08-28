@@ -1074,12 +1074,24 @@ class MediaUI:
 
 
 
-    def show_photo_fullscreen(self, url: str, counter: str = ""):
+    def show_photo_fullscreen(self, url: str, counter: str = "", on_error=None):
         """Fetch a photo and fill the screen edge-to-edge (black letterbox).
         counter is an optional overlay string, e.g. '2 / 8'.
-        Thread-safe; stale fetches from rapid navigation are silently dropped."""
+        Thread-safe; stale fetches from rapid navigation are silently dropped.
+        on_error is called on the Tk thread when the photo cannot be shown, so
+        the caller can skip to the next one rather than leaving the screen on
+        whatever happened to be there — which reads as 'Photos does nothing'."""
         self._photo_gen += 1
         my_gen = self._photo_gen
+
+        def _fail(e):
+            def _run():
+                if my_gen != self._photo_gen:
+                    return  # superseded by a newer navigation press
+                if on_error:
+                    on_error()
+            print(f"[UI] Fullscreen photo fetch failed: {e}")
+            self.root.after(0, _run)
 
         def _fetch():
             try:
@@ -1087,7 +1099,7 @@ class MediaUI:
                 resp.raise_for_status()
                 img = Image.open(io.BytesIO(resp.content)).convert("RGB")
             except Exception as e:
-                print(f"[UI] Fullscreen photo fetch failed: {e}")
+                _fail(e)
                 return
 
             def _display(im=img):
@@ -1124,6 +1136,8 @@ class MediaUI:
                     self._show(self.photo_full_frame)
                 except Exception as e:
                     print(f"[UI] Fullscreen photo display failed: {e}")
+                    if on_error:
+                        on_error()
 
             self.root.after(0, _display)
 
