@@ -751,23 +751,10 @@ def load_manual_playlist(resident: str) -> list[str] | None:
 
     return None
 
-def persist_manual_playlist(resident: str, items: list):
+def persist_manual_playlist(resident: str, items: list[str]):
     """
     Persist manual playlist. If any entry is a dict/list, write JSON manifest; otherwise keep legacy txt.
-    An empty list clears the snapshot: without this the device replays a cache
-    that can be months old, and any signed media URL in it has long expired.
     """
-    if not items:
-        for path in (manual_playlist_json_path_for(resident), manual_playlist_path_for(resident)):
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-            except Exception as e:
-                print(f"[MANUAL] Failed to clear {path}: {e}")
-        print(f"[MANUAL] Cleared manual playlist for {resident} — portal list is empty")
-        _persist_debug_playlist(resident, [])
-        return
-
     has_structured = any(isinstance(x, (dict, list)) for x in items)
     if has_structured:
         path = manual_playlist_json_path_for(resident)
@@ -929,23 +916,15 @@ def push_ai_playlist_to_api(resident: str, playlist: list[str], survey_hash: str
     except Exception as e:
         print(f"[API] Failed to push AI playlist for {resident}: {e}")
 
-def fetch_manual_playlist_from_api(resident: str) -> list | None:
-    """Fetch the resident's manual playlist from the portal.
-
-    Returns the items on success — including [] when the portal genuinely has
-    an empty playlist — and None when the API could not be reached or answered
-    with an error. Callers must keep the two apart: an empty list is an
-    instruction to clear the local snapshot, whereas an unreachable API has to
-    leave it alone so the device keeps playing offline.
-    """
+def fetch_manual_playlist_from_api(resident: str) -> list[str]:
     if not API_BASE or not DEVICE_ID or not DEVICE_KEY:
-        return None
+        return []
     try:
         url = f"{API_BASE}/api/device/{urllib.parse.quote(DEVICE_ID)}/resident/{urllib.parse.quote(resident)}/manual-playlist"
         r = requests.get(url, headers=_device_headers(), timeout=10)
         if r.status_code != 200:
             print(f"[MANUAL] API returned {r.status_code} for {resident} — keeping local playlist")
-            return None
+            return []
         data = r.json()
 
         # API can respond with either a bare list or { items: [...] }
@@ -967,7 +946,7 @@ def fetch_manual_playlist_from_api(resident: str) -> list | None:
         return parsed
     except Exception as e:
         print(f"[API] Failed to fetch manual playlist for {resident}: {e}")
-        return None
+        return []
 
 # =========================
 # Mobizio "This is Me" profile (replaces local This_is_Me.xlsx)
@@ -1887,7 +1866,7 @@ class Engine:
         # Manual playlist override – takes priority over AI/cache
         try:
             remote_manual = fetch_manual_playlist_from_api(resident)
-            if remote_manual is not None:
+            if remote_manual:
                 norm_remote = normalize_playlist_items(remote_manual)
                 persist_manual_playlist(resident, norm_remote)
                 _persist_debug_playlist(resident, norm_remote)
@@ -3077,7 +3056,7 @@ class RemoteMenuController:
                     _time.sleep(_POLL_INTERVAL)
                     if self.resident:
                         items = fetch_manual_playlist_from_api(self.resident)
-                        if items is not None:
+                        if items:
                             norm = normalize_playlist_items(items)
                             persist_manual_playlist(self.resident, norm)
                             self.playlist = norm
