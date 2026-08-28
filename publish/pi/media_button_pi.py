@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import asyncio, os, re, shlex, subprocess, sys, time, json, random, threading, hashlib, urllib.parse
+import fcntl, queue, struct
 from collections import deque
 from datetime import datetime
 
@@ -2397,6 +2398,175 @@ class Engine:
 
 
 # =========================
+# Direct remote input (evdev)
+# =========================
+# Raspberry Pi OS Bookworm runs a Wayland session (labwc) and hosts this Tk UI
+# through "Xwayland -rootless". Under Wayland the compositor owns keyboard
+# focus: XSetInputFocus (Tk's focus_force) and XGrabKeyboard (grab_set_global)
+# are advisory for an X client and labwc is free to ignore them. Once focus
+# drifts away — most reliably when a Raspberry Pi Connect / VNC session
+# disconnects and leaves _NET_ACTIVE_WINDOW at 0x0, i.e. nothing focused at
+# all — Tk's bind_all handlers stop firing and the remote appears dead with no
+# way for the app to claw focus back.
+#
+# Reading the FLIRC's evdev node bypasses the display server entirely, so
+# presses arrive regardless of what the compositor thinks is focused. EVIOCGRAB
+# additionally hands us the device exclusively, which stops stray presses
+# leaking to the desktop (the old "OK opens the recycle bin" symptom) without
+# needing a screen-wide Tk grab.
+
+_EV_KEY = 0x01
+_EVIOCGRAB = 0x40044590            # _IOW('E', 0x90, int)
+_INPUT_EVENT_FMT = "llHHi"         # struct input_event
+_INPUT_EVENT_SIZE = struct.calcsize(_INPUT_EVENT_FMT)
+
+# Tk keysym -> Linux input event code, covering the keysyms the remote keymap
+# can name. Anything absent is simply not reachable from the evdev path and
+# falls back to the Tk binding.
+_KEYSYM_TO_EVDEV = {
+    "Escape": 1, "BackSpace": 14, "Tab": 15, "Return": 28, "space": 57,
+    "KP_Enter": 96, "Home": 102, "Up": 103, "Prior": 104, "Left": 105,
+    "Right": 106, "End": 107, "Down": 108, "Next": 109,
+    "a": 30, "b": 48, "c": 46, "d": 32, "e": 18, "f": 33, "g": 34, "h": 35,
+    "i": 23, "j": 36, "k": 37, "l": 38, "m": 50, "n": 49, "o": 24, "p": 25,
+    "q": 16, "r": 19, "s": 31, "t": 20, "u": 22, "v": 47, "w": 17, "x": 45,
+    "y": 21, "z": 44,
+    "0": 11, "1": 2, "2": 3, "3": 4, "4": 5, "5": 6, "6": 7, "7": 8, "8": 9,
+    "9": 10,
+}
+
+
+def _find_remote_device(preferred: str | None = None) -> str | None:
+    """Locate the FLIRC (or other remote) event node.
+
+    Prefers an explicit config path, then the stable /dev/input/by-id symlink,
+    then a name match in /proc/bus/input/devices. Returns None when nothing
+    looks like a remote receiver.
+    """
+    if preferred:
+        return preferred if os.path.exists(preferred) else None
+
+    by_id = "/dev/input/by-id"
+    if os.path.isdir(by_id):
+        for name in sorted(os.listdir(by_id)):
+            low = name.lower()
+            if "flirc" in low and low.endswith("event-kbd"):
+                return os.path.join(by_id, name)
+
+    try:
+        with open("/proc/bus/input/devices", "r") as f:
+            blocks = f.read().split("\n\n")
+    except Exception:
+        return None
+
+    for block in blocks:
+        name = ""
+        handlers = ""
+        for line in block.splitlines():
+            if line.startswith('N: Name="'):
+                name = line[9:].rstrip('"').lower()
+            elif line.startswith("H: Handlers="):
+                handlers = line[len("H: Handlers="):]
+        if not name or "kbd" not in handlers:
+            continue
+        if not any(tag in name for tag in ("flirc", "remote", "infrared", "ir receiver")):
+            continue
+        for token in handlers.split():
+            if token.startswith("event"):
+                return f"/dev/input/{token}"
+    return None
+
+
+class RemoteInputReader:
+    """Background reader that turns FLIRC key presses into action names.
+
+    Actions are pushed onto a queue rather than invoked directly: Tk is not
+    thread-safe, so the controller drains the queue from the Tk main loop.
+    """
+
+    def __init__(self, code_to_action: dict, sink: "queue.Queue",
+                 device_path: str | None = None, grab: bool = True):
+        self._code_to_action = code_to_action
+        self._sink = sink
+        self._device_path = device_path
+        self._grab = grab
+        self._stop = threading.Event()
+        self._fd: int | None = None
+        self.device: str | None = None
+
+    def _open(self, path: str) -> int | None:
+        try:
+            fd = os.open(path, os.O_RDONLY)
+        except Exception as e:
+            print(f"[REMOTE] Cannot open {path}: {e}")
+            return None
+        if self._grab:
+            try:
+                fcntl.ioctl(fd, _EVIOCGRAB, 1)
+                print(f"[REMOTE] Exclusive grab on {path} — presses cannot reach the desktop")
+            except Exception as e:
+                # Not fatal: we still read the device, presses just also reach
+                # whatever the compositor has focused.
+                print(f"[REMOTE] Exclusive grab failed on {path} ({e}) — reading shared")
+        return fd
+
+    def start(self) -> bool:
+        """Open the device and start reading. Returns False if no device."""
+        path = _find_remote_device(self._device_path)
+        if not path:
+            print("[REMOTE] No remote input device found — falling back to Tk key bindings only")
+            return False
+        fd = self._open(path)
+        if fd is None:
+            return False
+        self._fd = fd
+        self.device = path
+        print(f"[REMOTE] Reading remote input directly from {path} "
+              f"({len(self._code_to_action)} key(s) mapped)")
+        threading.Thread(target=self._run, name="RemoteInput", daemon=True).start()
+        return True
+
+    def stop(self):
+        self._stop.set()
+
+    def _run(self):
+        while not self._stop.is_set():
+            if self._fd is None:
+                path = _find_remote_device(self._device_path)
+                if path:
+                    self._fd = self._open(path)
+                    if self._fd is not None:
+                        self.device = path
+                        print(f"[REMOTE] Remote input device reattached: {path}")
+                if self._fd is None:
+                    time.sleep(5)
+                    continue
+            try:
+                # A single read can return several queued events.
+                data = os.read(self._fd, _INPUT_EVENT_SIZE * 16)
+            except Exception as e:
+                print(f"[REMOTE] Remote input read failed ({e}) — will reattach")
+                try:
+                    os.close(self._fd)
+                except Exception:
+                    pass
+                self._fd = None
+                time.sleep(2)
+                continue
+
+            for off in range(0, len(data) - _INPUT_EVENT_SIZE + 1, _INPUT_EVENT_SIZE):
+                _, _, etype, code, value = struct.unpack(
+                    _INPUT_EVENT_FMT, data[off:off + _INPUT_EVENT_SIZE]
+                )
+                # value 1 = press, 2 = auto-repeat (ignored), 0 = release.
+                if etype != _EV_KEY or value != 1:
+                    continue
+                action = self._code_to_action.get(code)
+                if action:
+                    self._sink.put(action)
+
+
+# =========================
 # Remote control (FLIRC / TV remote)
 # =========================
 class RemoteMenuController:
@@ -2427,9 +2597,14 @@ class RemoteMenuController:
         self._action_target_video: dict | None = None
         self._in_photo_slideshow = False
         self._photo_sl_index = 0
+        self._handlers: dict = {}
+        self._input_queue: "queue.Queue" = queue.Queue()
+        self._input_reader: RemoteInputReader | None = None
+        self._evdev_active = False
         if not self.enabled:
             return
         self._bind_keys()
+        self._start_remote_input_reader()
         self._start_focus_maintainer()
         self._start_playlist_poller()
         # open_menu deferred — called via root.after() in main() after mainloop starts
@@ -2870,26 +3045,80 @@ class RemoteMenuController:
 
         threading.Thread(target=_poll, name="PlaylistPoller", daemon=True).start()
 
-    def _start_focus_maintainer(self):
-        """Keep keyboard input routed to the Tk window so FLIRC remote presses
-        can never leak to the desktop (PCManFM was treating Enter-on-the-trash
-        as 'open trash'). Two reinforcing measures:
+    def _start_remote_input_reader(self):
+        """Read the remote straight off its evdev node so presses no longer
+        depend on the compositor giving Tk keyboard focus. See the notes on
+        RemoteInputReader for why the X11 focus/grab approach cannot work on a
+        Wayland session."""
+        code_to_action = {}
+        for name in self._handlers:
+            keysym = self.keymap.get(name)
+            code = _KEYSYM_TO_EVDEV.get(keysym)
+            if code is None:
+                print(f"[REMOTE] No evdev code known for '{name}' → <{keysym}>; "
+                      f"that key works only while Tk holds focus")
+                continue
+            code_to_action[code] = name
+            # Remotes commonly send the keypad Enter for OK.
+            if keysym == "Return":
+                code_to_action[_KEYSYM_TO_EVDEV["KP_Enter"]] = name
 
-        1. focus_force every 100ms — narrows the race window where the WM
-           hands focus to a sibling window between ticks.
-        2. grab_set_global — Tk's kiosk-mode primitive that routes ALL
-           keyboard events screen-wide to this window regardless of focus.
-           Has to be reapplied periodically because window-manager events
-           can release the grab.
+        if not code_to_action:
+            return
+
+        reader = RemoteInputReader(
+            code_to_action,
+            self._input_queue,
+            device_path=self.remote_cfg.get("input_device") or None,
+            grab=bool(self.remote_cfg.get("grab_input", True)),
+        )
+        if not reader.start():
+            return
+        self._input_reader = reader
+        self._evdev_active = True
+        self._start_input_queue_pump()
+
+    def _start_input_queue_pump(self):
+        """Drain remote presses on the Tk main loop — the reader runs on its
+        own thread and Tk widgets must only be touched from this one."""
+        def _pump():
+            try:
+                while True:
+                    action = self._input_queue.get_nowait()
+                    handler = self._handlers.get(action)
+                    if handler:
+                        try:
+                            handler()
+                        except Exception as e:
+                            print(f"[REMOTE] Handler for '{action}' failed: {e}")
+            except queue.Empty:
+                pass
+            self.ui.root.after(50, _pump)
+        self.ui.root.after(50, _pump)
+
+    def _start_focus_maintainer(self):
+        """Keep the Tk window frontmost and, where the display server allows
+        it, focused.
+
+        When the evdev reader owns the remote we only need a gentle nudge, and
+        we must NOT take a screen-wide Tk grab: grab_set_global makes every
+        other application unresponsive to input, and on this Wayland session it
+        cannot deliver what it promises anyway. The aggressive 100ms
+        focus_force + grab_set_global loop is kept only as the fallback for
+        hosts where the evdev node is unavailable, which is where it was
+        actually doing some good (an X11 session).
         """
+        interval = 2000 if self._evdev_active else 100
+
         def _tick():
             try:
                 self.ui.root.focus_force()
-                self.ui.root.grab_set_global()
+                if not self._evdev_active:
+                    self.ui.root.grab_set_global()
             except Exception:
                 pass
-            self.ui.root.after(100, _tick)
-        self.ui.root.after(100, _tick)
+            self.ui.root.after(interval, _tick)
+        self.ui.root.after(interval, _tick)
 
     def _bind_keys(self):
         bindings = [
@@ -2904,11 +3133,16 @@ class RemoteMenuController:
             key = self.keymap.get(name)
             if not key:
                 continue
+            # One debounced wrapper per action, shared by the Tk binding and
+            # the evdev reader: they share _last_key_time, so a press seen on
+            # both paths (when the exclusive grab was refused) acts once.
+            wrapped = self._debounced(name, handler)
+            self._handlers[name] = wrapped
             try:
                 # bind_all: captures events regardless of which child widget holds focus.
                 # The Escape binding here also overrides the quit shortcut in MediaUI,
                 # so Back on the remote returns to idle rather than exiting the process.
-                self.ui.root.bind_all(f"<KeyPress-{key}>", self._debounced(name, handler))
+                self.ui.root.bind_all(f"<KeyPress-{key}>", wrapped)
                 print(f"[REMOTE] Bound '{name}' → <{key}>")
             except Exception as e:
                 print(f"[REMOTE] Failed to bind key {key}: {e}")
