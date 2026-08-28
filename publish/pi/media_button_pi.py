@@ -335,6 +335,24 @@ def _is_image_url(url: str) -> bool:
     return lower.startswith("http") and any(lower.split("?")[0].endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".gif", ".webp"))
 
 
+# Direct video-file extensions. Deliberately excludes .m3u8/.m3u, which are
+# streams and belong to _is_radio_url.
+_VIDEO_FILE_EXTS = (".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm",
+                    ".mpg", ".mpeg", ".wmv", ".3gp", ".mts", ".m2ts")
+
+
+def _is_video_file_url(url: str) -> bool:
+    """True for a direct link to a video file — i.e. something a relative
+    uploaded, as opposed to a YouTube link or a radio stream."""
+    try:
+        lower = url.lower()
+    except Exception:
+        return False
+    if not lower.startswith("http"):
+        return False
+    return lower.split("?")[0].endswith(_VIDEO_FILE_EXTS)
+
+
 def _is_radio_url(url: str) -> bool:
     try:
         lower = url.lower()
@@ -847,6 +865,16 @@ def normalize_playlist_items(items):
                     t = "video"
                 elif query:
                     t = "youtube"
+
+            # A video uploaded through the portal's photo route lands in the
+            # photos container and is labelled "photo". Believe the file
+            # extension over the label: left alone it goes to the Photos menu,
+            # fails to decode as a still image and gets skipped, so it is
+            # invisible everywhere on the device.
+            if t in {"photo", "image", "picture"} and url and _is_video_file_url(url):
+                print(f"[MEDIA] Misfiled video labelled '{t}' — treating as a home video: "
+                      f"{url.split('?')[0].rsplit('/', 1)[-1]}")
+                t = "video"
 
             entry["type"] = t or "media"
             if not entry.get("name"):
@@ -2088,6 +2116,11 @@ class Engine:
                 item_type = (q.get("type") or q.get("kind") or q.get("mediaType") or q.get("media_type") or "").lower()
                 force_radio = item_type == "radio"
                 is_photo = item_type in {"photo", "image", "picture"}
+                # Belt and braces for a mislabelled upload reaching us from a
+                # source that skipped normalize_playlist_items: a .mov must
+                # never go down the still-image path.
+                if is_photo and isinstance(media_url, str) and _is_video_file_url(media_url):
+                    is_photo = False
                 # Direct-from-cache playback item (carried in via the remote
                 # menu's cached-videos submenu). Skip URL parsing entirely —
                 # the filepath is authoritative.
@@ -2592,6 +2625,8 @@ class RemoteMenuController:
         self._cached_videos: list = []
         self._in_photos_submenu = False
         self._photos_playlist: list = []
+        self._in_home_videos_submenu = False
+        self._home_videos: list = []
         self._last_key_time: dict = {}
         self._in_video_action_submenu = False
         self._in_delete_confirm = False
@@ -2622,6 +2657,34 @@ class RemoteMenuController:
                 photos.append(item)
         return photos
 
+    def _playlist_home_videos(self) -> list:
+        """Videos a relative uploaded, i.e. direct video-file links in the
+        playlist. YouTube items are excluded — those show up under Videos once
+        they have been downloaded to the local cache."""
+        videos = []
+        for item in self.playlist:
+            if isinstance(item, dict):
+                t = (item.get("type") or item.get("kind") or item.get("mediaType") or "").lower()
+                url = item.get("url") or item.get("mediaUrl") or ""
+                if t in {"video", "movie"} and _is_video_file_url(url):
+                    videos.append(item)
+            elif isinstance(item, str) and _is_video_file_url(item):
+                videos.append(item)
+        return videos
+
+    @staticmethod
+    def _home_video_label(item) -> str:
+        """Prefer the name from the portal; fall back to a readable filename."""
+        if isinstance(item, dict):
+            name = (item.get("name") or item.get("title") or "").strip()
+            url = item.get("url") or item.get("mediaUrl") or ""
+        else:
+            name, url = "", str(item)
+        if not name or name == url:
+            leaf = url.split("?")[0].rsplit("/", 1)[-1]
+            name = urllib.parse.unquote(leaf) or "(untitled)"
+        return name
+
     def _current_special_items(self) -> list[str]:
         """Recompute the top-level menu rows each time the menu opens."""
         items = []
@@ -2635,6 +2698,9 @@ class RemoteMenuController:
         photos = self._playlist_photos()
         if photos:
             items.append(f"🖼  Photos ({len(photos)})")
+        home_videos = self._playlist_home_videos()
+        if home_videos:
+            items.append(f"🎬  Home Videos ({len(home_videos)})")
         if self._radio_stations:
             items.append("📻  Radio")
         return items
@@ -2728,6 +2794,7 @@ class RemoteMenuController:
         self._in_radio_submenu = False
         self._in_videos_submenu = False
         self._in_photos_submenu = False
+        self._in_home_videos_submenu = False
         self._in_video_action_submenu = False
         self._in_delete_confirm = False
         self._action_target_video = None
@@ -2814,6 +2881,21 @@ class RemoteMenuController:
             url,
             counter=counter,
             on_error=lambda: self._show_photo_at_index(self._photo_sl_index + _step, _tried + 1, _step),
+        )
+
+    def _open_home_videos_menu(self):
+        self._in_home_videos_submenu = True
+        self._home_videos = self._playlist_home_videos()
+        if not self._home_videos:
+            self.open_menu()
+            return
+        labels = [self._home_video_label(v) for v in self._home_videos]
+        self._set_menu_active(True)
+        self.ui.show_menu(
+            "🎬  Home Videos",
+            labels,
+            selected_index=0,
+            hint="Up/Down to select  •  OK to play  •  Back to return",
         )
 
     def _open_radio_menu(self):
@@ -2989,6 +3071,21 @@ class RemoteMenuController:
                 )
             return
 
+        # Home Videos submenu — play the selected upload (single-item session).
+        if self._in_home_videos_submenu:
+            if 0 <= idx < len(self._home_videos):
+                item = self._home_videos[idx]
+                self.ui.hide_menu()
+                self._set_menu_active(False)
+                self._in_home_videos_submenu = False
+                self.engine.start_manual_session(
+                    self.resident or "home-videos",
+                    playlist_override=[item],
+                    start_index=0,
+                    ordered=True,
+                )
+            return
+
         specials = getattr(self, "_active_specials", None) or self._current_special_items()
         if not specials:
             self.open_menu()
@@ -2999,6 +3096,8 @@ class RemoteMenuController:
                 self._open_videos_menu()
             elif label.startswith("🖼"):
                 self._open_photos_menu()
+            elif label.startswith("🎬"):
+                self._open_home_videos_menu()
             elif label == "📻  Radio":
                 self._open_radio_menu()
 
@@ -3022,7 +3121,8 @@ class RemoteMenuController:
             self._action_target_video = None
             self._open_videos_menu()
             return
-        if self._in_radio_submenu or self._in_videos_submenu or self._in_photos_submenu:
+        if (self._in_radio_submenu or self._in_videos_submenu
+                or self._in_photos_submenu or self._in_home_videos_submenu):
             self.open_menu()
             return
         if self.ui.is_menu_visible():
