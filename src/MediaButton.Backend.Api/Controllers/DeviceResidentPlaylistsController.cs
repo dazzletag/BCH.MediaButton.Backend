@@ -305,7 +305,7 @@ public class DeviceResidentPlaylistsController : ControllerBase
     /// search term — is returned unchanged.
     /// </summary>
     private string RefreshOwnMediaUrl(string url) =>
-        _sas.TryRefreshReadSasUri(url, MediaContainers, ttlMinutesOverride: 1440)?.ToString() ?? url;
+        _sas.TryRefreshReadSasUri(url, MediaContainers, ttlMinutesOverride: 1440)?.AbsoluteUri ?? url;
 
     private async Task<(string Url, string Type, string Name)?> ResolveMediaReferenceAsync(string reference, string normalizedResident)
     {
@@ -328,7 +328,11 @@ public class DeviceResidentPlaylistsController : ControllerBase
             : _config["Storage:ContainerVideos"] ?? "videos";
 
                 var (uri, _) = _sas.GetReadSasUri(container, media.BlobPath, ttlMinutesOverride: 1440); // 24h TTL for device playback
-        return (uri.ToString(), media.Type.ToString().ToLowerInvariant(), media.Name ?? Path.GetFileName(media.BlobPath));
+        // AbsoluteUri, not ToString(): Uri.ToString() returns the *unescaped*
+        // form, so a resident whose folder has a space in it yields
+        // ".../Brian SISSLING/..." — a literal space in a URL. Requests-style
+        // clients re-encode it and cope, stricter ones reject it outright.
+        return (uri.AbsoluteUri, media.Type.ToString().ToLowerInvariant(), media.Name ?? Path.GetFileName(media.BlobPath));
     }
 
     private (string Url, string Type, string Name)? ResolveByName(List<MediaAsset> residentMedia, string name)
@@ -345,7 +349,7 @@ public class DeviceResidentPlaylistsController : ControllerBase
             : _config["Storage:ContainerVideos"] ?? "videos";
 
         var (uri, _) = _sas.GetReadSasUri(container, matchedMedia.BlobPath, ttlMinutesOverride: 1440); // 24h TTL for device playback
-        return (uri.ToString(), matchedMedia.Type.ToString().ToLowerInvariant(), matchedMedia.Name ?? Path.GetFileName(matchedMedia.BlobPath));
+        return (uri.AbsoluteUri, matchedMedia.Type.ToString().ToLowerInvariant(), matchedMedia.Name ?? Path.GetFileName(matchedMedia.BlobPath));
     }
 
     private static string? ExtractString(Dictionary<string, object?> obj, params string[] keys)
