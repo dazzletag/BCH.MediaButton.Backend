@@ -52,6 +52,40 @@ public class StorageSasService
         return (sas, expiresAt);
     }
 
+    /// <summary>
+    /// Re-sign an absolute blob URL that points at our own storage account.
+    /// Playlist items are stored with the signed URL they had when they were
+    /// saved, so the SAS is frozen at that moment and the link is dead once its
+    /// TTL passes — re-signing on the way out keeps saved media playable
+    /// indefinitely. Returns null when the URL is not a blob of ours in one of
+    /// <paramref name="allowedContainers"/>, so callers can pass the original
+    /// value through untouched.
+    /// </summary>
+    public Uri? TryRefreshReadSasUri(string? url, IEnumerable<string> allowedContainers, int? ttlMinutesOverride = null)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return null;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return null;
+        if (!string.Equals(uri.Host, _blobServiceClient.Uri.Host, StringComparison.OrdinalIgnoreCase)) return null;
+
+        var path = uri.AbsolutePath.TrimStart('/');
+        var slash = path.IndexOf('/');
+        if (slash <= 0) return null;
+
+        var container = Uri.UnescapeDataString(path[..slash]);
+        var blobPath = Uri.UnescapeDataString(path[(slash + 1)..]);
+        if (string.IsNullOrWhiteSpace(blobPath)) return null;
+        if (!allowedContainers.Contains(container, StringComparer.OrdinalIgnoreCase)) return null;
+
+        try
+        {
+            return GetReadSasUri(container, blobPath, ttlMinutesOverride).uri;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public async Task UploadBlobAsync(string container, string blobPath, Stream content, string contentType)
     {
         var blobClient = _blobServiceClient.GetBlobContainerClient(container).GetBlobClient(blobPath);

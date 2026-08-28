@@ -242,7 +242,7 @@ public class DeviceResidentPlaylistsController : ControllerBase
         }
         else if (!string.IsNullOrWhiteSpace(url))
         {
-            obj["url"] = url;
+            obj["url"] = RefreshOwnMediaUrl(url);
         }
 
         if (!string.IsNullOrWhiteSpace(type))
@@ -286,8 +286,26 @@ public class DeviceResidentPlaylistsController : ControllerBase
             };
         }
 
-        return item;
+        return RefreshOwnMediaUrl(item);
     }
+
+    private static readonly string[] _defaultMediaContainers = { "photos", "videos" };
+
+    private string[] MediaContainers => new[]
+    {
+        _config["Storage:ContainerPhotos"] ?? _defaultMediaContainers[0],
+        _config["Storage:ContainerVideos"] ?? _defaultMediaContainers[1],
+    };
+
+    /// <summary>
+    /// Playlist items that were saved with a fully signed blob URL keep that
+    /// SAS forever, so the link dies once its TTL passes (photos imported in
+    /// July stopped loading on the devices in August). Mint a fresh one for
+    /// blobs of ours; anything else — a radio stream, a YouTube link, a plain
+    /// search term — is returned unchanged.
+    /// </summary>
+    private string RefreshOwnMediaUrl(string url) =>
+        _sas.TryRefreshReadSasUri(url, MediaContainers, ttlMinutesOverride: 1440)?.ToString() ?? url;
 
     private async Task<(string Url, string Type, string Name)?> ResolveMediaReferenceAsync(string reference, string normalizedResident)
     {
