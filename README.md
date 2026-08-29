@@ -34,8 +34,44 @@ Auth: MSAL against the home tenant; scope defaults to `api://<API_CLIENT_ID>/acc
 
 ## Deploying
 
-- Target: Azure App Service.
-- Publish with `dotnet publish -c Release` and deploy the output of `src/MediaButton.Backend.Api/bin/Release/net8.0/publish`.
+Target: Azure App Service (`mediabutton` in resource group `BCHSystems`).
+
+```powershell
+./scripts/deploy-api.ps1
+```
+
+That builds the portal bundle, publishes the API, zips it, deploys it, and
+then checks the **live** site serves the bundle it just built.
+
+### The trap this avoids
+
+The API serves the portal from its own `wwwroot`, which `dotnet publish`
+fills from `web/dist`. That directory is gitignored, so it is whatever the
+publishing machine last built - it is not tracked, and a stale copy looks
+identical to a fresh one.
+
+Publishing from a checkout with an old `web/dist` therefore *silently
+reverts the live portal*. That is exactly what happened on 2026-08-28: a
+stale bundle removed the Reporting tab from production. Comparing
+`web/dist` to the committed `publish/api/wwwroot` does **not** catch it -
+that is the repo's copy of the bundle, not the deployed one. Only a
+comparison against the live site does, which is what the script's final
+step performs.
+
+`dotnet publish` now refuses to run when `web/dist` is missing or older
+than `web/src`. For an API-only change where you intend to leave the
+deployed bundle untouched:
+
+```powershell
+./scripts/deploy-api.ps1 -SkipSpaBuild -Force
+```
+
+Building the bundle requires `web/.env.local` (copy `web/.env.example`) -
+MSAL auth config is embedded at build time, and without it sign-in fails
+with `AADSTS900144`.
+
+`publish/api/` is committed as the record of what is deployed, since
+`web/dist` itself is not tracked.
 
 ## Next steps
 

@@ -10,6 +10,57 @@
       <Link>wwwroot\%(RecursiveDir)%(Filename)%(Extension)</Link>
     </Content>
   </ItemGroup>
+
+  <!--
+    SPA bundle guard.
+
+    web/dist is gitignored, so `dotnet publish` copies whatever build happens
+    to be sitting on the publishing machine into wwwroot. On 2026-08-28 a
+    stale local dist silently replaced the live portal and removed the
+    Reporting tab; nothing warned, because a stale bundle looks exactly like
+    a fresh one to MSBuild. These targets turn that silent failure loud.
+
+    The Content glob above is evaluated before any target runs, so we cannot
+    fix a stale bundle mid-publish — the correct response is to stop and tell
+    the operator to rebuild. scripts/deploy-api.ps1 does the whole sequence
+    in the right order.
+
+    Escape hatch: -p:SkipSpaBundleCheck=true, for an API-only change where
+    you deliberately intend to leave the deployed bundle alone. Note that
+    publishing with a missing dist still ships an empty wwwroot.
+  -->
+  <PropertyGroup>
+    <SpaDir>$(MSBuildThisFileDirectory)..\..\web\</SpaDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <SpaSourceFile Include="$(SpaDir)src\**\*" />
+    <SpaSourceFile Include="$(SpaDir)package.json" />
+    <SpaSourceFile Include="$(SpaDir)index.html" />
+    <SpaSourceFile Include="$(SpaDir)vite.config.ts" />
+    <SpaSourceFile Include="$(SpaDir).env.local" Condition="Exists('$(SpaDir).env.local')" />
+  </ItemGroup>
+
+  <Target Name="VerifySpaBundleExists"
+          BeforeTargets="PrepareForPublish"
+          Condition="'$(SkipSpaBundleCheck)' != 'true'">
+    <Error Condition="!Exists('$(SpaDir)dist\index.html')"
+           Text="web/dist is missing. Publishing now would ship an empty wwwroot and take the portal down. Run 'npm ci' then 'npm run build' in web/ first (it needs web/.env.local - see web/.env.example), or use scripts/deploy-api.ps1 which does it for you." />
+  </Target>
+
+  <!--
+    Inputs/Outputs does the timestamp comparison for us: MSBuild skips this
+    target entirely when dist/index.html is newer than every SPA source file,
+    and runs it (failing the build) when anything is newer than the bundle.
+  -->
+  <Target Name="VerifySpaBundleIsCurrent"
+          BeforeTargets="PrepareForPublish"
+          Condition="'$(SkipSpaBundleCheck)' != 'true'"
+          Inputs="@(SpaSourceFile)"
+          Outputs="$(SpaDir)dist\index.html">
+    <Error Condition="Exists('$(SpaDir)dist\index.html')"
+           Text="web/dist is older than the SPA sources, so this publish would ship a stale portal bundle and silently revert whatever is currently live. Run 'npm run build' in web/ first, or use scripts/deploy-api.ps1. Pass -p:SkipSpaBundleCheck=true only if you intend to leave the deployed bundle untouched." />
+  </Target>
+
   <ItemGroup>
     <PackageReference Include="Azure.Storage.Blobs" Version="12.21.3" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.11" />
