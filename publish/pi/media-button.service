@@ -10,6 +10,10 @@ Group=dazzletag
 WorkingDirectory=/opt/media-button
 ExecStartPre=/usr/bin/git -C /opt/media-button fetch --all
 ExecStartPre=/usr/bin/git -C /opt/media-button reset --hard origin/main
+# Runs as root ("+") so repo files destined for /etc reach the device too.
+# Without this, anything outside /opt/media-button only ever arrives via
+# install.sh, which does not run on a restart.
+ExecStartPre=+/opt/media-button/publish/pi/sync-system-files.sh
 ExecStartPre=/opt/media-button/.venv/bin/pip install -q -r /opt/media-button/publish/pi/requirements.txt
 ExecStart=/opt/media-button/.venv/bin/python -u /opt/media-button/publish/pi/media_button_pi.py
 Restart=always

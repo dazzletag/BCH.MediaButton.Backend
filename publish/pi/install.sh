@@ -289,9 +289,11 @@ LOG_FILE="/var/log/media-button.log"
 touch "$LOG_FILE"
 chown "$APP_USER":"$APP_USER" "$LOG_FILE"
 
-# Without rotation this log grows unbounded (one device reached 170 MB).
-install -m 0644 "$INSTALL_DIR/publish/pi/media-button.logrotate"         /etc/logrotate.d/media-button
-success "Log rotation installed (daily, 7 kept, rotated early past 50M)."
+# Installs everything that belongs outside $INSTALL_DIR (log rotation, and
+# anything added later). The unit re-runs this on every start, so the same
+# script keeps existing devices up to date.
+bash "$INSTALL_DIR/publish/pi/sync-system-files.sh"
+success "System files installed (log rotation: daily, 7 kept, early past 50M)."
 
 # ── 9. Summary ────────────────────────────────────────────────────────────────
 echo ""
