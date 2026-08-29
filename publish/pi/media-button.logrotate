@@ -1,0 +1,30 @@
+# Log rotation for the Media Button device log.
+#
+# Installed to /etc/logrotate.d/media-button by install.sh. Without it the
+# log grows without limit — one device reached 170 MB.
+#
+# copytruncate is REQUIRED here, not a stylistic choice. The unit writes via
+# systemd's "StandardOutput=append:/var/log/media-button.log", so systemd
+# holds the file open for the lifetime of the service. Rotating by rename
+# (logrotate's default) would leave systemd writing to the renamed inode:
+# /var/log/media-button.log would sit empty forever while the rotated file
+# grew, and only a service restart would recover it. copytruncate instead
+# copies the file aside and truncates the original in place, so the open
+# descriptor stays valid and logging continues uninterrupted.
+#
+# The trade-off is a narrow window between the copy and the truncate in
+# which a few lines can be lost. That is the right trade for a device log.
+#
+# No delaycompress: that exists so a writer still holding the rotated file
+# can finish with it before compression. copytruncate leaves nothing holding
+# it, so compressing on the spot is safe and reclaims the space immediately.
+
+/var/log/media-button.log {
+    daily
+    maxsize 50M
+    rotate 7
+    compress
+    missingok
+    notifempty
+    copytruncate
+}

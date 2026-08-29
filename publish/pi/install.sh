@@ -284,10 +284,14 @@ systemctl enable media-button-wifi
 systemctl enable "$SERVICE_NAME"
 success "Services installed and enabled."
 
-# ── 8. Create log file ────────────────────────────────────────────────────────
+# ── 8. Create log file + rotation ─────────────────────────────────────────────
 LOG_FILE="/var/log/media-button.log"
 touch "$LOG_FILE"
 chown "$APP_USER":"$APP_USER" "$LOG_FILE"
+
+# Without rotation this log grows unbounded (one device reached 170 MB).
+install -m 0644 "$INSTALL_DIR/publish/pi/media-button.logrotate"         /etc/logrotate.d/media-button
+success "Log rotation installed (daily, 7 kept, rotated early past 50M)."
 
 # ── 9. Summary ────────────────────────────────────────────────────────────────
 echo ""
