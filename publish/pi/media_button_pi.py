@@ -372,6 +372,87 @@ def _is_youtube_url(url: str) -> bool:
     return lower.startswith("http") and ("youtube.com" in lower or "youtu.be" in lower)
 
 
+# Radio stations are stored as bare "radio:<url>" playlist entries with no
+# name attached, so the menu had nothing to show but the URL itself. Streams
+# carry no metadata we can read before playing, so map what we know and make
+# a sensible job of the rest. A real name on the playlist entry always wins
+# over this.
+_RADIO_STATION_NAMES = {
+    "bbc_radio_one": "BBC Radio 1",
+    "bbc_radio_two": "BBC Radio 2",
+    "bbc_radio_three": "BBC Radio 3",
+    "bbc_radio_four": "BBC Radio 4",
+    "bbc_radio_fourfm": "BBC Radio 4",
+    "bbc_radio_fourextra": "BBC Radio 4 Extra",
+    "bbc_radio_five_live": "BBC Radio 5 Live",
+    "bbc_radio_fivelive": "BBC Radio 5 Live",
+    "bbc_6music": "BBC Radio 6 Music",
+    "bbc_radio_six": "BBC Radio 6 Music",
+    "bbc_radio_bristol": "BBC Radio Bristol",
+    "bbc_world_service": "BBC World Service",
+    "classicfm": "Classic FM",
+    "smoothradio": "Smooth Radio",
+    "talksport": "talkSPORT",
+}
+
+_NUMBER_WORDS = {"one": "1", "two": "2", "three": "3", "four": "4",
+                 "five": "5", "six": "6", "seven": "7", "eight": "8"}
+
+
+def _prettify_station_token(token: str) -> str:
+    """Turn 'bbc_radio_bristol' or 'ClassicFM' into something a resident can read."""
+    t = token.replace("_", " ").replace("-", " ")
+    t = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", t)   # ClassicFM -> Classic FM
+    t = re.sub(r"\s+", " ", t).strip()
+    words = []
+    for w in t.split(" "):
+        lw = w.lower()
+        if lw == "bbc":
+            words.append("BBC")
+        elif lw == "fm":
+            words.append("FM")
+        elif lw in _NUMBER_WORDS:
+            words.append(_NUMBER_WORDS[lw])
+        elif w:
+            words.append(w[:1].upper() + w[1:])
+    return " ".join(words) or token
+
+
+def _radio_display_name(url: str) -> str:
+    """Best-effort friendly name for a radio stream URL.
+
+    'http://media-the.musicradio.com/ClassicFM' becomes 'Classic FM', and
+    '...bbcradio.m3u8?station=bbc_radio_fourfm' becomes 'BBC Radio 4'.
+    Falls back to the URL when we cannot do better, which is still no worse
+    than what was shown before.
+    """
+    if not url:
+        return url
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return url
+    if not parsed.scheme:
+        return url
+
+    # BBC streams name the station in a query parameter.
+    try:
+        station = (urllib.parse.parse_qs(parsed.query or "").get("station") or [""])[0]
+    except Exception:
+        station = ""
+    station = station.strip()
+    if station:
+        return _RADIO_STATION_NAMES.get(station.lower()) or _prettify_station_token(station)
+
+    # Otherwise the last path segment is usually the station.
+    leaf = (parsed.path or "").rstrip("/").rsplit("/", 1)[-1]
+    leaf = re.sub(r"\.(m3u8?|pls|aac|mp3|ogg|opus|flac)$", "", leaf, flags=re.I)
+    if leaf.strip():
+        return _RADIO_STATION_NAMES.get(leaf.strip().lower()) or _prettify_station_token(leaf)
+
+    return parsed.netloc or url
+
+
 def _maybe_add_scheme(url: str) -> str:
     """
     Normalise URLs that are missing a scheme (e.g. 'youtube.com/...' or 'www...').
@@ -818,13 +899,13 @@ def normalize_playlist_items(items):
             low = s.lower()
             if low.startswith("radio:"):
                 url = s.split(":", 1)[1].strip()
-                normalized.append({"type": "radio", "url": url, "name": url})
+                normalized.append({"type": "radio", "url": url, "name": _radio_display_name(url)})
                 continue
             if _is_image_url(s):
                 normalized.append({"type": "photo", "url": s, "name": s})
                 continue
             if _is_radio_url(s):
-                normalized.append({"type": "radio", "url": s, "name": s})
+                normalized.append({"type": "radio", "url": s, "name": _radio_display_name(s)})
                 continue
             if s.startswith("http"):
                 normalized.append({"type": "video", "url": s, "name": s})
@@ -879,6 +960,9 @@ def normalize_playlist_items(items):
             entry["type"] = t or "media"
             if not entry.get("name"):
                 entry["name"] = entry.get("title") or entry.get("label") or url or query
+            # A radio entry whose only "name" is its own URL is no name at all.
+            if t == "radio" and url and (not entry.get("name") or entry.get("name") == url):
+                entry["name"] = _radio_display_name(url)
             if url and not entry.get("url"):
                 entry["url"] = url
             if query is not None and entry.get("query") is None:
@@ -2768,7 +2852,9 @@ class RemoteMenuController:
         for item in self.playlist:
             if isinstance(item, dict) and item.get("type") == "radio":
                 url = item.get("url", "")
-                name = item.get("name") or item.get("title") or url
+                name = item.get("name") or item.get("title") or ""
+                if not name or name == url:
+                    name = _radio_display_name(url)
                 if url and url not in seen_urls:
                     config_stations.append({"name": name, "url": url})
                     seen_urls.add(url)
