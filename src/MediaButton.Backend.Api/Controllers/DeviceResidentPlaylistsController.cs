@@ -140,7 +140,12 @@ public class DeviceResidentPlaylistsController : ControllerBase
         {
             var t = (term ?? "").Trim();
             if (string.IsNullOrWhiteSpace(t) || existingQueries.Contains(t)) continue;
-            merged.Add(new { type = "youtube", query = t, source = "ai" });
+            // Store the bare term, the same shape as every other entry in a
+            // manual playlist. Writing an object here made the portal editor
+            // show "[object Object]", and saving would have written that text
+            // back over the term. The Pi types a bare non-URL string as a
+            // YouTube search anyway.
+            merged.Add(t);
             existingQueries.Add(t);
             added++;
         }

@@ -59,9 +59,9 @@ public class AdminResidentPlaylistsController : ControllerBase
         var key = NormalizeResident(resident);
         var snapshot = await _db.ResidentPlaylists.FirstOrDefaultAsync(r => r.Resident == key);
         var items = ParseManual(snapshot?.ManualPlaylistJson)
-            .Select(j => ToClrObject(j))
-            .Where(o => o is not null)
-            .ToList();
+            .Select(FlattenForEditor)
+            .Where(o => !string.IsNullOrWhiteSpace(o))
+            .ToList<object?>();
         return Ok(new ManualPlaylistResponse(key, items, snapshot?.ManualUpdatedAt, snapshot?.ManualUpdatedBy, snapshot?.LastPolledAt));
     }
 
@@ -120,4 +120,53 @@ public class AdminResidentPlaylistsController : ControllerBase
         element.ValueKind == JsonValueKind.Undefined || element.ValueKind == JsonValueKind.Null
             ? null
             : element.Deserialize<object>(_jsonOptions);
+
+    /// <summary>
+    /// Flatten a stored playlist entry to the single line the portal editor
+    /// shows for it.
+    ///
+    /// The editor is a textarea: it loads the items joined by newlines and
+    /// saves by
+    /// splitting the lines back into strings. An object entry therefore
+    /// rendered as "[object Object]", and saving would have written that
+    /// literal text back over the real entry. Entries are strings by
+    /// convention ("media:&lt;id&gt;", "radio:&lt;url&gt;", or a bare search
+    /// term); only suggest-terms ever wrote objects.
+    ///
+    /// Nothing is dropped: an unrecognised object falls back to its raw JSON
+    /// so it stays visible and survives a round-trip rather than vanishing.
+    /// </summary>
+    private static string? FlattenForEditor(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.String) return element.GetString();
+        if (element.ValueKind != JsonValueKind.Object) return element.ToString();
+
+        string? Pick(params string[] names)
+        {
+            foreach (var n in names)
+            {
+                if (element.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.String)
+                {
+                    var s = v.GetString();
+                    if (!string.IsNullOrWhiteSpace(s)) return s;
+                }
+            }
+            return null;
+        }
+
+        var query = Pick("query", "search");
+        if (!string.IsNullOrWhiteSpace(query)) return query;
+
+        var url = Pick("url", "mediaUrl", "source", "href", "radioUrl", "radio", "station");
+        if (!string.IsNullOrWhiteSpace(url))
+        {
+            var type = Pick("type", "kind", "mediaType", "media_type");
+            return string.Equals(type, "radio", StringComparison.OrdinalIgnoreCase)
+                   && !url.StartsWith("radio:", StringComparison.OrdinalIgnoreCase)
+                ? "radio:" + url
+                : url;
+        }
+
+        return Pick("name", "title", "label") ?? element.GetRawText();
+    }
 }
