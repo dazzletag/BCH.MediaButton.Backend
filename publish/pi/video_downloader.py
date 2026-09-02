@@ -383,6 +383,10 @@ class DownloadWorker:
         self._thread = threading.Thread(target=self._run, name="VideoCacheDownloader", daemon=True)
         self._thread.start()
         _log("[DOWNLOADER] Worker started")
+        try:
+            cache_db.log_cache_plan(_log)
+        except Exception as e:
+            _log(f"[DOWNLOADER] Could not report cache plan: {e}")
 
     def stop(self):
         self._stop.set()
@@ -460,18 +464,27 @@ class DownloadWorker:
                 cap = cache_db.VIDEO_CACHE_MAX_BYTES
                 if cap > 0:
                     used = cache_db.video_cache_size_bytes()
-                    if used >= cap:
+                    # Stop while there is still room for the next file, not
+                    # when the cap is already breached. Stopping at the cap
+                    # leaves the GC to evict the overshoot, which frees space
+                    # and lets another download start — roughly one video per
+                    # GC interval, indefinitely. Keeping a video's worth of
+                    # headroom means the GC never has to act and the device
+                    # actually goes quiet.
+                    headroom = cache_db.expected_next_video_bytes()
+                    if used + headroom > cap:
                         if not self._cache_full_logged:
                             _log(f"[DOWNLOADER] Cache full: {used / 1024**3:.1f} GB of "
-                                 f"{cap / 1024**3:.1f} GB cap — downloads paused until "
-                                 f"space is freed")
+                                 f"{cap / 1024**3:.1f} GB cap (reserving "
+                                 f"{headroom / 1024**2:.0f} MB for the next file) — "
+                                 f"downloads paused")
                             self._cache_full_logged = True
                         self._wake.wait(DOWNLOADER_IDLE_SLEEP)
                         self._wake.clear()
                         continue
                     if self._cache_full_logged:
-                        _log(f"[DOWNLOADER] Cache back under cap "
-                             f"({used / 1024**3:.1f} GB) — downloads resumed")
+                        _log(f"[DOWNLOADER] Room again "
+                             f"({used / 1024**3:.1f} GB used) — downloads resumed")
                         self._cache_full_logged = False
 
                 # Hold off only while a video is actively playing.

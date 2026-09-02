@@ -33,7 +33,13 @@ VIDEO_CACHE_DIR = os.getenv(
 
 # Per-term cap is read by both downloader (when deciding whether to enqueue
 # more) and GC (when evicting). Keep the env var name aligned with the brief.
-VIDEO_CACHE_PER_TERM_CAP = int(os.getenv("VIDEO_CACHE_PER_TERM_CAP", "5"))
+# Keep this in proportion to VIDEO_CACHE_MAX_GB. A typical resident has ~50
+# search terms and videos average ~130 MB, so 5 each is ~32 GB of intent
+# against a 10 GB cache — unreachable, and before the downloader learned
+# about the disk cap it chased that target forever. 2 each is ~13 GB, which
+# a device with a raised cap can actually hold. log_cache_plan() reports the
+# arithmetic for the device it is actually running on.
+VIDEO_CACHE_PER_TERM_CAP = int(os.getenv("VIDEO_CACHE_PER_TERM_CAP", "2"))
 VIDEO_CACHE_MIN_AGE_DAYS = int(os.getenv("VIDEO_CACHE_MIN_AGE_DAYS", "7"))
 
 # Minimum file size for a download to count as a real video. yt-dlp's /b
@@ -597,6 +603,54 @@ def video_cache_size_bytes() -> int:
     except FileNotFoundError:
         return 0
     return total
+
+
+def expected_next_video_bytes() -> int:
+    """Roughly what the next download will cost, used as headroom so the
+    downloader stops *before* the cache goes over its cap.
+
+    Stopping exactly at the cap is not enough: the last download tips the
+    total over, the GC then evicts to get back under, which frees space, so
+    another download starts — about one video per GC interval, forever.
+    Leaving a video's worth of room means the GC never has to run and the
+    whole thing goes quiet."""
+    with _lock:
+        row = get_conn().execute(
+            "SELECT AVG(filesize_bytes) a FROM cached_videos WHERE filesize_bytes > 0"
+        ).fetchone()
+    avg = int(row["a"] or 0) if row else 0
+    # Floor for a cold cache, and a ceiling so one freak file cannot wedge
+    # the downloader by reserving more than it could ever fetch.
+    return max(min(avg, 1024 ** 3), 250 * 1024 ** 2)
+
+
+def active_term_count() -> int:
+    with _lock:
+        return int(get_conn().execute(
+            "SELECT COUNT(*) n FROM playlist_terms WHERE active = 1"
+        ).fetchone()["n"])
+
+
+def log_cache_plan(log=print):
+    """Say up front whether this device's settings can actually be satisfied.
+
+    Had this been logged, a device quietly moving 37 GB a day to sustain a
+    10 GB cache would have announced the problem on every restart."""
+    cap = VIDEO_CACHE_MAX_BYTES
+    if cap <= 0:
+        log("[CACHE] Disk cap disabled (VIDEO_CACHE_MAX_GB=0) — cache may grow without limit")
+        return
+    terms = active_term_count()
+    avg = expected_next_video_bytes()
+    target = terms * VIDEO_CACHE_PER_TERM_CAP
+    want = target * avg
+    log(f"[CACHE] Plan: {terms} active term(s) x {VIDEO_CACHE_PER_TERM_CAP} "
+        f"= {target} video(s), ~{want / 1024**3:.1f} GB at ~{avg / 1024**2:.0f} MB each; "
+        f"cap {cap / 1024**3:.1f} GB")
+    if want > cap:
+        log(f"[CACHE] Target exceeds the cap by {(want - cap) / 1024**3:.1f} GB — the cache "
+            f"will fill and stop, so later terms get fewer videos. Raise "
+            f"VIDEO_CACHE_MAX_GB or lower VIDEO_CACHE_PER_TERM_CAP for full coverage.")
 
 
 def record_eviction(source: str, source_id: str, resident: str | None = None):
