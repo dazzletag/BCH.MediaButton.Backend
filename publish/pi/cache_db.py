@@ -605,23 +605,35 @@ def video_cache_size_bytes() -> int:
     return total
 
 
-def expected_next_video_bytes() -> int:
-    """Roughly what the next download will cost, used as headroom so the
-    downloader stops *before* the cache goes over its cap.
+# What to assume a video costs before anything has been downloaded.
+_COLD_CACHE_VIDEO_BYTES = 250 * 1024 ** 2
 
-    Stopping exactly at the cap is not enough: the last download tips the
-    total over, the GC then evicts to get back under, which frees space, so
-    another download starts — about one video per GC interval, forever.
-    Leaving a video's worth of room means the GC never has to run and the
-    whole thing goes quiet."""
+
+def average_video_bytes() -> int:
+    """Mean size of what has actually been downloaded, or a cold-cache
+    estimate when there is nothing to average yet. This is the honest
+    figure — use it for reporting, not for reserving space."""
     with _lock:
         row = get_conn().execute(
             "SELECT AVG(filesize_bytes) a FROM cached_videos WHERE filesize_bytes > 0"
         ).fetchone()
     avg = int(row["a"] or 0) if row else 0
-    # Floor for a cold cache, and a ceiling so one freak file cannot wedge
-    # the downloader by reserving more than it could ever fetch.
-    return max(min(avg, 1024 ** 3), 250 * 1024 ** 2)
+    return avg or _COLD_CACHE_VIDEO_BYTES
+
+
+def expected_next_video_bytes() -> int:
+    """Room to keep free so the downloader stops *before* the cache goes over
+    its cap.
+
+    Stopping exactly at the cap is not enough: the last download tips the
+    total over, the GC then evicts to get back under, which frees space, so
+    another download starts — about one video per GC interval, forever.
+    Leaving a video's worth of room means the GC never has to run.
+
+    Deliberately pessimistic, unlike average_video_bytes(): a floor so a cold
+    cache still reserves something sensible, and a ceiling so one freak file
+    cannot wedge the downloader by reserving more than it could ever fetch."""
+    return max(min(average_video_bytes(), 1024 ** 3), _COLD_CACHE_VIDEO_BYTES)
 
 
 def active_term_count() -> int:
@@ -641,7 +653,7 @@ def log_cache_plan(log=print):
         log("[CACHE] Disk cap disabled (VIDEO_CACHE_MAX_GB=0) — cache may grow without limit")
         return
     terms = active_term_count()
-    avg = expected_next_video_bytes()
+    avg = average_video_bytes()
     target = terms * VIDEO_CACHE_PER_TERM_CAP
     want = target * avg
     log(f"[CACHE] Plan: {terms} active term(s) x {VIDEO_CACHE_PER_TERM_CAP} "
