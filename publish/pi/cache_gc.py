@@ -164,11 +164,7 @@ def run_disk_cap_sweep(currently_playing_filepath: str | None = None) -> int:
     if not os.path.isdir(cache_dir):
         return 0
 
-    total = sum(
-        os.path.getsize(os.path.join(cache_dir, f))
-        for f in os.listdir(cache_dir)
-        if f.endswith(".mp4") and os.path.isfile(os.path.join(cache_dir, f))
-    )
+    total = cache_db.video_cache_size_bytes()
     if total <= cap:
         return 0
 
@@ -187,6 +183,13 @@ def run_disk_cap_sweep(currently_playing_filepath: str | None = None) -> int:
         except Exception:
             pass
         _safe_delete_file(fp)
+        # Record before deleting the row — afterwards the source_id is gone.
+        # The downloader consults this so the disk-cap sweep and the
+        # per-term top-up stop undoing each other's work.
+        try:
+            cache_db.record_eviction(v["source"], v["source_id"], v["resident"])
+        except Exception as e:
+            _log(f"[GC] Could not record eviction for {v['source_id']}: {e}")
         cache_db.delete_video(int(v["id"]))
         total -= size
         removed += 1

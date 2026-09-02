@@ -48,6 +48,13 @@ VIDEO_CACHE_MIN_FILE_SIZE_BYTES = int(os.getenv("VIDEO_CACHE_MIN_FILE_SIZE_BYTES
 # Total disk cap for the video cache directory. Set to 0 to disable.
 VIDEO_CACHE_MAX_BYTES = int(float(os.getenv("VIDEO_CACHE_MAX_GB", "10")) * 1024 ** 3)
 
+# How long a video the GC evicted stays off the shopping list. Without this
+# the downloader immediately re-fetches whatever the disk-cap sweep just
+# deleted, because its only question is "does this term have fewer than
+# VIDEO_CACHE_PER_TERM_CAP videos?" — which the eviction just made true again.
+VIDEO_CACHE_EVICTED_COOLDOWN_HOURS = int(
+    os.getenv("VIDEO_CACHE_EVICTED_COOLDOWN_HOURS", "72"))
+
 # Videos played this many times or more are treated as favourites and are
 # never evicted by any GC sweep (same protection as family uploads).
 VIDEO_CACHE_FAVOURITE_THRESHOLD = int(os.getenv("VIDEO_CACHE_FAVOURITE_THRESHOLD", "3"))
@@ -123,6 +130,14 @@ CREATE TABLE IF NOT EXISTS playlist_terms (
     last_seen_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     active          INTEGER NOT NULL DEFAULT 1,
     UNIQUE (resident, term)
+);
+
+CREATE TABLE IF NOT EXISTS evicted_videos (
+    source          TEXT NOT NULL,
+    source_id       TEXT NOT NULL,
+    resident        TEXT,
+    evicted_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (source, source_id)
 );
 
 CREATE TABLE IF NOT EXISTS term_videos (
@@ -563,6 +578,56 @@ def all_evictable_videos_lru() -> list[sqlite3.Row]:
             """,
             (VIDEO_CACHE_FAVOURITE_THRESHOLD, fav_cutoff),
         ))
+
+
+def video_cache_size_bytes() -> int:
+    """Total bytes of downloaded video on disk. Shared by the GC (to decide
+    what to evict) and the downloader (to decide whether to fetch at all)."""
+    total = 0
+    try:
+        for f in os.listdir(VIDEO_CACHE_DIR):
+            if not f.endswith(".mp4"):
+                continue
+            fp = os.path.join(VIDEO_CACHE_DIR, f)
+            try:
+                if os.path.isfile(fp):
+                    total += os.path.getsize(fp)
+            except OSError:
+                pass
+    except FileNotFoundError:
+        return 0
+    return total
+
+
+def record_eviction(source: str, source_id: str, resident: str | None = None):
+    """Note that the GC deleted this video, so the downloader can leave it
+    alone for a while instead of fetching it straight back."""
+    if not source or not source_id:
+        return
+    with _lock:
+        get_conn().execute(
+            """
+            INSERT INTO evicted_videos (source, source_id, resident, evicted_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(source, source_id)
+            DO UPDATE SET evicted_at = CURRENT_TIMESTAMP, resident = excluded.resident
+            """,
+            (source, source_id, resident),
+        )
+        get_conn().commit()
+
+
+def recently_evicted_source_ids(hours: int | None = None) -> set[str]:
+    """source_ids evicted within the cooldown window."""
+    h = VIDEO_CACHE_EVICTED_COOLDOWN_HOURS if hours is None else hours
+    if h <= 0:
+        return set()
+    cutoff = (datetime.utcnow() - timedelta(hours=h)).strftime("%Y-%m-%d %H:%M:%S")
+    with _lock:
+        rows = get_conn().execute(
+            "SELECT source_id FROM evicted_videos WHERE evicted_at >= ?", (cutoff,)
+        ).fetchall()
+    return {r["source_id"] for r in rows}
 
 
 def cached_filepaths() -> set[str]:

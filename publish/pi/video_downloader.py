@@ -371,6 +371,9 @@ class DownloadWorker:
         # When set, background downloads are restricted to these residents
         # only — terms for other residents in the DB are ignored.
         self.allowed_residents = allowed_residents or None
+        # Latches the "cache full" message so a paused worker doesn't repeat
+        # it every idle cycle.
+        self._cache_full_logged = False
         self._thread: threading.Thread | None = None
 
     def start(self):
@@ -448,6 +451,29 @@ class DownloadWorker:
                     self._wake.clear()
                     continue
 
+                # Never fetch when the cache is already full. The worker
+                # only ever asked "which term has fewer than N videos?",
+                # with no idea of the disk cap, so it kept pulling while the
+                # GC kept evicting — one device moved 37 GB a day to sustain
+                # a 10 GB cache. Nothing may be downloaded until the GC or a
+                # shorter playlist actually frees space.
+                cap = cache_db.VIDEO_CACHE_MAX_BYTES
+                if cap > 0:
+                    used = cache_db.video_cache_size_bytes()
+                    if used >= cap:
+                        if not self._cache_full_logged:
+                            _log(f"[DOWNLOADER] Cache full: {used / 1024**3:.1f} GB of "
+                                 f"{cap / 1024**3:.1f} GB cap — downloads paused until "
+                                 f"space is freed")
+                            self._cache_full_logged = True
+                        self._wake.wait(DOWNLOADER_IDLE_SLEEP)
+                        self._wake.clear()
+                        continue
+                    if self._cache_full_logged:
+                        _log(f"[DOWNLOADER] Cache back under cap "
+                             f"({used / 1024**3:.1f} GB) — downloads resumed")
+                        self._cache_full_logged = False
+
                 # Hold off only while a video is actively playing.
                 # Menu-open alone does not pause — downloads continue at
                 # throttled rate so the Pi stays responsive.
@@ -479,6 +505,25 @@ class DownloadWorker:
             blob = None
 
         candidates = resolve_download_candidates(term, resident, blob)
+
+        # Drop anything the GC evicted recently. Without this the disk-cap
+        # sweep and this worker undo each other forever: the sweep deletes
+        # never-played videos to get under the cap, that drops the term back
+        # below VIDEO_CACHE_PER_TERM_CAP, and we fetch the very same video
+        # again on the next pass.
+        if candidates:
+            try:
+                evicted = cache_db.recently_evicted_source_ids()
+            except Exception as e:
+                _log(f"[DOWNLOADER] Could not read eviction history: {e}")
+                evicted = set()
+            if evicted:
+                kept = [c for c in candidates if c.source_id not in evicted]
+                if len(kept) != len(candidates):
+                    _log(f"[DOWNLOADER] Skipping {len(candidates) - len(kept)} recently "
+                         f"evicted candidate(s) for term '{term}'")
+                candidates = kept
+
         if not candidates:
             cooled = cache_db.record_term_failure(
                 term_id, DOWNLOADER_FAILURE_COOLDOWN, DOWNLOADER_FAILURE_THRESHOLD
