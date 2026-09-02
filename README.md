@@ -70,8 +70,18 @@ Building the bundle requires `web/.env.local` (copy `web/.env.example`) -
 MSAL auth config is embedded at build time, and without it sign-in fails
 with `AADSTS900144`.
 
-`publish/api/` is committed as the record of what is deployed, since
-`web/dist` itself is not tracked.
+### What is actually deployed
+
+Neither `web/dist` nor `publish/api/` is tracked - build output does not
+belong in the repo, and a committed copy is not evidence of what is live.
+To find out what is running:
+
+```bash
+curl -s https://mediabutton.azurewebsites.net/api/info    # exact commit
+```
+
+The deploy script checks the same thing for you, comparing the bundle
+filename the live site serves against the one it just built.
 
 ## Next steps
 

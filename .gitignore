@@ -46,3 +46,10 @@ Thumbs.db
 # Build/publish artifacts
 publish_out/
 deploy.zip
+
+# Deployed API build output. Not tracked: a committed copy is not evidence of
+# what is live, and treating it as such is what silently reverted the portal
+# on 2026-08-28. scripts/deploy-api.ps1 verifies against the live site, and
+# GET /api/info reports the exact commit that is running.
+publish/api/
+publish/api.zip
