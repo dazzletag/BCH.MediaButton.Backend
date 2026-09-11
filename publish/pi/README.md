@@ -101,6 +101,64 @@ Suggested layout on the Pi:
    sudo systemctl start media-button
    ```
 
+## Remote access (reverse SSH tunnel)
+
+Each Pi dials home to the `bch-app` VM and forwards its own port 22, so it
+can be reached from a laptop even behind a care home's NAT:
+
+```
+ssh brianpi     # -> 127.0.0.1:2224 on the VM -> Brian's Pi :22
+```
+
+Ports are allocated one per device (2222, 2223, ... ). Check what is already
+taken before picking one:
+
+```
+netstat -an | findstr LISTENING | findstr :222     # on the VM (Windows)
+```
+
+### A new device
+
+```bash
+sudo bash setup-reverse-tunnel.sh --port 2227 --label "Quarry media button"
+```
+
+That installs autossh, generates `~/.ssh/tunnel_key`, records `TUNNEL_PORT`
+and `TUNNEL_LABEL` in `/etc/media-button/env`, enables the Pi's SSH server,
+accepts the VM host key, and starts the unit. It then prints a public key
+which must be added to the VM's `authorized_keys` **from an elevated
+PowerShell** — `field-nursecall` is a standard user and cannot write its own
+`authorized_keys`.
+
+The Pi also needs the laptop's key in `dazzletag`'s `~/.ssh/authorized_keys`,
+or the tunnel will connect and every login will still be refused.
+
+### Keeping it in step
+
+`/etc/systemd/system/reverse-tunnel.service` is rendered from
+`reverse-tunnel.service.template` by `sync-system-files.sh` on every
+media-button start, so the unit tracks the repo across the fleet and a
+damaged one repairs itself. Local edits to the installed unit are
+overwritten — change the template, or the per-device values in
+`/etc/media-button/env`.
+
+The port is taken from `TUNNEL_PORT`; if that is unset it is adopted from
+the unit already installed, so devices built by hand need no change. A
+device with no port anywhere is left alone.
+
+Syncing deliberately does **not** restart the tunnel: whoever is watching is
+usually connected through it. A changed unit takes effect on the next boot,
+or on a manual `systemctl restart reverse-tunnel` from the console.
+
+### Two traps
+
+- Raspberry Pi OS ships with its SSH **server** disabled. Without
+  `systemctl enable --now ssh` the tunnel forwards a port to nothing, and
+  connections fail with `kex_exchange_identification: Connection closed`.
+- `autossh` will sit in a retry loop forever if it has never accepted the
+  VM's host key, despite `StrictHostKeyChecking=accept-new`. The setup
+  script does one authenticated connection as the app user to settle it.
+
 ## Updating
 
 - One-off update:
