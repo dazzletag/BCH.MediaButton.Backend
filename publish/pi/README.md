@@ -110,8 +110,21 @@ can be reached from a laptop even behind a care home's NAT:
 ssh brianpi     # -> 127.0.0.1:2224 on the VM -> Brian's Pi :22
 ```
 
-Ports are allocated one per device (2222, 2223, ... ). Check what is already
-taken before picking one:
+Ports are allocated one per device, from 2222 up.
+
+| Port | Device |
+|------|--------|
+| 2222 | unrecorded |
+| 2223 | unrecorded |
+| 2224 | Brian's Pi (`ssh brianpi`) |
+| 2225 | unrecorded |
+| 2226 | unrecorded |
+| 2227 | `raspberrypi` — dev Pi, 192.168.0.132 (added 2026-09-11) |
+
+Add a row whenever you set up a device. This table is the only record of
+which port is which: `netstat` shows a port is taken but not what is on the
+end of it, and the rows marked unrecorded are devices nobody wrote down.
+Check the VM before picking the next free port:
 
 ```
 netstat -an | findstr LISTENING | findstr :222     # on the VM (Windows)
@@ -120,7 +133,7 @@ netstat -an | findstr LISTENING | findstr :222     # on the VM (Windows)
 ### A new device
 
 ```bash
-sudo bash setup-reverse-tunnel.sh --port 2227 --label "Quarry media button"
+sudo bash setup-reverse-tunnel.sh --port 2228 --label "Quarry media button"
 ```
 
 That installs autossh, generates `~/.ssh/tunnel_key`, records `TUNNEL_PORT`
