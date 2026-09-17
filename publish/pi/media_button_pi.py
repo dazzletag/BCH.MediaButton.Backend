@@ -1417,16 +1417,40 @@ class MediaPlayer:
 
     def stop_background_radio(self):
         try:
+            if self._radio_url:
+                _log(f"[MEDIA] Background radio stopped ({self._radio_url})")
+        except Exception:
+            pass
+        try:
             self.radio_player.stop()
         except Exception:
             pass
         self._radio_url = None
+
+    def audio_state(self) -> str:
+        """One-line state of both players. Logged when a track starts so the
+        log answers 'was the radio still running while the video played?' —
+        which it previously could not, because stops were never recorded."""
+        def _st(pl):
+            try:
+                return str(pl.get_state()).replace("State.", "")
+            except Exception:
+                return "?"
+        return f"main={_st(self.player)} bed={_st(self.radio_player)} bed_url={self._radio_url or '-'}"
 
     # ------------------------------
     # Stop + lifecycle
     # ------------------------------
     def _stop_current(self):
         """Stop current media and clear stop flag so the next play can start cleanly."""
+        try:
+            if self._stop_flag:
+                # A stop was requested and is being discarded here. If a stale
+                # session thread reaches this line after a new session has
+                # started, that stop is lost and the old track can resume.
+                _log("[MEDIA] Clearing a pending stop request to start new media")
+        except Exception:
+            pass
         self._stop_flag = False
         try:
             self.player.stop()
@@ -1436,6 +1460,11 @@ class MediaPlayer:
 
     def stop(self):
         """External stop — sets the stop flag so _play_media will refuse to start new media."""
+        try:
+            if self._playing:
+                _log("[MEDIA] Main player stopped")
+        except Exception:
+            pass
         try:
             self._stop_flag = True
             self.player.stop()
@@ -1892,7 +1921,11 @@ class Engine:
         self.sessions.pop(resident, None)
         self.session_threads.pop(resident, None)
         self.session_locks.pop(resident, None)
-        print(f"[ENGINE] Session stopped for {resident}")
+        # from_thread=True means a finishing session cleaned itself up. If that
+        # arrives *after* a replacement session started, the stop landed on the
+        # successor: _stop_session is keyed by resident, not by session.
+        print(f"[ENGINE] Session stopped for {resident} "
+              f"({'self-cleanup' if from_thread else 'replaced/cancelled'})")
 
     def start_manual_session(self, resident: str, *, playlist_override=None, start_index: int = 0, ordered: bool = True):
         """Start a session from a menu selection (no beacon required). ordered=False for shuffle."""
@@ -2487,6 +2520,10 @@ class Engine:
             if not force_radio and not is_photo:
                 self.ui.reveal_video()
             print(f"[ENGINE] Now showing {display_label or q}")
+            try:
+                _log(f"[MEDIA] Audio after start: {self.player.audio_state()}")
+            except Exception:
+                pass
 
             # 7) Wait for the track to finish
             finished = True
