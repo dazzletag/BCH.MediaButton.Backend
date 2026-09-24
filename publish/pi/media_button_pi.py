@@ -1919,8 +1919,15 @@ class Engine:
         self._register_session_terms(sess)
         return sess
 
-    def _stop_session(self, resident, from_thread: bool):
+    def _stop_session(self, resident, from_thread: bool, sess=None):
         s = self.sessions.get(resident)
+        if sess is not None and s is not None and s is not sess:
+            # A finishing thread is cleaning up after a replacement has already
+            # taken over. Keyed by resident, this used to stop the *new*
+            # session's playback and unregister it.
+            print(f"[ENGINE] Ignoring stale cleanup for {resident} "
+                  f"(a newer session is running)")
+            return
         if s:
             s["running"] = False
 
@@ -2196,8 +2203,17 @@ class Engine:
                 return None
             return radio_options[0]
 
-        while sess["running"]:
-            if not sess["running"]:
+        def _superseded() -> bool:
+            """True once this thread is no longer the session for this
+            resident. _stop_session joins with a 2 s timeout and then carries
+            on regardless, so a thread blocked in playback outlives its own
+            stop. Without this guard it wakes up and keeps driving the shared
+            VLC players — which is how the radio and the photo slideshow kept
+            running after the beacon switch was turned off."""
+            return self.sessions.get(resident) is not sess
+
+        while sess["running"] and not _superseded():
+            if not sess["running"] or _superseded():
                 break
 
             # If the button was off for ≥30s, start with radio + ambient photos
@@ -2350,6 +2366,11 @@ class Engine:
                     continue
 
                 print(f"[ENGINE] Got WID: {wid}")
+
+            # Last check before touching VLC: the stop may have landed while
+            # we were resolving this item.
+            if not sess["running"] or _superseded():
+                break
 
             # 4) Start VLC while keeping loading GIF visible
             # Signal cache downloader to throttle. Cleared in step 8 after
@@ -2564,8 +2585,9 @@ class Engine:
         # Cleanup after session ends
         self.is_playback_active.clear()
         self.currently_playing_filepath = None
-        self._stop_session(resident, from_thread=True)
-        self.ui.back_to_idle()
+        self._stop_session(resident, from_thread=True, sess=sess)
+        if self.sessions.get(resident) is None:
+            self.ui.back_to_idle()
 
 
 # =========================
