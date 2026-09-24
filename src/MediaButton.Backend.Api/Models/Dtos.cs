@@ -38,7 +38,14 @@ public record AiPlaylistPayload(
     DateTimeOffset? BuiltAt,
     Dictionary<string, object>? Meta);
 
-public record ManualPlaylistUpdate(List<JsonElement> Items);
+/// <summary>
+/// A playlist save. BaseUpdatedAtUtc is the ManualUpdatedAt the editor loaded;
+/// when it is older than what is stored, someone else has saved in the
+/// meantime and this request would silently discard their work, so it is
+/// rejected with 409 rather than applied. Omit it only for callers that
+/// genuinely intend to overwrite whatever is there.
+/// </summary>
+public record ManualPlaylistUpdate(List<JsonElement> Items, DateTimeOffset? BaseUpdatedAtUtc = null);
 
 public record SuggestTermsPayload(List<string> Terms);
 

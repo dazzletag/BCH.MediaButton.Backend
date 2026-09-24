@@ -83,6 +83,33 @@ public class AdminResidentPlaylistsController : ControllerBase
         var key = NormalizeResident(resident);
         var snapshot = await _db.ResidentPlaylists.FirstOrDefaultAsync(r => r.Resident == key);
         var isNew = snapshot == null;
+
+        // Lost-update guard. The editor is a textarea that PUTs the whole list,
+        // so a save built on a stale load silently deletes everything added
+        // since. That is not hypothetical: adding one photo wiped 32 search
+        // terms and both radio stations off a resident's playlist, twice.
+        if (!isNew && update.BaseUpdatedAtUtc is { } basedOn && snapshot!.ManualUpdatedAt is { } storedAt)
+        {
+            // One second of tolerance: the value has been through JSON and a
+            // round-trip, and we only care about genuinely newer saves.
+            if (storedAt > basedOn.AddSeconds(1))
+            {
+                var current = ParseManual(snapshot.ManualPlaylistJson)
+                    .Select(FlattenForEditor)
+                    .Where(o => !string.IsNullOrWhiteSpace(o))
+                    .ToList<object?>();
+                return Conflict(new
+                {
+                    message = "This playlist changed after you loaded it. Saving now would "
+                              + "discard those changes. Reload and re-apply your edit.",
+                    resident = key,
+                    items = current,
+                    updatedAtUtc = snapshot.ManualUpdatedAt,
+                    updatedBy = snapshot.ManualUpdatedBy,
+                });
+            }
+        }
+
         snapshot ??= new ResidentPlaylistSnapshot { Resident = key };
 
         try

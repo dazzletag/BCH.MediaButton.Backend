@@ -104,6 +104,11 @@ export default function Dashboard({ isAdmin = false }: { isAdmin?: boolean }) {
   const [residentQuery, setResidentQuery] = useState("");
   const [manualText, setManualText] = useState("");
   const [manualMeta, setManualMeta] = useState<{ updatedAt?: string | null; updatedBy?: string | null; lastPolledAt?: string | null }>({});
+  // What the server held when this playlist was loaded. Saving is a whole-list
+  // PUT, so without these a save built on a failed or stale load silently
+  // deletes everything it never saw.
+  const manualLoadedItems = useRef<string[]>([]);
+  const [manualLoadOk, setManualLoadOk] = useState(false);
   const [loadingResident, setLoadingResident] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
   const [generatingAi, setGeneratingAi] = useState(false);
@@ -268,14 +273,19 @@ export default function Dashboard({ isAdmin = false }: { isAdmin?: boolean }) {
         method: "GET",
       });
       const items = data?.items ?? [] as string[];
-      const combined = Array.from(new Set(items));
+      const combined = Array.from(new Set(items)).map((l) => String(l));
+      manualLoadedItems.current = combined;
+      setManualLoadOk(true);
       setManualText(combined.join("\n"));
       setManualMeta({ updatedAt: data?.updatedAtUtc, updatedBy: data?.updatedBy, lastPolledAt: data?.lastPolledAt });
     } catch (err) {
       console.error(err);
-      setManualText("");
+      // Deliberately leave the textarea as-is. Blanking it and then saving is
+      // how a playlist gets replaced by the one line someone types next.
+      manualLoadedItems.current = [];
+      setManualLoadOk(false);
       setManualMeta({});
-      setError("Could not load playlist for that resident.");
+      setError("Could not load playlist for that resident — not safe to save until it loads.");
     } finally {
       setLoadingResident(false);
     }
@@ -416,6 +426,12 @@ export default function Dashboard({ isAdmin = false }: { isAdmin?: boolean }) {
         setError("Resident name is required.");
         return;
       }
+      // Refuse to save a list we never managed to load. The PUT replaces the
+      // whole playlist, so saving from a blank editor deletes everything.
+      if (!manualLoadOk && !overrideItems) {
+        setError("Playlist has not loaded yet — refusing to save, as that would replace it.");
+        return;
+      }
       const items =
         overrideItems ??
         manualText
@@ -424,22 +440,52 @@ export default function Dashboard({ isAdmin = false }: { isAdmin?: boolean }) {
           .filter(Boolean);
       setSavingManual(true);
       setError(null);
-      try {
-        await call({
+
+      const put = (payloadItems: string[], basedOn?: string | null) =>
+        call<unknown>({
           url: `/api/admin/residents/${encodeURIComponent(residentQuery.trim())}/manual-playlist`,
           method: "PUT",
-          data: { items },
+          data: { items: payloadItems, baseUpdatedAtUtc: basedOn ?? null },
         });
+
+      try {
+        await put(items, manualMeta.updatedAt);
+        manualLoadedItems.current = items;
         setManualMeta((prev) => ({ ...prev, updatedAt: new Date().toISOString(), updatedBy: accountName, lastPolledAt: prev.lastPolledAt }));
         setSaveMessage("Manual playlist saved.");
-      } catch (err) {
+      } catch (err: any) {
+        // 409: someone saved between our load and this save. Rather than
+        // clobber their work — which is how 32 search terms and two radio
+        // stations were lost — keep everything the server now has and add
+        // only the lines this editor introduced.
+        const conflict = err?.response?.status === 409 ? err.response.data : null;
+        if (conflict) {
+          const serverItems: string[] = (conflict.items ?? []).map((x: unknown) => String(x));
+          const added = items.filter((l) => !manualLoadedItems.current.includes(l));
+          const merged = Array.from(new Set([...serverItems, ...added]));
+          try {
+            await put(merged, conflict.updatedAtUtc);
+            manualLoadedItems.current = merged;
+            setManualText(merged.join("\n"));
+            setManualMeta((prev) => ({ ...prev, updatedAt: new Date().toISOString(), updatedBy: accountName, lastPolledAt: prev.lastPolledAt }));
+            const removed = merged.length - serverItems.length;
+            setSaveMessage(
+              `Playlist had changed elsewhere — merged instead of overwriting (kept ${serverItems.length} existing, added ${removed}).`
+            );
+            return;
+          } catch (mergeErr) {
+            console.error(mergeErr);
+            setError("Playlist changed elsewhere and the merge failed. Reload and re-apply your change.");
+            return;
+          }
+        }
         console.error(err);
         setError("Failed to save manual playlist.");
       } finally {
         setSavingManual(false);
       }
     },
-    [accountName, call, manualText, residentQuery]
+    [accountName, call, manualText, manualLoadOk, manualMeta.updatedAt, residentQuery]
   );
 
   const saveRadioToPlaylist = useCallback(async () => {
