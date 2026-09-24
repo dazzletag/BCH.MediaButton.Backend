@@ -169,6 +169,10 @@ EDDYSTONE_UUID = "feaa"
 LAST_SEEN = {}  # resident -> ts
 LAST_OFF   = {}  # resident -> ts when session last stopped
 RADIO_FIRST_THRESHOLD = 30  # seconds off before starting with radio + photos
+# Gap between beacon adverts that counts as a dropout worth logging. Well
+# under absence_timeout, so near-misses are recorded long before anything
+# would actually stop playing.
+PRESENCE_GAP_WARN = float(os.getenv("PRESENCE_GAP_WARN", "2.0"))
 GONE_TIMEOUT = 6               # seconds unseen before stopping
 DETECTION_COOLDOWN = 20         # seconds between trigger actions per beacon
 AVOID_RECENT_N = 6              # when drawing randomly, avoid last N items
@@ -1655,6 +1659,10 @@ class Engine:
         self.watchdog_interval = self.config.get("watchdog_interval", 0.5)
         self.control_mode = self.config.get("control_mode", "beacon")
         self._miss_counts = {}  # resident -> consecutive misses
+        # resident -> {n, max, sum, over} advert-gap stats, reported whenever
+        # the watchdog stops a session so each hold gets a stability line.
+        self._presence_stats = {}
+        self.absence_timeout = float(self.config.get("absence_timeout", 5.0))
 
         # apply config overrides
         global GONE_TIMEOUT, DETECTION_COOLDOWN, AVOID_RECENT_N, BIG_PLAYLIST_SIZE
@@ -1721,8 +1729,27 @@ class Engine:
         if not resident:
             return
 
-        # Update presence timestamp
-        LAST_SEEN[resident] = time.time()
+        # Record how steady this beacon actually is. The watchdog can only
+        # ever report gaps longer than absence_timeout, so before this there
+        # was no way to tell a rock-solid beacon from one dropping out for
+        # four seconds at a time — and no evidence on which to set the
+        # timeout. Gaps are measured here, where every advert lands.
+        now = time.time()
+        prev = LAST_SEEN.get(resident)
+        if prev:
+            gap = now - prev
+            st = self._presence_stats.setdefault(
+                resident, {"n": 0, "max": 0.0, "sum": 0.0, "over": 0})
+            st["n"] += 1
+            st["sum"] += gap
+            if gap > st["max"]:
+                st["max"] = gap
+            if gap >= PRESENCE_GAP_WARN:
+                st["over"] += 1
+                _log(f"[PRESENCE] {resident}: {gap:.1f}s gap between adverts "
+                     f"(absence_timeout is {self.absence_timeout:.1f}s)")
+
+        LAST_SEEN[resident] = now
 
         # Show “Ready” when idle
         if resident not in self.sessions:
@@ -1742,7 +1769,7 @@ class Engine:
         less. Watchdog ticks every 0.5 s — the operator releasing the
         switch sees the video stop within absence_timeout + 0.5 s.
         """
-        ABSENCE_TIMEOUT = float(self.config.get("absence_timeout", 5.0))
+        ABSENCE_TIMEOUT = self.absence_timeout
         CHECK = 0.5
 
         while True:
@@ -1754,8 +1781,13 @@ class Engine:
                     gap = now - last_seen
 
                     if gap > ABSENCE_TIMEOUT:
-                        print(f"[WATCHDOG] {resident} switch OFF "
-                              f"({gap:.1f}s since last advert) — stopping session.")
+                        st = self._presence_stats.pop(resident, None)
+                        if st and st["n"]:
+                            _log(f"[PRESENCE] {resident} hold ended: {st['n']} advert(s), "
+                                 f"mean gap {st['sum'] / st['n']:.2f}s, worst {st['max']:.1f}s, "
+                                 f"{st['over']} over {PRESENCE_GAP_WARN:.1f}s")
+                        _log(f"[WATCHDOG] {resident} switch OFF "
+                             f"({gap:.1f}s since last advert) — stopping session.")
                         self._stop_session(resident, from_thread=False)
                         LAST_SEEN.pop(resident, None)
                         LAST_OFF[resident] = now
