@@ -1814,8 +1814,24 @@ class Engine:
             # background without touching the display playlist.
             existing = cache_db.active_terms_for_resident(resident)
             if existing:
-                _log(f"[CACHE] No cacheable items for {resident} — "
-                     f"{len(existing)} active term(s) kept")
+                # The manual playlist wins outright in prepare_session, so a
+                # playlist of only photos/radio means the downloaded videos
+                # for these terms can never be chosen. That is invisible
+                # otherwise: the downloader keeps them topped up and the
+                # resident simply never sees one. Jules Challen ran this way
+                # for two weeks with 64 cached videos and 13 plays.
+                try:
+                    stranded = cache_db.cached_video_count_for_resident(resident)
+                except Exception:
+                    stranded = 0
+                if stranded:
+                    _log(f"[CACHE] {resident}: {stranded} cached video(s) are UNREACHABLE — "
+                         f"the portal playlist has no video items, and a manual playlist "
+                         f"replaces the AI list rather than adding to it. Add the search "
+                         f"terms to the portal playlist to bring them into rotation.")
+                else:
+                    _log(f"[CACHE] No cacheable items for {resident} — "
+                         f"{len(existing)} active term(s) kept")
             else:
                 _log(f"[CACHE] No cacheable items and no active terms for "
                      f"{resident} — scheduling AI term bootstrap")
@@ -3416,6 +3432,29 @@ def graph_poll_task(graph: GraphClient):
             print(f"[GRAPH] Poll error: {e}")
         time.sleep(GRAPH_POLL_SECONDS)
 
+def _warn_if_system_sync_missing(unit: str = "/etc/systemd/system/media-button.service"):
+    """Say so when this device's unit never runs sync-system-files.sh.
+
+    That ExecStartPre line has to be added once per device, because the unit
+    lives in /etc and install.sh rewrites its UID, so we deliberately do not
+    overwrite it from the repo. A device missing the line silently gets no
+    log rotation and no managed tunnel unit — one reached 71 MB of log before
+    anyone noticed. The app runs unprivileged and cannot repair it, so the
+    least it can do is complain in the log every start."""
+    try:
+        with open(unit, "r") as f:
+            body = f.read()
+    except Exception:
+        return  # not installed as a service (dev run) — nothing to say
+    if "sync-system-files" in body:
+        return
+    print(f"[BOOT] WARNING: {unit} does not run sync-system-files.sh, so this "
+          f"device gets no log rotation and no managed tunnel unit. Fix with:")
+    print(r"[BOOT]   sudo sed -i '/reset --hard origin\/main/a "
+          r"ExecStartPre=+/opt/media-button/publish/pi/sync-system-files.sh' " + unit)
+    print("[BOOT]   sudo systemctl daemon-reload")
+
+
 # =========================
 # Bootstrap
 # =========================
@@ -3539,6 +3578,8 @@ def main():
         if remote_controller.enabled and remote_controller.show_menu_on_start:
             # Defer until after mainloop starts so Tk is fully ready
             ui.root.after(500, remote_controller.open_menu)
+
+    _warn_if_system_sync_missing()
 
     # Hand over to Tk mainloop
     ui.mainloop()

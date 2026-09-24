@@ -101,6 +101,50 @@ Suggested layout on the Pi:
    sudo systemctl start media-button
    ```
 
+## Adopting an existing device
+
+New installs are fine: `install.sh` writes the unit from this repo, and it
+already runs `sync-system-files.sh`.
+
+Devices built before that existed do **not** have the line, and nothing can
+add it for them — the unit lives in `/etc`, and `install.sh` rewrites its UID,
+so the sync deliberately never overwrites it. Without the line a device
+silently gets no log rotation and no managed tunnel unit. One reached 71 MB of
+log before anyone noticed.
+
+The app now says so in the log on every start. To fix a device, once:
+
+```bash
+sudo sed -i '/reset --hard origin\/main/a ExecStartPre=+/opt/media-button/publish/pi/sync-system-files.sh'   /etc/systemd/system/media-button.service
+sudo systemctl daemon-reload && sudo systemctl restart media-button
+```
+
+Check which devices still need it:
+
+```bash
+grep -c sync-system-files /etc/systemd/system/media-button.service   # 0 = needs it
+```
+
+## Playlists: manual replaces the AI list, it does not add to it
+
+`prepare_session` returns the manual playlist as soon as there is one, and
+never reaches the AI/cache path. So a portal playlist of only photos and radio
+means the resident's downloaded videos can **never** be chosen — the
+downloader keeps them topped up and nobody ever sees one. One resident ran
+that way for a fortnight with 64 cached videos and 13 plays.
+
+The log now warns when a resident is in that state. To bring the videos back
+into rotation, append the search terms to the portal playlist — the device's
+own `suggest-terms` endpoint does that without disturbing photos or radio:
+
+```
+POST /api/device/<id>/resident/<name>/suggest-terms   {"terms": [...]}
+```
+
+Use the term strings exactly as stored in `playlist_terms`. They must match
+character-for-character, or they register as new terms with no videos and the
+downloader fetches a fresh set.
+
 ## Remote access (reverse SSH tunnel)
 
 Each Pi dials home to the `bch-app` VM and forwards its own port 22, so it

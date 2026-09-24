@@ -586,6 +586,16 @@ def all_evictable_videos_lru() -> list[sqlite3.Row]:
         ))
 
 
+def cached_video_count_for_resident(resident: str) -> int:
+    """How many downloaded videos this resident has. Used to warn when they
+    are stranded behind a manual playlist that contains no video items."""
+    with _lock:
+        row = get_conn().execute(
+            "SELECT COUNT(*) n FROM cached_videos WHERE resident = ?", (resident,)
+        ).fetchone()
+    return int(row["n"]) if row else 0
+
+
 def video_cache_size_bytes() -> int:
     """Total bytes of downloaded video on disk. Shared by the GC (to decide
     what to evict) and the downloader (to decide whether to fetch at all)."""
