@@ -147,9 +147,18 @@ export default function TvGuide() {
       setError("Choose a resident to add this for.");
       return;
     }
+    // A one-off carries channel and start time, not an id: the portal's event
+    // ids mean nothing on the device, which numbers events in its own space.
+    const next = g.events
+      .filter((e) => new Date(e.startUtc).getTime() > Date.now())
+      .sort((a, b) => a.startUtc.localeCompare(b.startUtc))[0];
+    if (!g.isSeries && !next) {
+      setError(`"${g.title}" has already started — nothing left to record.`);
+      return;
+    }
     const item = g.isSeries && g.seriesCrid
       ? `series:${g.seriesCrid}`
-      : `programme:${g.events[0]?.id ?? ""}`;
+      : `programme:${g.channelName}@${next!.startUtc}`;
     setAdding(g.key);
     setError(null);
     try {

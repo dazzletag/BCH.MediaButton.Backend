@@ -9,8 +9,8 @@ they happen to be in front of the screen at seven o'clock.
 Two playlist item types drive this, both plain strings alongside the existing
 "media:" and "radio:" forms:
 
-    series:crid://fp.bbc.co.uk/xyz   follow every episode
-    programme:<epg event id>         one specific showing
+    series:crid://fp.bbc.co.uk/xyz        follow every episode
+    programme:<channel>@<ISO start>       one specific showing
 
 A "series:" item becomes a TVHeadend autorec rule keyed on the broadcast
 series identifier, which is a native TVHeadend capability rather than
@@ -80,6 +80,80 @@ def series_crids(playlist) -> list[str]:
             if crid and crid not in out:
                 out.append(crid)
     return out
+
+
+def one_off_requests(playlist) -> list[tuple[str, str]]:
+    """(channel, ISO start) pairs the playlist asks to record once.
+
+    The channel and start time are carried in the item itself rather than an
+    id, because the portal's event ids mean nothing on this device — TVHeadend
+    numbers events in its own space, and the two never meet. Channel plus start
+    time is the one identity both ends already agree on.
+    """
+    out = []
+    for item in playlist or []:
+        val = item.get("url") or item.get("query") or "" if isinstance(item, dict) else str(item)
+        val = (val or "").strip()
+        if not val.lower().startswith("programme:"):
+            continue
+        body = val.split(":", 1)[1]
+        if "@" not in body:
+            _log(f"[TV] Ignoring malformed one-off request: {val[:60]}")
+            continue
+        channel, _, start = body.rpartition("@")
+        if channel.strip() and start.strip():
+            out.append((channel.strip(), start.strip()))
+    return out
+
+
+def sync_one_offs(playlist) -> None:
+    """Schedule single showings, refusing anything already begun.
+
+    A recording set for a programme that has already started would capture
+    only its tail, and one already finished would capture nothing at all while
+    looking to staff as though it had worked.
+    """
+    wanted = one_off_requests(playlist)
+    if not wanted:
+        return
+    try:
+        events = tvh("/api/epg/events/grid", limit="3000").get("entries", [])
+        scheduled = tvh("/api/dvr/entry/grid_upcoming", limit="300").get("entries", [])
+    except Exception as e:
+        _log(f"[TV] Could not read guide or schedule: {e}")
+        return
+
+    already = {(str(r.get("channelname") or ""), int(r.get("start") or 0)) for r in scheduled}
+    now = time.time()
+
+    for channel, start_iso in wanted:
+        try:
+            want_start = int(datetime.fromisoformat(start_iso.replace("Z", "+00:00")).timestamp())
+        except Exception:
+            _log(f"[TV] Ignoring unparsable start time: {start_iso}")
+            continue
+
+        if want_start <= now:
+            _log(f"[TV] Not recording '{channel}' at {start_iso} — it has already started")
+            continue
+        if (channel, want_start) in already:
+            continue
+
+        # Match on channel and start, allowing a minute either way: the guide
+        # is revised as broadcast data is refined, so an exact match is brittle.
+        match = next((e for e in events
+                      if str(e.get("channelName") or "") == channel
+                      and abs(int(e.get("start") or 0) - want_start) <= 60), None)
+        if not match:
+            _log(f"[TV] No listing for '{channel}' at {start_iso} — it may have been rescheduled")
+            continue
+
+        try:
+            tvh("/api/dvr/entry/create_by_event",
+                event_id=str(match.get("eventId")), config_uuid="")
+            _log(f"[TV] Recording '{match.get('title')}' on {channel} at {start_iso}")
+        except Exception as e:
+            _log(f"[TV] Could not schedule '{match.get('title')}': {e}")
 
 
 def existing_autorecs() -> dict[str, str]:
@@ -193,6 +267,7 @@ def sync_once(get_playlist, resident: str):
         _log(f"[TV] Could not read playlist: {e}")
         return
     sync_series_rules(playlist, resident)
+    sync_one_offs(playlist)
     register_finished(resident)
 
 
