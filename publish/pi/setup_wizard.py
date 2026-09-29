@@ -164,13 +164,20 @@ def _prompt_stability_key() -> None:
 def _register_resident(
     api_base: str, device_id: str, device_key: str,
     resident_name: str, case_id: str | None, tenant_case_id: str | None = None,
+    branch: str | None = None,
 ) -> None:
-    """Tell the backend about this resident so they appear in the admin site."""
+    """Tell the backend about this resident so they appear in the admin site.
+
+    Passing the Mobizio branch files the device against its care home, which
+    the programme guide needs: the EPG comes off the building's aerial, so it
+    has to be attributed to a home rather than to a resident.
+    """
     try:
         url = f"{api_base}/api/device/{urllib.parse.quote(device_id)}/setup/register-resident"
         r = requests.post(
             url,
-            json={"residentName": resident_name, "caseId": case_id, "tenantCaseId": tenant_case_id},
+            json={"residentName": resident_name, "caseId": case_id,
+                  "tenantCaseId": tenant_case_id, "branch": branch},
             headers={"X-DEVICE-KEY": device_key},
             timeout=15,
         )
@@ -439,6 +446,7 @@ def main() -> None:
     resident_name   = chosen["name"]
     case_id         = chosen["caseId"]
     tenant_case_id  = chosen.get("tenantCaseId")
+    branch          = chosen.get("branch")
     print(f"\n  ✓ Selected: {resident_name}  (Case ID: {case_id})\n")
 
     # ── Control mode ──────────────────────────────────────────────────────────
@@ -511,7 +519,8 @@ def main() -> None:
     print(f"\n  ✓ Config written to {CONFIG_PATH}\n")
 
     # ── Register resident with backend ────────────────────────────────────────
-    _register_resident(api_base, device_id, device_key, resident_name, case_id, tenant_case_id)
+    _register_resident(api_base, device_id, device_key, resident_name, case_id,
+                       tenant_case_id, branch)
 
     # ── Stability AI key (for AI logo generation) ─────────────────────────────
     _prompt_stability_key()

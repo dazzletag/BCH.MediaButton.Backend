@@ -160,8 +160,26 @@ public class DeviceController : ControllerBase
         if (!string.IsNullOrWhiteSpace(request.TenantCaseId))
             snapshot.MobizioTenantId = request.TenantCaseId.Trim();
 
+        // File both the device and the resident against the care home Mobizio
+        // records them at. Without this the device has no home, and its
+        // programme guide cannot be filed — the EPG belongs to the building's
+        // aerial, so it has to be attributed to somewhere.
+        if (!string.IsNullOrWhiteSpace(request.Branch))
+        {
+            var branch = request.Branch.Trim();
+            var home = await _db.CareHomes
+                .FirstOrDefaultAsync(c => c.Name.ToLower() == branch.ToLower());
+            if (home == null)
+            {
+                home = new CareHome { Name = branch };
+                _db.CareHomes.Add(home);
+            }
+            device.CareHomeId = home.Id;
+            snapshot.CareHomeId ??= home.Id;
+        }
+
         await _db.SaveChangesAsync();
-        return Ok(new { residentKey, mobizioId = device.MobizioId });
+        return Ok(new { residentKey, mobizioId = device.MobizioId, careHomeId = device.CareHomeId });
     }
 
     /// <summary>

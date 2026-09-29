@@ -67,7 +67,13 @@ public record DeviceCreateRequest(string DeviceId, string? DisplayName);
 /// </summary>
 public record DeviceRenameRequest(string? DisplayName = null, Guid? CareHomeId = null);
 
-public record RegisterResidentRequest(string ResidentName, string? CaseId, string? TenantCaseId);
+/// <summary>
+/// Branch is the care home as Mobizio records it. Passing it lets setup file
+/// the device and the resident against the right home without a second,
+/// manual step — and Mobizio is the authority on where a resident lives.
+/// </summary>
+public record RegisterResidentRequest(string ResidentName, string? CaseId, string? TenantCaseId,
+                                      string? Branch = null);
 
 // -------------------------------------------------------------------------
 // Pi-local video cache: snapshot push + admin queries + command queue
