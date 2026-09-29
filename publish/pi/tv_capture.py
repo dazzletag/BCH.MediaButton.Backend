@@ -193,7 +193,10 @@ def planned(playlist) -> list[dict]:
     if not series and not one_offs:
         return []
     try:
-        events = tvh("/api/epg/events/grid", limit="3000").get("entries", [])
+        # The guide runs to nearly nine thousand events over a week or
+        # more. A short window would hide next week's episodes and make
+        # a series look like it had only a couple left.
+        events = tvh("/api/epg/events/grid", limit="20000").get("entries", [])
     except Exception as e:
         _log(f"[TV] Could not read the guide: {e}")
         return []
