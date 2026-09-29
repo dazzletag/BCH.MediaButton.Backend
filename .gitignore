@@ -53,3 +53,7 @@ deploy.zip
 # GET /api/info reports the exact commit that is running.
 publish/api/
 publish/api.zip
+
+# The Pi's working directory: cache database, downloaded videos, learned
+# channel definitions. Device state, never the repo's.
+publish/pi/.data/

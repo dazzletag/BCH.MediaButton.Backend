@@ -193,6 +193,24 @@ def init_db():
 # -------------------------------------------------------------------------
 # Term canonicalisation
 # -------------------------------------------------------------------------
+# Television entries name a broadcast, not something to search for. They are
+# playlist items like any other, but nothing about the search-and-download
+# machinery applies to them: there is no term to search, no video to fetch, and
+# the recording that results belongs to the recorder rather than to a term.
+TV_ITEM_PREFIXES = ("series:", "programme:")
+
+
+def is_tv_item(item) -> bool:
+    """True for a playlist entry that names a television programme or series."""
+    if item is None:
+        return False
+    if isinstance(item, dict):
+        val = item.get("url") or item.get("query") or item.get("name") or ""
+    else:
+        val = str(item)
+    return str(val).strip().lower().startswith(TV_ITEM_PREFIXES)
+
+
 def canonical_term(item) -> str | None:
     """
     Reduce a normalized playlist item to a stable string we can key on.
@@ -203,6 +221,10 @@ def canonical_term(item) -> str | None:
       - radio/photo items are not cacheable (returns None)
     """
     if item is None:
+        return None
+    if is_tv_item(item):
+        # Searching YouTube for "series:crid://fp.bbc.co.uk/b-3N2E9" would
+        # return whatever it felt like, and cache it against the resident.
         return None
     if isinstance(item, str):
         s = item.strip()
@@ -221,6 +243,8 @@ def canonical_term(item) -> str | None:
 
 
 def is_cacheable(item) -> bool:
+    if is_tv_item(item):
+        return False
     if not isinstance(item, dict):
         return canonical_term(item) is not None
     t = (item.get("type") or item.get("kind") or "").lower()
@@ -465,6 +489,13 @@ def orphan_videos(resident: str | None = None) -> list[sqlite3.Row]:
     and below the favourite threshold.
     Inactive-term links don't count because their parent term row is deleted
     via the reconcile step before GC runs (cascade clears the join).
+
+    Recordings are never orphans. They have no term because nothing searched
+    for them — somebody asked for a programme and the tuner recorded it. The
+    sweep deleted Kenneth's Would I Lie To You? within minutes of a reboot,
+    which is the one thing this whole feature exists to avoid. Storage
+    pressure still reclaims them through the disk-cap sweep, which evicts by
+    age rather than by whether a term happens to point at them.
     """
     fav_cutoff = (datetime.utcnow() - timedelta(days=VIDEO_CACHE_FAVOURITE_MAX_AGE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
     sql = """
@@ -472,6 +503,7 @@ def orphan_videos(resident: str | None = None) -> list[sqlite3.Row]:
         FROM cached_videos v
         LEFT JOIN term_videos tv ON tv.video_id = v.id
         WHERE v.protected = 0
+          AND v.source <> 'tv'
           AND (v.play_count < ? OR v.last_played_at IS NULL OR v.last_played_at < ?)
           AND tv.video_id IS NULL
     """

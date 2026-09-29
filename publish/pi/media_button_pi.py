@@ -1837,6 +1837,15 @@ class Engine:
             blob = item if isinstance(item, dict) else {"type": "youtube", "query": term}
             terms_with_blobs.append((term, blob))
 
+        if not terms_with_blobs and any(cache_db.is_tv_item(i) for i in playlist):
+            # The resident watches television. There is nothing to search for
+            # and nothing to download: the tuner supplies the content, on a
+            # schedule. Asking an LLM to invent search terms here filled
+            # Kenneth's disk with thirty-four videos nobody chose, for a man
+            # whose playlist said plainly that he wanted EastEnders.
+            _log(f"[CACHE] {resident} watches television — no search terms needed")
+            return
+
         if not terms_with_blobs:
             # Manual playlist is all photos / radio / one-off plays.
             # If we already have active terms (from a previous run or LLM
