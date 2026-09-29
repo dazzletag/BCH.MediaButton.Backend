@@ -3619,7 +3619,7 @@ def main():
     # without TVH_URL, so devices without a tuner are completely unaffected.
     try:
         import epg_sync
-        import tv_recorder
+        import tv_capture
 
         def _tv_resident():
             return (CONFIG.get("remote_control", {}) or {}).get("resident") \
@@ -3648,10 +3648,12 @@ def main():
         # can search what the building can actually receive.
         epg_sync.start(API_BASE, DEVICE_ID, DEVICE_KEY)
 
-        # Turn "series:crid://..." playlist entries into standing recording
-        # rules, and register finished recordings as ordinary cached videos so
-        # they play through the existing path.
-        tv_recorder.start(get_playlist=_tv_playlist, get_resident=_tv_resident)
+        # Record what the playlist asks for, driving the tuner directly.
+        # TVHeadend schedules well but cannot pull a stream from the busier
+        # multiplexes on this hardware, so it keeps the guide and tv_capture
+        # does the recording. Finished recordings register as ordinary cached
+        # videos and play through the existing path.
+        tv_capture.start(get_playlist=_tv_playlist, get_resident=_tv_resident)
     except Exception as e:
         print(f"[BOOT] TV subsystem not started: {e}")
 
