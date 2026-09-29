@@ -48,6 +48,14 @@ public class Device
     /// </summary>
     [MaxLength(100)]
     public string? MobizioTenantId { get; set; }
+
+    /// <summary>
+    /// Which care home this device physically sits in. Distinct from the
+    /// resident: the EPG a device receives is a property of the building's
+    /// aerial and transmitter, so it is shared by every device in the home and
+    /// survives the device being reassigned to a different resident.
+    /// </summary>
+    public Guid? CareHomeId { get; set; }
 }
 
 public class Playlist

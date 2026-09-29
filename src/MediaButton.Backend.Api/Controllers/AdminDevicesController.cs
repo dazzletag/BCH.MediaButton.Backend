@@ -73,7 +73,23 @@ public class AdminDevicesController : ControllerBase
         var device = await _db.Devices.FirstOrDefaultAsync(d => d.DeviceId == deviceId);
         if (device == null) return NotFound();
 
-        device.DisplayName = request.DisplayName;
+        // Only apply what was supplied: a rename must not wipe the care home,
+        // and setting the care home must not wipe the name.
+        if (request.DisplayName != null) device.DisplayName = request.DisplayName;
+        if (request.CareHomeId.HasValue)
+        {
+            var id = request.CareHomeId.Value;
+            if (id == Guid.Empty)
+            {
+                device.CareHomeId = null;
+            }
+            else
+            {
+                if (!await _db.CareHomes.AnyAsync(c => c.Id == id))
+                    return BadRequest("No such care home.");
+                device.CareHomeId = id;
+            }
+        }
         await _db.SaveChangesAsync();
         return NoContent();
     }

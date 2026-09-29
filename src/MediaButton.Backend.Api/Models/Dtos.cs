@@ -61,7 +61,11 @@ public record DeviceListItem(string DeviceId, string? DisplayName, Guid? Playlis
 
 public record DeviceCreateRequest(string DeviceId, string? DisplayName);
 
-public record DeviceRenameRequest(string? DisplayName);
+/// <summary>
+/// Patch a device. Both fields are optional; only those supplied are changed,
+/// so renaming a device cannot accidentally clear its care home.
+/// </summary>
+public record DeviceRenameRequest(string? DisplayName = null, Guid? CareHomeId = null);
 
 public record RegisterResidentRequest(string ResidentName, string? CaseId, string? TenantCaseId);
 

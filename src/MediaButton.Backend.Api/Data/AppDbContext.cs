@@ -19,6 +19,7 @@ public class AppDbContext : DbContext
     public DbSet<CareHome> CareHomes => Set<CareHome>();
     public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
     public DbSet<ResidentAccessGrant> ResidentAccessGrants => Set<ResidentAccessGrant>();
+    public DbSet<EpgEvent> EpgEvents => Set<EpgEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -28,6 +29,21 @@ public class AppDbContext : DbContext
             b.Property(d => d.DeviceId).HasMaxLength(100);
             b.Property(d => d.DisplayName).HasMaxLength(200);
             b.Property(d => d.ConfigJson).HasMaxLength(4000);
+        });
+
+        modelBuilder.Entity<EpgEvent>(b =>
+        {
+            b.HasKey(e => e.Id);
+            b.Property(e => e.ChannelName).IsRequired().HasMaxLength(200);
+            b.Property(e => e.Title).IsRequired().HasMaxLength(400);
+            // One row per programme slot per channel per home. The device may
+            // re-send the same listing on every sync, and TVHeadend's own event
+            // ids are not stable across restarts, so identity is the thing that
+            // genuinely does not change: which channel, starting when.
+            b.HasIndex(e => new { e.CareHomeId, e.ChannelName, e.StartUtc }).IsUnique();
+            // Search is "what is on, and when" plus title matching.
+            b.HasIndex(e => new { e.CareHomeId, e.StartUtc });
+            b.HasIndex(e => new { e.CareHomeId, e.SeriesCrid });
         });
 
         modelBuilder.Entity<Playlist>(b =>
