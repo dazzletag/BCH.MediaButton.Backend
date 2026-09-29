@@ -5,11 +5,12 @@ import Dashboard from "./views/Dashboard";
 import Devices from "./views/Devices";
 import Users from "./views/Users";
 import Reporting from "./views/Reporting";
+import TvGuide from "./views/TvGuide";
 import { useApiClient } from "./hooks/useApiClient";
 import { loginRequest } from "./msalConfig";
 import "./styles/layout.css";
 
-type Tab = "media" | "devices" | "reporting" | "users";
+type Tab = "media" | "devices" | "tv" | "reporting" | "users";
 
 function Landing() {
   const { instance, inProgress } = useMsal();
@@ -114,6 +115,13 @@ function AuthenticatedApp() {
             Devices
           </button>
           <button
+            className={`btn ${tab === "tv" ? "primary" : "ghost"}`}
+            style={{ borderRadius: 10 }}
+            onClick={() => setTab("tv")}
+          >
+            TV Guide
+          </button>
+          <button
             className={`btn ${tab === "reporting" ? "primary" : "ghost"}`}
             style={{ borderRadius: 10 }}
             onClick={() => setTab("reporting")}
@@ -137,6 +145,7 @@ function AuthenticatedApp() {
       </header>
       {tab === "media" && <Dashboard isAdmin={isAdmin} />}
       {tab === "devices" && <Devices />}
+      {tab === "tv" && <TvGuide />}
       {tab === "reporting" && <Reporting isAdmin={isAdmin} />}
       {tab === "users" && <Users />}
     </div>
