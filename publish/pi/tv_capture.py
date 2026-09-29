@@ -48,6 +48,10 @@ TV_MAX_HOURS = int(os.getenv("TV_MAX_HOURS", "4"))
 TV_MIN_FREE_GB = float(os.getenv("TV_MIN_FREE_GB", "4"))
 
 _capturing = threading.Lock()
+# The scheduler reconsiders every minute, so a programme it has decided against
+# would otherwise say so sixty times an hour until the broadcast ends. Said
+# once, it is useful; said all evening it buries everything else in the log.
+_explained: set[str] = set()
 
 
 def _log(msg: str):
@@ -224,8 +228,10 @@ def planned(playlist) -> list[dict]:
         if start <= now:
             gone, length = now - start, max(stop - start, 1)
             if gone > length * TV_LATE_JOIN:
-                _log(f"[TV] Too late for '{title}' — {gone / 60:.0f} of its "
-                     f"{length // 60:.0f} minutes have gone")
+                if uid not in _explained:
+                    _explained.add(uid)
+                    _log(f"[TV] Too late for '{title}' — {gone / 60:.0f} of its "
+                         f"{length // 60:.0f} minutes have gone")
                 return False
             joined = max(1, int(gone // 60))
             start = int(now)
