@@ -3626,9 +3626,22 @@ def main():
                 or next(iter((CONFIG.get("residents") or {}).keys()), None)
 
         def _tv_playlist():
+            # Fetch from the portal rather than reading the local copy. That
+            # copy is only written when a session starts, and a recording has
+            # to be set up long before anyone presses the button — on a device
+            # whose resident has not triggered playback yet there is no local
+            # copy at all, so nothing would ever be recorded.
             resident = _tv_resident()
             if not resident:
                 return []
+            try:
+                remote = fetch_manual_playlist_from_api(resident)
+                if remote:
+                    norm = normalize_playlist_items(remote)
+                    persist_manual_playlist(resident, norm)
+                    return norm
+            except Exception as e:
+                print(f"[TV] Could not fetch playlist for {resident}: {e}")
             return normalize_playlist_items(load_manual_playlist(resident) or [])
 
         # Push this home's programme guide to the portal so staff and family
