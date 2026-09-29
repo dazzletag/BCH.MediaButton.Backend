@@ -211,7 +211,7 @@ def planned(playlist) -> list[dict]:
     now = time.time()
     out, seen = [], set()
 
-    def add(e) -> bool:
+    def add(e, series_key=None) -> bool:
         # Keyed on the advertised start even when joining late, so catching the
         # rest of a programme does not record it again from the guide.
         start, stop = int(e.get("start") or 0), int(e.get("stop") or 0)
@@ -239,6 +239,9 @@ def planned(playlist) -> list[dict]:
             "start": start,
             "stop": stop,
             "joined": joined,
+            # What this belongs to, so retention can tell one soap's backlog
+            # from another's. A one-off is its own series of one.
+            "series_key": series_key or f"{e.get('channelName')}:{title}",
         })
         return True
 
@@ -251,7 +254,7 @@ def planned(playlist) -> list[dict]:
         for e in matches:
             if taken >= TV_KEEP_EPISODES:
                 break
-            if add(e):
+            if add(e, series_key=crid):
                 taken += 1
 
     for channel, start_iso in one_offs:
@@ -358,6 +361,7 @@ def capture(plan: dict, resident: str) -> bool:
             resident, "tv", uid, title, path,
             filesize_bytes=size,
             duration_seconds=plan["stop"] - plan["start"],
+            series_key=plan.get("series_key"),
         )
     except Exception as e:
         _log(f"[TV] Could not register '{title}': {e}")

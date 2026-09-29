@@ -178,6 +178,7 @@ def _apply_migrations(conn: sqlite3.Connection):
         ("last_played_at",     "TIMESTAMP"),
         ("play_count",         "INTEGER NOT NULL DEFAULT 0"),
         ("protected",          "INTEGER NOT NULL DEFAULT 0"),
+        ("series_key",         "TEXT"),
         ("central_curated_id", "TEXT"),
     ]:
         if col not in cols:
@@ -356,6 +357,7 @@ def register_video(
     duration_seconds: int | None = None,
     protected: bool = False,
     central_curated_id: str | None = None,
+    series_key: str | None = None,
 ) -> int:
     """Insert a cached video row, or return the existing id if the (resident, source, source_id) already exists."""
     with _lock:
@@ -370,14 +372,16 @@ def register_video(
             """
             INSERT INTO cached_videos
                 (resident, source, source_id, title, filepath,
-                 filesize_bytes, duration_seconds, protected, central_curated_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 filesize_bytes, duration_seconds, protected, central_curated_id,
+                 series_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 resident, source, source_id, title, filepath,
                 filesize_bytes, duration_seconds,
                 1 if protected else 0,
                 central_curated_id,
+                series_key,
             ),
         )
         return int(cur.lastrowid)
@@ -600,12 +604,21 @@ def random_cached_video_for_resident(
 
 
 def all_evictable_videos_lru() -> list[sqlite3.Row]:
-    """Non-protected, non-favourite cached videos in LRU order (never-played
-    first, then oldest last-played, then oldest downloaded). Used by the
-    disk-cap sweep to pick what to evict first."""
+    """What to reclaim first when the disk fills.
+
+    Downloaded videos go first, and among them least-recently-used: another
+    can always be fetched again. A recording cannot — the broadcast has been
+    and gone — so recordings are only touched once the downloads are exhausted.
+
+    Among recordings, the ones already watched go first. An unwatched episode
+    is the whole point of having recorded it, so it is given up last of all,
+    and then from whichever series has stacked up the deepest backlog, oldest
+    episode first: someone behind on a soap would rather lose the episode they
+    are least likely to ever reach.
+    """
     fav_cutoff = (datetime.utcnow() - timedelta(days=VIDEO_CACHE_FAVOURITE_MAX_AGE_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
     with _lock:
-        return list(get_conn().execute(
+        rows = list(get_conn().execute(
             """
             SELECT * FROM cached_videos
             WHERE protected = 0
@@ -616,6 +629,40 @@ def all_evictable_videos_lru() -> list[sqlite3.Row]:
             """,
             (VIDEO_CACHE_FAVOURITE_THRESHOLD, fav_cutoff),
         ))
+
+    downloads = [r for r in rows if (r["source"] or "") != "tv"]
+    recordings = [r for r in rows if (r["source"] or "") == "tv"]
+    watched = [r for r in recordings if r["last_played_at"]]
+    unwatched = [r for r in recordings if not r["last_played_at"]]
+
+    watched.sort(key=lambda r: (str(r["last_played_at"]), str(r["downloaded_at"])))
+
+    backlog: dict[str, int] = {}
+    for r in unwatched:
+        key = r["series_key"] or r["title"] or ""
+        backlog[key] = backlog.get(key, 0) + 1
+    unwatched.sort(key=lambda r: (-backlog[r["series_key"] or r["title"] or ""],
+                                  str(r["downloaded_at"])))
+
+    return downloads + watched + unwatched
+
+
+def recordings_for_resident(resident: str, series_key: str | None = None) -> list[sqlite3.Row]:
+    """Recordings in the order a resident should meet them.
+
+    Unwatched first and oldest first, so a soap is picked up where they left
+    off rather than at the newest episode, which would give away what they had
+    not seen yet. Watched ones follow, so pressing the button again still
+    finds something rather than nothing.
+    """
+    sql = "SELECT * FROM cached_videos WHERE resident = ? AND source = 'tv'"
+    params: list = [resident]
+    if series_key:
+        sql += " AND series_key = ?"
+        params.append(series_key)
+    sql += " ORDER BY (last_played_at IS NULL) DESC, downloaded_at ASC, id ASC"
+    with _lock:
+        return list(get_conn().execute(sql, params))
 
 
 def cached_video_count_for_resident(resident: str) -> int:

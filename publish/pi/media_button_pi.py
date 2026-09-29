@@ -854,6 +854,60 @@ def load_manual_playlist(resident: str) -> list[str] | None:
 
     return None
 
+def _tv_item_value(item) -> str:
+    """The raw "series:..." or "programme:..." string behind a playlist entry."""
+    if isinstance(item, dict):
+        raw = item.get("url") or item.get("query") or item.get("name") or ""
+    else:
+        raw = str(item)
+    return (raw or "").strip()
+
+
+def _recordings_for_item(resident: str, item) -> list:
+    """The episodes recorded for one television entry, best to play first.
+
+    A series entry matches everything recorded under that series. A one-off
+    matches the single showing it names — allowing a minute either way,
+    because the guide is revised as broadcast data firms up and the portal and
+    the device read it at different moments.
+    """
+    raw = _tv_item_value(item)
+    low = raw.lower()
+    if low.startswith("series:"):
+        crid = raw.split(":", 1)[1].strip()
+        return cache_db.recordings_for_resident(resident, crid) if crid else []
+    if not low.startswith("programme:"):
+        return []
+
+    want = raw.split(":", 1)[1].strip()
+    channel, _, start = want.rpartition("@")
+    try:
+        wanted_at = datetime.fromisoformat(start.replace("Z", "+00:00"))
+    except ValueError:
+        return []
+    out = []
+    for v in cache_db.recordings_for_resident(resident):
+        got_channel, _, got_start = str(v["source_id"] or "").rpartition("@")
+        if got_channel != channel:
+            continue
+        try:
+            got_at = datetime.fromisoformat(got_start.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if abs((got_at - wanted_at).total_seconds()) <= 60:
+            out.append(v)
+    return out
+
+
+def _recording_ready(resident: str, item) -> bool:
+    """True when this television entry has an episode waiting on disk."""
+    for v in _recordings_for_item(resident, item):
+        fp = v["filepath"]
+        if fp and os.path.exists(fp):
+            return True
+    return False
+
+
 def persist_manual_playlist(resident: str, items: list[str]):
     """
     Persist manual playlist. If any entry is a dict/list, write JSON manifest; otherwise keep legacy txt.
@@ -2218,6 +2272,23 @@ class Engine:
             if fg_candidates:
                 candidates = fg_candidates
 
+        # Television outranks everything else, as long as something has
+        # actually been recorded for it. A recording is what the resident or
+        # their family asked for by name; a downloaded video is only ever a
+        # guess at what they might like. Recordings that have not been watched
+        # come first, and the recent-items list still applies, so a series
+        # does not pin the screen to one episode all afternoon.
+        resident = sess.get("resident")
+        if resident:
+            tv = [c for c in candidates if cache_db.is_tv_item(c)]
+            if tv:
+                try:
+                    playable = [c for c in tv if _recording_ready(resident, c)]
+                except Exception:
+                    playable = []
+                if playable:
+                    candidates = playable
+
         q = random.choice(candidates)
         recent_q.append(_key(q))
         sess["last_kind"] = _classify_kind(q)
@@ -2500,6 +2571,26 @@ class Engine:
                 cached_video_id = None
                 cached_filepath = None
                 cached_source_id = None
+
+                # Television: play what was recorded for it, oldest unwatched
+                # first. There is no term and nothing to download — if no
+                # episode has been captured yet there is simply nothing to
+                # play, and the loop moves on to the next item.
+                if cache_db.is_tv_item(q):
+                    raw = _tv_item_value(q)
+                    for v in _recordings_for_item(resident, q):
+                        fp = v["filepath"]
+                        if fp and os.path.exists(fp):
+                            cached_filepath = fp
+                            cached_source_id = v["source_id"]
+                            cached_video_id = int(v["id"])
+                            break
+                    if not cached_filepath:
+                        _log(f"[TV] Nothing recorded yet for {raw[:48]} "
+                             f"(resident={resident}) — skipping")
+                        self.is_playback_active.clear()
+                        continue
+
                 term_str = cache_db.canonical_term(q)
                 if term_str:
                     tid = cache_db.term_id_for(resident, term_str)
