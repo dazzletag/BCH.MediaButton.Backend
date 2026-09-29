@@ -72,6 +72,10 @@ export default function TvGuide() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
+  const [residents, setResidents] = useState<string[]>([]);
+  const [resident, setResident] = useState("");
+  const [adding, setAdding] = useState<string | null>(null);
+  const [addedKeys, setAddedKeys] = useState<Record<string, string>>({});
 
   useEffect(() => {
     call<CareHome[]>({ url: "/api/admin/care-homes", method: "GET" })
@@ -80,6 +84,9 @@ export default function TvGuide() {
     call<EpgStatus[]>({ url: "/api/admin/epg/status", method: "GET" })
       .then((s) => setStatus(s || []))
       .catch(() => setStatus([]));
+    call<string[]>({ url: "/api/admin/residents", method: "GET" })
+      .then((r) => setResidents(r || []))
+      .catch(() => setResidents([]));
   }, [call]);
 
   // Only homes that actually have a guide can be searched, so default to one
@@ -128,6 +135,40 @@ export default function TvGuide() {
       setLoading(false);
     }
   }, [call, careHomeId, q, channel]);
+
+  /**
+   * A series is added by its CRID, not by title. Freeview links every episode
+   * of a serial with that identifier, so "series:crid://..." keeps working
+   * when a broadcaster renames an episode or moves it in the schedule, which
+   * a title match would not.
+   */
+  const addToPlaylist = useCallback(async (g: EpgGroup) => {
+    if (!resident) {
+      setError("Choose a resident to add this for.");
+      return;
+    }
+    const item = g.isSeries && g.seriesCrid
+      ? `series:${g.seriesCrid}`
+      : `programme:${g.events[0]?.id ?? ""}`;
+    setAdding(g.key);
+    setError(null);
+    try {
+      const res = await call<{ added: number; alreadyPresent?: boolean }>({
+        url: `/api/admin/residents/${encodeURIComponent(resident)}/playlist-items`,
+        method: "POST",
+        data: { items: [item] },
+      });
+      setAddedKeys((prev) => ({
+        ...prev,
+        [g.key]: res?.added ? "Added" : "Already on the playlist",
+      }));
+    } catch (err) {
+      console.error(err);
+      setError(`Could not add "${g.title}" to ${resident}.`);
+    } finally {
+      setAdding(null);
+    }
+  }, [call, resident]);
 
   return (
     <main className="container">
@@ -184,6 +225,16 @@ export default function TvGuide() {
             </select>
           </label>
 
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span className="muted" style={{ fontSize: 13 }}>Add for</span>
+            <select value={resident} onChange={(e) => setResident(e.target.value)}>
+              <option value="">Choose resident…</option>
+              {residents.map((r) => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+          </label>
+
           <button className="btn primary" onClick={search} disabled={loading || !careHomeId}>
             {loading ? "Searching…" : "Search"}
           </button>
@@ -221,12 +272,33 @@ export default function TvGuide() {
                       {" · next "}{when(g.nextStartUtc)}
                     </div>
                   </div>
-                  <button
-                    className="btn ghost"
-                    onClick={() => setExpanded(expanded === g.key ? null : g.key)}
-                  >
-                    {expanded === g.key ? "Hide showings" : "Showings"}
-                  </button>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    {addedKeys[g.key] && (
+                      <span className="muted" style={{ fontSize: 13 }}>{addedKeys[g.key]}</span>
+                    )}
+                    <button
+                      className="btn"
+                      onClick={() => addToPlaylist(g)}
+                      disabled={!resident || adding === g.key}
+                      title={
+                        resident
+                          ? (g.isSeries
+                              ? `Follow every episode for ${resident}`
+                              : `Add this showing for ${resident}`)
+                          : "Choose a resident first"
+                      }
+                    >
+                      {adding === g.key
+                        ? "Adding…"
+                        : g.isSeries ? "Follow series" : "Add programme"}
+                    </button>
+                    <button
+                      className="btn ghost"
+                      onClick={() => setExpanded(expanded === g.key ? null : g.key)}
+                    >
+                      {expanded === g.key ? "Hide showings" : "Showings"}
+                    </button>
+                  </div>
                 </div>
 
                 {expanded === g.key && (

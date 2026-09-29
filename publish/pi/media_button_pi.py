@@ -3614,6 +3614,34 @@ def main():
     except Exception as e:
         print(f"[BOOT] Video cache subsystem failed to start: {e}")
 
+    # ── Television ────────────────────────────────────────────────────────────
+    # Only devices with a TV HAT have an aerial. Both of these are inert
+    # without TVH_URL, so devices without a tuner are completely unaffected.
+    try:
+        import epg_sync
+        import tv_recorder
+
+        def _tv_resident():
+            return (CONFIG.get("remote_control", {}) or {}).get("resident") \
+                or next(iter((CONFIG.get("residents") or {}).keys()), None)
+
+        def _tv_playlist():
+            resident = _tv_resident()
+            if not resident:
+                return []
+            return normalize_playlist_items(load_manual_playlist(resident) or [])
+
+        # Push this home's programme guide to the portal so staff and family
+        # can search what the building can actually receive.
+        epg_sync.start(API_BASE, DEVICE_ID, DEVICE_KEY)
+
+        # Turn "series:crid://..." playlist entries into standing recording
+        # rules, and register finished recordings as ordinary cached videos so
+        # they play through the existing path.
+        tv_recorder.start(get_playlist=_tv_playlist, get_resident=_tv_resident)
+    except Exception as e:
+        print(f"[BOOT] TV subsystem not started: {e}")
+
     # Graph poller
     threading.Thread(target=graph_poll_task, args=(GRAPH,), daemon=True).start()
 

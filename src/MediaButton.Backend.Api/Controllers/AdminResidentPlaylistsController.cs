@@ -65,6 +65,54 @@ public class AdminResidentPlaylistsController : ControllerBase
         return Ok(new ManualPlaylistResponse(key, items, snapshot?.ManualUpdatedAt, snapshot?.ManualUpdatedBy, snapshot?.LastPolledAt));
     }
 
+    /// <summary>
+    /// Append items to a resident's playlist without sending the whole list.
+    ///
+    /// The ordinary save is a whole-list PUT, which is how one person adding a
+    /// photo deleted another's 32 search terms. Appending cannot do that: it
+    /// reads, adds what is missing, and writes, so two people working at once
+    /// both keep their additions. Used by the TV guide, where a programme is
+    /// added from a screen that never loaded the playlist at all.
+    /// </summary>
+    [HttpPost("{resident}/playlist-items")]
+    public async Task<IActionResult> AppendItems(string resident, [FromBody] PlaylistAppendRequest request)
+    {
+        if (request?.Items == null || request.Items.Count == 0)
+            return BadRequest("Items are required.");
+
+        var key = NormalizeResident(resident);
+        var snapshot = await _db.ResidentPlaylists.FirstOrDefaultAsync(r => r.Resident == key);
+        var isNew = snapshot == null;
+        snapshot ??= new ResidentPlaylistSnapshot { Resident = key };
+
+        var existing = ParseManual(snapshot.ManualPlaylistJson);
+        var seen = new HashSet<string>(
+            existing.Select(FlattenForEditor).Where(x => x != null)!,
+            StringComparer.OrdinalIgnoreCase);
+
+        var merged = new List<object>(existing.Select(j => (object)j));
+        var added = new List<string>();
+        foreach (var raw in request.Items)
+        {
+            var item = (raw ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(item) || seen.Contains(item)) continue;
+            merged.Add(item);
+            seen.Add(item);
+            added.Add(item);
+        }
+
+        if (added.Count == 0)
+            return Ok(new { added = 0, alreadyPresent = true, total = merged.Count });
+
+        snapshot.ManualPlaylistJson = JsonSerializer.Serialize(merged, _jsonOptions);
+        snapshot.ManualUpdatedAt = DateTimeOffset.UtcNow;
+        snapshot.ManualUpdatedBy = User?.Identity?.Name;
+        if (isNew) _db.ResidentPlaylists.Add(snapshot); else _db.ResidentPlaylists.Update(snapshot);
+        await _db.SaveChangesAsync();
+
+        return Ok(new { added = added.Count, items = added, total = merged.Count });
+    }
+
     // Called by the frontend "Send playlist to device" button.
     // The manual playlist (which includes radio/URL items) is already saved before this is called.
     // This endpoint exists to acknowledge the action; the Pi picks up changes via its own device endpoint.

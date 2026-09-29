@@ -47,6 +47,9 @@ public record AiPlaylistPayload(
 /// </summary>
 public record ManualPlaylistUpdate(List<JsonElement> Items, DateTimeOffset? BaseUpdatedAtUtc = null);
 
+/// <summary>Items to append to a playlist, e.g. "series:crid://..." .</summary>
+public record PlaylistAppendRequest(List<string> Items);
+
 public record SuggestTermsPayload(List<string> Terms);
 
 public record ResidentPlaylistAssignment(string? PlaylistId, List<string>? RadioFavorites, List<string>? PlaylistUrls, string? SeasonalTheme, string? Resident);
