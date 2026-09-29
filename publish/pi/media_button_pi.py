@@ -1843,7 +1843,20 @@ class Engine:
             # schedule. Asking an LLM to invent search terms here filled
             # Kenneth's disk with thirty-four videos nobody chose, for a man
             # whose playlist said plainly that he wanted EastEnders.
-            _log(f"[CACHE] {resident} watches television — no search terms needed")
+            # Stand down anything a previous bootstrap invented, or the
+            # downloader carries on fetching for terms nobody chose. The
+            # videos already on disk are left alone: they are only reclaimed
+            # if the disk actually needs the room.
+            try:
+                stood_down = len(cache_db.active_terms_for_resident(resident))
+                if stood_down:
+                    cache_db.mark_terms_inactive(resident, [])
+                    _log(f"[CACHE] {resident} watches television — stood down "
+                         f"{stood_down} search term(s) nobody chose")
+                else:
+                    _log(f"[CACHE] {resident} watches television — no search terms needed")
+            except Exception as e:
+                _log(f"[CACHE] Could not stand down search terms for {resident}: {e}")
             return
 
         if not terms_with_blobs:
