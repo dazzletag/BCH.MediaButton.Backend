@@ -38,6 +38,11 @@ CHANNEL_CONF = os.path.abspath(CHANNEL_CONF)
 TV_PRE_ROLL = int(os.getenv("TV_PRE_ROLL", "60"))
 TV_POST_ROLL = int(os.getenv("TV_POST_ROLL", "180"))
 TV_KEEP_EPISODES = int(os.getenv("TV_KEEP_EPISODES", "3"))
+# A programme already under way is still worth having if barely any of it has
+# gone — a minute lost off forty is not a reason to record nothing. Past this
+# share of the running time it is not the programme any more, and a resident
+# sitting down to half a episode is worse than finding it absent.
+TV_LATE_JOIN = float(os.getenv("TV_LATE_JOIN", "0.2"))
 TV_MAX_HOURS = int(os.getenv("TV_MAX_HOURS", "4"))
 # A recording needs room for itself and for the videos already on the disk.
 TV_MIN_FREE_GB = float(os.getenv("TV_MIN_FREE_GB", "4"))
@@ -183,10 +188,12 @@ def _wanted(playlist) -> tuple[list[str], list[tuple[str, str]]]:
 
 
 def planned(playlist) -> list[dict]:
-    """Everything the playlist asks for that has not yet started.
+    """Everything the playlist asks for that is still worth recording.
 
-    A programme already under way is left alone: recording it would capture
-    only the tail, and one already finished would capture nothing at all while
+    A programme that has only just begun is caught from where it is, and says
+    so in its title, so nobody is told they have the whole thing. One too far
+    gone is left alone: a fragment presented as the programme is worse than
+    nothing, and one already finished would capture nothing at all while
     looking to staff as though it had worked.
     """
     series, one_offs = _wanted(playlist)
@@ -204,36 +211,54 @@ def planned(playlist) -> list[dict]:
     now = time.time()
     out, seen = [], set()
 
-    def add(e):
-        uid = f"{e.get('channelName')}@{_iso(e.get('start'))}"
+    def add(e) -> bool:
+        # Keyed on the advertised start even when joining late, so catching the
+        # rest of a programme does not record it again from the guide.
+        start, stop = int(e.get("start") or 0), int(e.get("stop") or 0)
+        uid = f"{e.get('channelName')}@{_iso(start)}"
         if uid in seen:
-            return
+            return False
+        title = str(e.get("title") or "Recording").strip()
+
+        joined = 0
+        if start <= now:
+            gone, length = now - start, max(stop - start, 1)
+            if gone > length * TV_LATE_JOIN:
+                _log(f"[TV] Too late for '{title}' — {gone / 60:.0f} of its "
+                     f"{length // 60:.0f} minutes have gone")
+                return False
+            joined = max(1, int(gone // 60))
+            start = int(now)
+
         seen.add(uid)
         out.append({
             "uid": uid,
             "channel": str(e.get("channelName") or ""),
-            "title": str(e.get("title") or "Recording").strip(),
+            "title": title,
             "subtitle": str(e.get("subtitle") or "").strip(),
-            "start": int(e.get("start") or 0),
-            "stop": int(e.get("stop") or 0),
+            "start": start,
+            "stop": stop,
+            "joined": joined,
         })
+        return True
 
     for crid in series:
         matches = sorted((e for e in events
                           if str(e.get("serieslinkUri") or "") == crid
-                          and int(e.get("start") or 0) > now),
+                          and int(e.get("stop") or 0) > now),
                          key=lambda e: e.get("start") or 0)
-        for e in matches[:TV_KEEP_EPISODES]:
-            add(e)
+        taken = 0
+        for e in matches:
+            if taken >= TV_KEEP_EPISODES:
+                break
+            if add(e):
+                taken += 1
 
     for channel, start_iso in one_offs:
         try:
             want = int(datetime.fromisoformat(start_iso.replace("Z", "+00:00")).timestamp())
         except ValueError:
             _log(f"[TV] Ignoring unparsable start time: {start_iso}")
-            continue
-        if want <= now:
-            _log(f"[TV] Not recording '{channel}' at {start_iso} — it has already started")
             continue
         # A minute either way: the guide is revised as broadcast data firms up,
         # so demanding an exact match would drop legitimate recordings.
@@ -271,7 +296,9 @@ def capture(plan: dict, resident: str) -> bool:
     if not ensure_channel(channel):
         return False
 
-    seconds = plan["stop"] - plan["start"] + TV_POST_ROLL + TV_PRE_ROLL
+    joined = int(plan.get("joined") or 0)
+    pre = 0 if joined else TV_PRE_ROLL
+    seconds = plan["stop"] - plan["start"] + TV_POST_ROLL + pre
     if seconds <= 0 or seconds > TV_MAX_HOURS * 3600:
         _log(f"[TV] Refusing a {seconds // 60} minute recording of '{plan['title']}'")
         return False
@@ -286,7 +313,17 @@ def capture(plan: dict, resident: str) -> bool:
 
     title = plan["title"]
     if plan["subtitle"]:
-        title = f"{title} — {plan['subtitle']}"
+        # Broadcasters put a whole paragraph of billing in the subtitle. A menu
+        # read from an armchair shows a line, so keep enough to tell one
+        # episode from another and drop the rest.
+        sub = plan["subtitle"]
+        if len(sub) > 60:
+            sub = sub[:57].rstrip(" ,.;:—-") + "…"
+        title = f"{title} — {sub}"
+    if joined:
+        # On the end, where a carer reading the menu will see it, rather than
+        # buried after a long subtitle.
+        title = f"{title} (from {joined} min in)"
 
     _log(f"[TV] Recording '{title}' on {channel} for {seconds // 60} min")
     _service("stop")
@@ -341,7 +378,8 @@ def _run(get_playlist, get_resident):
                 upcoming = planned(get_playlist() or [])
                 now = time.time()
                 due = [p for p in upcoming
-                       if 0 < p["start"] - now <= 60 + TV_PRE_ROLL
+                       if p["start"] - now <= 60 + TV_PRE_ROLL
+                       and p["stop"] - now > 60
                        and not _already_have(resident, p["uid"])]
                 if due and _capturing.acquire(blocking=False):
                     try:

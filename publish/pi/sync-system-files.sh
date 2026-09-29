@@ -105,6 +105,27 @@ sync_reverse_tunnel() {
 
 sync_reverse_tunnel
 
+# The app writes its own working files — the cache database, cached videos,
+# learned channel definitions. Anything run as root while investigating a
+# device leaves a root-owned file behind, and the app, which runs as the
+# ordinary user, then silently cannot update it. That cost a resident a
+# recording once; this makes sure it cannot cost another.
+reclaim_data_dir() {
+  data_dir="/opt/media-button/publish/pi/.data"
+  [ -d "$data_dir" ] || return 0
+  app_user="$(stat -c %U /opt/media-button 2>/dev/null)" || return 0
+  [ -n "$app_user" ] && [ "$app_user" != "root" ] || return 0
+  strays="$(find "$data_dir" ! -user "$app_user" 2>/dev/null | wc -l)"
+  [ "$strays" -gt 0 ] || return 0
+  if chown -R "$app_user": "$data_dir" 2>/dev/null; then
+    echo "[SYNC] Gave $strays file(s) under .data back to $app_user"
+  else
+    echo "[SYNC] FAILED to reclaim .data for $app_user (continuing anyway)"
+  fi
+}
+
+reclaim_data_dir
+
 # Deliberately NOT synced here: media-button.service itself. install.sh
 # rewrites the hardcoded UID 1000 in it to match the real account, so
 # copying the repo copy over the installed one would undo that on any
