@@ -28,9 +28,11 @@ not what was asked for.
 import base64
 import json
 import os
+import re
 import socket
 import ssl
 import struct
+import subprocess
 import threading
 import time
 from datetime import datetime
@@ -41,6 +43,7 @@ WAKE_ATTEMPTS = int(os.getenv("TV_DISPLAY_WAKE_ATTEMPTS", "3"))
 
 _lock = threading.Lock()
 _last_prepared = 0.0
+_cec_registered = False
 
 
 def _log(msg: str):
@@ -162,6 +165,95 @@ def send_keys(host: str, token: str | None, keys: list[str],
 
 
 # ---------------------------------------------------------------------------
+# HDMI-CEC — the cable, not the network
+# ---------------------------------------------------------------------------
+# This is the better mechanism and the one to try first. A single "one touch
+# play" turns the set on and selects the Pi's socket, works from standby, and
+# needs no address, pairing or token — it travels down the HDMI lead already
+# carrying the picture. Wake-on-LAN, by contrast, was measured doing nothing at
+# all on the first set we tried.
+
+def cec_device(cfg: dict) -> str | None:
+    """The CEC node to talk through, if this Pi has one."""
+    wanted = cfg.get("cec_device")
+    candidates = [wanted] if wanted else ["/dev/cec0", "/dev/cec1"]
+    for dev in candidates:
+        if dev and os.path.exists(dev):
+            return dev
+    return None
+
+
+def _cec(dev: str, *args: str, timeout: float = 6.0) -> tuple[bool, str]:
+    try:
+        r = subprocess.run(["cec-ctl", "-d", dev, *args],
+                           capture_output=True, text=True, timeout=timeout)
+        return r.returncode == 0, (r.stdout or "") + (r.stderr or "")
+    except FileNotFoundError:
+        return False, "cec-ctl is not installed"
+    except Exception as e:
+        return False, str(e)
+
+
+def cec_physical_address(dev: str) -> str | None:
+    """Where this Pi sits in the HDMI tree, e.g. 2.0.0.0 for HDMI 2.
+
+    The set needs telling which socket to show, and this is how it is known —
+    read from the adapter rather than assumed, because it depends on which
+    port the lead is in and on any receiver in between.
+    """
+    ok, out = _cec(dev)
+    if not ok:
+        return None
+    m = re.search(r"Physical Address\s*:\s*([0-9a-fA-F]\.[0-9a-fA-F]\.[0-9a-fA-F]\.[0-9a-fA-F])", out)
+    if not m:
+        return None
+    addr = m.group(1)
+    return None if addr.lower().startswith("f.f.f.f") else addr
+
+
+def cec_prepare(cfg: dict) -> bool:
+    """One touch play: wake the set and claim its screen. True if it was sent.
+
+    Registering as a playback device is what entitles us to say "show me", and
+    it has to happen once per boot before anything else will be listened to.
+    """
+    global _cec_registered
+    dev = cec_device(cfg)
+    if not dev:
+        return False
+
+    if not _cec_registered:
+        ok, out = _cec(dev, "--playback")
+        if not ok:
+            _log(f"[TVSET] CEC unavailable on {dev}: {out.strip()[:120]}")
+            return False
+        _cec_registered = True
+
+    addr = cec_physical_address(dev)
+    if not addr:
+        # f.f.f.f means the lead is unplugged or the set is not talking CEC.
+        _log("[TVSET] CEC reports no HDMI connection — is the lead in?")
+        return False
+
+    ok_on, out_on = _cec(dev, "--to", "0", "--image-view-on")
+    ok_src, out_src = _cec(dev, "--active-source", f"phys-addr={addr}")
+    if ok_on or ok_src:
+        _log(f"[TVSET] CEC: asked the television to wake and show {addr}")
+        return True
+    _log(f"[TVSET] CEC did not take: {(out_on + out_src).strip()[:140]}")
+    return False
+
+
+def cec_standby(cfg: dict) -> bool:
+    """Ask the set to go to standby. Only ever called deliberately."""
+    dev = cec_device(cfg)
+    if not dev:
+        return False
+    ok, _ = _cec(dev, "--to", "0", "--standby")
+    return ok
+
+
+# ---------------------------------------------------------------------------
 # state
 # ---------------------------------------------------------------------------
 
@@ -238,6 +330,7 @@ def prepare(config: dict | None, reason: str = "") -> bool:
     token = cfg.get("token") or None
     mac = cfg.get("mac") or None
     input_key = str(cfg.get("input_key") or "KEY_HDMI")
+    use_cec = bool(cfg.get("use_cec", True))
 
     # A resident may trigger the beacon repeatedly in a few minutes. Switching
     # input under them each time would be worse than not bothering.
@@ -252,6 +345,13 @@ def prepare(config: dict | None, reason: str = "") -> bool:
 
     def left() -> float:
         return deadline - time.time()
+
+    # The cable first. It wakes the set from standby and selects our socket in
+    # one go, which is both halves of the job, and it does not care whether the
+    # television's network stack is awake or whether its address has changed.
+    if use_cec and cec_prepare(cfg):
+        _log(f"[TVSET] Ready over HDMI in {time.time() - started:.1f}s")
+        return True
 
     # Every wait below is measured against one deadline. Checking the budget
     # only between attempts let a set that was merely slow to refuse overrun it
@@ -271,7 +371,9 @@ def prepare(config: dict | None, reason: str = "") -> bool:
 
     if not awake:
         _log(f"[TVSET] {host} did not answer in {time.time() - started:.1f}s — "
-             f"playing anyway, the screen may be on the wrong input")
+             f"playing anyway, the screen may be on the wrong input. A set in "
+             f"standby can only be woken over HDMI; wake-on-LAN is widely "
+             f"ignored over wireless.")
         return False
 
     # A set that has just woken drops keys sent too early.
