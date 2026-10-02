@@ -2097,6 +2097,19 @@ class Engine:
         else:
             print(f"[ENGINE] Starting session for {resident}")
 
+        # The resident is in front of the screen now, so switch the television
+        # over while the playlist is being built. Started rather than waited
+        # for: a button that appears to do nothing for ten seconds feels
+        # broken, and the video is worth having even if the set never answers.
+        # Inert unless a television was set up on this device, and only in
+        # beacon mode — someone using the remote can change input themselves.
+        try:
+            if str(self.config.get("control_mode") or "") == "beacon":
+                import tv_display
+                tv_display.prepare_async(self.config, reason=resident)
+        except Exception as e:
+            print(f"[TVSET] Not preparing the television: {e}")
+
         with self._ensure_lock(resident):
             sess = self._make_session(resident, radio_first=radio_first)
             self._register_session_terms(sess)
