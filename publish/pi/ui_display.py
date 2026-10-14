@@ -210,9 +210,11 @@ class MediaUI:
         )
         self._logo_target_w = None
 
-        # "Up next" row (hidden when empty)
+        # "Up next" row. Not packed: it is painted into the picture by
+        # _set_logo, because giving it a row of its own meant cropping that
+        # much off the top of the ident. The widgets stay so that every
+        # existing caller of _set_upnext keeps working unchanged.
         upnext_wrap = tk.Frame(self.idle_frame, bg=BG)
-        upnext_wrap.pack(pady=(6, 0))
         self.upnext_label = tk.Label(upnext_wrap, text="Up next:", fg=ACCENT, bg=BG, font=("DejaVu Sans", 18, "bold"))
         self.upnext_value = tk.Message(upnext_wrap, text="", width=1200, fg=FG, bg=BG, font=("DejaVu Sans", 20))
         self.upnext_label.grid(row=0, column=0, sticky="ne", padx=(0, 8))
@@ -522,6 +524,15 @@ class MediaUI:
 
 
    # replace your _set_upnext with this sticky version
+    def _redraw_logo_captions(self):
+        """Repaint the ident so a caption change shows, without refetching."""
+        source = getattr(self, "_logo_source", None)
+        if source is not None and self._current_frame is self.idle_frame:
+            try:
+                self._set_logo(source)
+            except Exception as e:
+                print(f"[UI] Could not repaint captions: {e}")
+
     def _set_upnext(self, text: Optional[str], *, sticky: bool = True):
     # If sticky and text is None, keep whatever we already had visible
         if sticky and (text is None) and self._upnext_text:
@@ -534,11 +545,9 @@ class MediaUI:
             self._upnext_text = text
             self.upnext_label.configure(text="Up next:")
             self.upnext_value.configure(text=text)
-            self.upnext_label.grid(); self.upnext_value.grid()
         else:
             self._upnext_text = ""
-            self.upnext_label.grid_remove()
-            self.upnext_value.grid_remove()
+        self._redraw_logo_captions()
 
     # ----- Menu helpers -----
 
@@ -780,20 +789,25 @@ class MediaUI:
                 sw = max(1, self.root.winfo_screenwidth())
                 sh = max(1, self.root.winfo_screenheight())
 
-                # Only the "Up next" line sits below the picture now, and only
-                # when there is something to say.
-                reserved = 150 if (self.upnext_value.cget("text") or "").strip() else 0
-                max_h = max(200, sh - reserved)
+                # Keep the source so a change to "Up next" can be redrawn
+                # without regenerating or refetching anything.
+                self._logo_source = pil_img
 
                 w0, h0 = max(1, pil_img.width), max(1, pil_img.height)
                 scale = sw / w0
                 new_w, new_h = sw, max(1, int(h0 * scale))
-
                 resized = pil_img.resize((new_w, new_h), Image.LANCZOS)
 
-                if new_h > max_h:
-                    # Trim from the top: the lettering is along the bottom.
-                    resized = resized.crop((0, new_h - max_h, new_w, new_h))
+                # Nothing is cropped. Reserving a strip for "Up next" meant
+                # taking it off the top of the picture, which is where the
+                # television's aerial and the top of its case are — the very
+                # part that makes it read as a channel ident. Both captions are
+                # painted on instead, so the picture is never cut.
+                if new_h > sh:
+                    # Only when the screen is a different shape from the image:
+                    # take it evenly rather than all from one edge.
+                    excess = new_h - sh
+                    resized = resized.crop((0, excess // 2, new_w, new_h - (excess - excess // 2)))
 
                 # The date goes on last, across the top, where the ident keeps
                 # its background. It is worth keeping: for someone who has lost
@@ -801,16 +815,24 @@ class MediaUI:
                 # is one of the more useful things here. It cannot be a Tk
                 # label any more, because a label cannot be transparent over a
                 # picture, so it is painted into the image.
+                lines = []
                 caption = (self.subtitle_var.get() or "").strip()
                 if caption:
+                    lines.append((caption, "#ffffff", 0.028))
+                coming = (self._upnext_text or "").strip()
+                if coming:
+                    lines.append((f"Up next: {coming}", ACCENT, 0.024))
+
+                if lines:
                     resized = resized.convert("RGBA")
                     draw = ImageDraw.Draw(resized)
-                    size = max(22, int(resized.width * 0.028))
-                    cap_font = _safe_font(size=size)
-                    cw, ch = _measure_text(draw, caption, cap_font)
-                    cx, cy = (resized.width - cw) // 2, max(8, int(resized.height * 0.035))
-                    _text_outline(draw, (cx, cy), caption, cap_font,
-                                  fill="#ffffff", outline="#000000", width=3)
+                    y = max(8, int(resized.height * 0.030))
+                    for text, colour, rel in lines:
+                        cap_font = _safe_font(size=max(20, int(resized.width * rel)))
+                        cw, ch = _measure_text(draw, text, cap_font)
+                        _text_outline(draw, ((resized.width - cw) // 2, y), text, cap_font,
+                                      fill=colour, outline="#000000", width=3)
+                        y += ch + max(6, int(resized.height * 0.012))
 
                 img_tk = ImageTk.PhotoImage(resized)
                 self.logo_label.configure(image=img_tk, text="", compound="none")
