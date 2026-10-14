@@ -46,10 +46,16 @@ public class UserAccessService
 
         if (profile.Role == "Activities")
         {
-            if (!profile.CareHomeId.HasValue) return [];
+            // Everything, including homes opened since this was set.
+            if (profile.AllCareHomes) return null;
+
+            var homes = await HomesForAsync(profile);
+            if (homes.Count == 0) return [];
+
             return await _db.ResidentPlaylists
-                .Where(r => r.CareHomeId == profile.CareHomeId)
+                .Where(r => r.CareHomeId != null && homes.Contains(r.CareHomeId.Value))
                 .Select(r => r.Resident)
+                .Distinct()
                 .ToListAsync();
         }
 
@@ -73,10 +79,14 @@ public class UserAccessService
 
         if (profile.Role == "Activities")
         {
-            if (!profile.CareHomeId.HasValue) return false;
+            if (profile.AllCareHomes) return true;
+
+            var homes = await HomesForAsync(profile);
+            if (homes.Count == 0) return false;
+
             var snapshot = await _db.ResidentPlaylists.AsNoTracking()
                 .FirstOrDefaultAsync(r => r.Resident == residentKey);
-            return snapshot?.CareHomeId == profile.CareHomeId;
+            return snapshot?.CareHomeId is Guid home && homes.Contains(home);
         }
 
         if (profile.Role == "Relative")
@@ -84,6 +94,25 @@ public class UserAccessService
                 .AnyAsync(g => g.UserProfileId == profile.Id && g.ResidentKey == residentKey);
 
         return false;
+    }
+
+    /// <summary>
+    /// The homes this user may see: the granted ones, plus the single home on
+    /// the old column. The old column is still honoured so that a profile
+    /// which has not been re-saved since multi-home arrived does not silently
+    /// lose the access it already had.
+    /// </summary>
+    private async Task<HashSet<Guid>> HomesForAsync(Models.UserProfile profile)
+    {
+        var homes = await _db.UserCareHomeGrants
+            .Where(g => g.UserProfileId == profile.Id)
+            .Select(g => g.CareHomeId)
+            .ToListAsync();
+
+        var set = homes.ToHashSet();
+        if (profile.CareHomeId.HasValue)
+            set.Add(profile.CareHomeId.Value);
+        return set;
     }
 
     private async Task<Models.UserProfile?> ResolveProfileAsync(ClaimsPrincipal user)

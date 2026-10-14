@@ -479,11 +479,43 @@ namespace MediaButton.Backend.Api.Data.Migrations
                     b.ToTable("ResidentWelcomeImages");
                 });
 
+            modelBuilder.Entity("MediaButtonBackend.Models.UserCareHomeGrant", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CareHomeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("GrantedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("GrantedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<Guid>("UserProfileId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CareHomeId");
+
+                    b.HasIndex("UserProfileId", "CareHomeId")
+                        .IsUnique();
+
+                    b.ToTable("UserCareHomeGrants");
+                });
+
             modelBuilder.Entity("MediaButtonBackend.Models.UserProfile", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("AllCareHomes")
+                        .HasColumnType("bit");
 
                     b.Property<string>("AzureAdEmail")
                         .IsRequired()
@@ -548,6 +580,25 @@ namespace MediaButton.Backend.Api.Data.Migrations
                     b.Navigation("UserProfile");
                 });
 
+            modelBuilder.Entity("MediaButtonBackend.Models.UserCareHomeGrant", b =>
+                {
+                    b.HasOne("MediaButtonBackend.Models.CareHome", "CareHome")
+                        .WithMany()
+                        .HasForeignKey("CareHomeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("MediaButtonBackend.Models.UserProfile", "UserProfile")
+                        .WithMany("CareHomeGrants")
+                        .HasForeignKey("UserProfileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("CareHome");
+
+                    b.Navigation("UserProfile");
+                });
+
             modelBuilder.Entity("MediaButtonBackend.Models.UserProfile", b =>
                 {
                     b.HasOne("MediaButtonBackend.Models.CareHome", "CareHome")
@@ -566,6 +617,8 @@ namespace MediaButton.Backend.Api.Data.Migrations
             modelBuilder.Entity("MediaButtonBackend.Models.UserProfile", b =>
                 {
                     b.Navigation("AccessGrants");
+
+                    b.Navigation("CareHomeGrants");
                 });
 #pragma warning restore 612, 618
         }

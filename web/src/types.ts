@@ -104,8 +104,13 @@ export type UserProfile = {
   azureAdEmail: string;
   displayName?: string | null;
   role: "Activities" | "Relative";
+  /** Superseded by careHomeIds; still sent when there is exactly one. */
   careHomeId?: string | null;
   careHomeName?: string | null;
+  careHomeIds?: string[];
+  careHomeNames?: string[];
+  /** Every home, including ones opened later. */
+  allCareHomes?: boolean;
   residents: string[];
 };
 

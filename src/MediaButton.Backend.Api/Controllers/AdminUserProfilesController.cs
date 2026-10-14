@@ -15,12 +15,70 @@ public class AdminUserProfilesController : ControllerBase
 
     public AdminUserProfilesController(AppDbContext db) => _db = db;
 
+    /// <summary>
+    /// Set which homes a profile may see. Relatives get none: their access is
+    /// per-resident, and leaving a stale home on the record would be a quiet
+    /// way to widen it later.
+    /// </summary>
+    private void ApplyHomes(UserProfile profile, UpsertUserProfileRequest req)
+    {
+        var existing = _db.UserCareHomeGrants.Where(g => g.UserProfileId == profile.Id);
+        _db.UserCareHomeGrants.RemoveRange(existing);
+
+        if (req.Role != "Activities")
+        {
+            profile.CareHomeId = null;
+            profile.AllCareHomes = false;
+            return;
+        }
+
+        profile.AllCareHomes = req.AllCareHomes;
+
+        var wanted = (req.CareHomeIds ?? [])
+            .Concat(req.CareHomeId is Guid one ? [one] : Array.Empty<Guid>())
+            .Distinct()
+            .ToList();
+
+        // "All homes" is a standing instruction, not a list, so individual
+        // grants are not kept alongside it — they would go stale and mislead.
+        if (req.AllCareHomes)
+        {
+            profile.CareHomeId = null;
+            return;
+        }
+
+        foreach (var home in wanted)
+            _db.UserCareHomeGrants.Add(new UserCareHomeGrant
+            {
+                UserProfileId = profile.Id,
+                CareHomeId = home,
+            });
+
+        // Keep the old column meaningful when there is exactly one home, so
+        // anything still reading it behaves as before.
+        profile.CareHomeId = wanted.Count == 1 ? wanted[0] : null;
+    }
+
+    private async Task<object?> DescribeAsync(Guid id) =>
+        await _db.UserProfiles
+            .Where(u => u.Id == id)
+            .Include(u => u.CareHomeGrants).ThenInclude(g => g.CareHome)
+            .Select(u => new
+            {
+                u.Id, u.AzureAdEmail, u.DisplayName, u.Role, u.CareHomeId, u.AllCareHomes,
+                careHomeIds = u.CareHomeGrants.Select(g => g.CareHomeId).ToList(),
+                careHomeNames = u.CareHomeGrants.Where(g => g.CareHome != null)
+                                                .Select(g => g.CareHome!.Name).ToList(),
+            })
+            .FirstOrDefaultAsync();
+
     [HttpGet]
     public async Task<IActionResult> List()
     {
         var profiles = await _db.UserProfiles
             .Include(u => u.CareHome)
             .Include(u => u.AccessGrants)
+            .Include(u => u.CareHomeGrants).ThenInclude(g => g.CareHome)
             .OrderBy(u => u.DisplayName ?? u.AzureAdEmail)
             .Select(u => new
             {
@@ -29,7 +87,16 @@ public class AdminUserProfilesController : ControllerBase
                 u.DisplayName,
                 u.Role,
                 u.CareHomeId,
+                u.AllCareHomes,
                 careHomeName = u.CareHome != null ? u.CareHome.Name : null,
+                // The old single home is folded in, so a profile saved before
+                // multi-home existed still lists the home it actually has.
+                careHomeIds = u.CareHomeGrants.Select(g => g.CareHomeId)
+                    .Concat(u.CareHomeId != null ? new[] { u.CareHomeId.Value } : Array.Empty<Guid>())
+                    .Distinct().ToList(),
+                careHomeNames = u.CareHomeGrants
+                    .Where(g => g.CareHome != null)
+                    .Select(g => g.CareHome!.Name).ToList(),
                 residents = u.AccessGrants.Select(g => g.ResidentKey).ToList()
             })
             .ToListAsync();
@@ -50,12 +117,12 @@ public class AdminUserProfilesController : ControllerBase
             AzureAdEmail = req.AzureAdEmail.Trim().ToLowerInvariant(),
             DisplayName = req.DisplayName?.Trim(),
             Role = req.Role,
-            CareHomeId = req.Role == "Activities" ? req.CareHomeId : null
         };
 
         _db.UserProfiles.Add(profile);
+        ApplyHomes(profile, req);
         await _db.SaveChangesAsync();
-        return Ok(profile);
+        return Ok(await DescribeAsync(profile.Id));
     }
 
     [HttpPut("{id:guid}")]
@@ -70,10 +137,10 @@ public class AdminUserProfilesController : ControllerBase
         profile.AzureAdEmail = req.AzureAdEmail.Trim().ToLowerInvariant();
         profile.DisplayName = req.DisplayName?.Trim();
         profile.Role = req.Role;
-        profile.CareHomeId = req.Role == "Activities" ? req.CareHomeId : null;
+        ApplyHomes(profile, req);
 
         await _db.SaveChangesAsync();
-        return Ok(profile);
+        return Ok(await DescribeAsync(profile.Id));
     }
 
     [HttpDelete("{id:guid}")]
@@ -138,6 +205,9 @@ public record UpsertUserProfileRequest(
     string AzureAdEmail,
     string? DisplayName,
     string Role,
-    Guid? CareHomeId);
+    /// <summary>Kept so older callers still work; folded into CareHomeIds.</summary>
+    Guid? CareHomeId,
+    IReadOnlyList<Guid>? CareHomeIds = null,
+    bool AllCareHomes = false);
 
 public record AddResidentGrantRequest(string ResidentKey);

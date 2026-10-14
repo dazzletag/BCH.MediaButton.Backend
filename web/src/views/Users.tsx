@@ -2,6 +2,60 @@ import { useCallback, useEffect, useState } from "react";
 import { useApiClient } from "../hooks/useApiClient";
 import type { CareHome, UserProfile } from "../types";
 
+/**
+ * Which homes an Activities user may see.
+ *
+ * "All homes" is offered alongside the list because an activities manager who
+ * covers everywhere would otherwise lose sight of a new home the day it opens,
+ * with nothing to say so. Ticking it stands for homes that do not exist yet.
+ */
+function CareHomePicker({
+  homes, selected, onChange, all, onAllChange,
+}: {
+  homes: CareHome[];
+  selected: string[];
+  onChange: (ids: string[]) => void;
+  all: boolean;
+  onAllChange: (v: boolean) => void;
+}) {
+  const toggle = (id: string) =>
+    onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
+
+  return (
+    <div>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <input type="checkbox" checked={all} onChange={(e) => onAllChange(e.target.checked)} />
+        <span><strong>All homes</strong> — including any opened later</span>
+      </label>
+
+      <div
+        style={{
+          display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
+          gap: 4, opacity: all ? 0.45 : 1, pointerEvents: all ? "none" : "auto",
+          maxHeight: 160, overflowY: "auto",
+        }}
+      >
+        {homes.map((h) => (
+          <label key={h.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="checkbox"
+              checked={selected.includes(h.id)}
+              onChange={() => toggle(h.id)}
+            />
+            <span>{h.name}</span>
+          </label>
+        ))}
+      </div>
+
+      {!all && selected.length === 0 && (
+        <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+          No homes chosen — this person will see no residents at all.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Users() {
   const { call } = useApiClient();
 
@@ -25,7 +79,8 @@ export default function Users() {
   const [newEmail, setNewEmail] = useState("");
   const [newName, setNewName] = useState("");
   const [newRole, setNewRole] = useState<"Activities" | "Relative">("Relative");
-  const [newCareHomeId, setNewCareHomeId] = useState<string>("");
+  const [newCareHomeIds, setNewCareHomeIds] = useState<string[]>([]);
+  const [newAllHomes, setNewAllHomes] = useState(false);
   const [addingUser, setAddingUser] = useState(false);
 
   // Editing a user
@@ -33,7 +88,8 @@ export default function Users() {
   const [editEmail, setEditEmail] = useState("");
   const [editDisplayName, setEditDisplayName] = useState("");
   const [editRole, setEditRole] = useState<"Activities" | "Relative">("Relative");
-  const [editCareHomeId, setEditCareHomeId] = useState<string>("");
+  const [editCareHomeIds, setEditCareHomeIds] = useState<string[]>([]);
+  const [editAllHomes, setEditAllHomes] = useState(false);
   const [savingUser, setSavingUser] = useState(false);
 
   // Mobizio sync
@@ -151,10 +207,12 @@ export default function Users() {
           azureAdEmail: newEmail.trim(),
           displayName: newName.trim() || null,
           role: newRole,
-          careHomeId: newRole === "Activities" && newCareHomeId ? newCareHomeId : null,
+          careHomeIds: newRole === "Activities" && !newAllHomes ? newCareHomeIds : [],
+          allCareHomes: newRole === "Activities" && newAllHomes,
         },
       });
-      setNewEmail(""); setNewName(""); setNewRole("Relative"); setNewCareHomeId("");
+      setNewEmail(""); setNewName(""); setNewRole("Relative");
+      setNewCareHomeIds([]); setNewAllHomes(false);
       setSaveMsg("User profile created.");
       await loadUsers();
     } catch (err: any) {
@@ -169,7 +227,8 @@ export default function Users() {
     setEditEmail(u.azureAdEmail);
     setEditDisplayName(u.displayName ?? "");
     setEditRole(u.role);
-    setEditCareHomeId(u.careHomeId ?? "");
+    setEditCareHomeIds(u.careHomeIds ?? (u.careHomeId ? [u.careHomeId] : []));
+    setEditAllHomes(Boolean(u.allCareHomes));
   };
 
   const saveUser = async () => {
@@ -184,7 +243,8 @@ export default function Users() {
           azureAdEmail: editEmail.trim(),
           displayName: editDisplayName.trim() || null,
           role: editRole,
-          careHomeId: editRole === "Activities" && editCareHomeId ? editCareHomeId : null,
+          careHomeIds: editRole === "Activities" && !editAllHomes ? editCareHomeIds : [],
+          allCareHomes: editRole === "Activities" && editAllHomes,
         },
       });
       setEditUserId(null);
@@ -380,13 +440,16 @@ export default function Users() {
                           </select>
                         </label>
                         {editRole === "Activities" && (
-                          <label className="grid" style={{ flex: 2 }}>
-                            <span className="muted">Care home</span>
-                            <select className="select" value={editCareHomeId} onChange={(e) => setEditCareHomeId(e.target.value)}>
-                              <option value="">— Select care home —</option>
-                              {careHomes.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
-                            </select>
-                          </label>
+                          <div className="grid" style={{ flex: 2 }}>
+                            <span className="muted">Care homes</span>
+                            <CareHomePicker
+                              homes={careHomes}
+                              selected={editCareHomeIds}
+                              onChange={setEditCareHomeIds}
+                              all={editAllHomes}
+                              onAllChange={setEditAllHomes}
+                            />
+                          </div>
                         )}
                       </div>
                       <div className="nav-actions" style={{ gap: 8 }}>
@@ -406,7 +469,16 @@ export default function Users() {
                         <div className="muted" style={{ fontSize: 13 }}>{u.azureAdEmail}</div>
                         {u.role === "Activities" && (
                           <div className="muted" style={{ fontSize: 13 }}>
-                            Care home: {u.careHomeName ?? <em>none assigned</em>}
+                            {u.allCareHomes
+                              ? <>Care homes: <strong>all homes</strong>, including any opened later</>
+                              : (() => {
+                                  const names = u.careHomeNames?.length
+                                    ? u.careHomeNames
+                                    : (u.careHomeName ? [u.careHomeName] : []);
+                                  return names.length
+                                    ? <>Care homes: {names.join(", ")}</>
+                                    : <>Care homes: <em>none assigned</em></>;
+                                })()}
                           </div>
                         )}
                         {u.role === "Relative" && (
@@ -515,13 +587,16 @@ export default function Users() {
                 </select>
               </label>
               {newRole === "Activities" && (
-                <label className="grid" style={{ flex: "2 1 180px" }}>
-                  <span className="muted">Care home</span>
-                  <select className="select" value={newCareHomeId} onChange={(e) => setNewCareHomeId(e.target.value)}>
-                    <option value="">— Select care home —</option>
-                    {careHomes.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
-                  </select>
-                </label>
+                <div className="grid" style={{ flex: "2 1 220px" }}>
+                  <span className="muted">Care homes</span>
+                  <CareHomePicker
+                    homes={careHomes}
+                    selected={newCareHomeIds}
+                    onChange={setNewCareHomeIds}
+                    all={newAllHomes}
+                    onAllChange={setNewAllHomes}
+                  />
+                </div>
               )}
             </div>
             <button

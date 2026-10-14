@@ -19,6 +19,7 @@ public class AppDbContext : DbContext
     public DbSet<CareHome> CareHomes => Set<CareHome>();
     public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
     public DbSet<ResidentAccessGrant> ResidentAccessGrants => Set<ResidentAccessGrant>();
+    public DbSet<UserCareHomeGrant> UserCareHomeGrants => Set<UserCareHomeGrant>();
     public DbSet<EpgEvent> EpgEvents => Set<EpgEvent>();
     public DbSet<ResidentWelcomeImage> ResidentWelcomeImages => Set<ResidentWelcomeImage>();
 
@@ -34,6 +35,17 @@ public class AppDbContext : DbContext
 
         // Every device start asks "is there an approved picture for this
         // resident", so index exactly that.
+        modelBuilder.Entity<UserCareHomeGrant>(b =>
+        {
+            // One row per user per home: granting the same home twice is a
+            // mistake, not a doubling of access.
+            b.HasIndex(g => new { g.UserProfileId, g.CareHomeId }).IsUnique();
+            b.HasOne(g => g.UserProfile)
+             .WithMany(u => u.CareHomeGrants)
+             .HasForeignKey(g => g.UserProfileId)
+             .OnDelete(DeleteBehavior.Cascade);
+        });
+
         modelBuilder.Entity<ResidentWelcomeImage>(b =>
         {
             b.HasIndex(w => new { w.Resident, w.Status });

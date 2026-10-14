@@ -342,11 +342,50 @@ public class UserProfile
     [MaxLength(20)]
     public string Role { get; set; } = "Relative";
 
-    /// <summary>For Activities users: restricts access to residents at this care home.</summary>
+    /// <summary>
+    /// Superseded by <see cref="CareHomeGrants"/>, which allows more than one.
+    /// Still read, and still written when exactly one home is chosen, so that
+    /// anything looking at this column keeps working.
+    /// </summary>
     public Guid? CareHomeId { get; set; }
     public CareHome? CareHome { get; set; }
 
+    /// <summary>
+    /// Every home, including ones opened after this was set.
+    ///
+    /// Listing homes individually would mean an activities manager quietly
+    /// losing sight of a new home on the day it opens, and nobody noticing
+    /// until a resident there is missed.
+    /// </summary>
+    public bool AllCareHomes { get; set; }
+
+    /// <summary>The homes an Activities user may see. Empty means none.</summary>
+    public ICollection<UserCareHomeGrant> CareHomeGrants { get; set; } = new List<UserCareHomeGrant>();
+
     public ICollection<ResidentAccessGrant> AccessGrants { get; set; } = new List<ResidentAccessGrant>();
+}
+
+/// <summary>
+/// One care home an Activities user may see. There is a row per home, because
+/// some people work across several — the activities manager across all of them.
+/// </summary>
+public class UserCareHomeGrant
+{
+    [Key]
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    [Required]
+    public Guid UserProfileId { get; set; }
+    public UserProfile? UserProfile { get; set; }
+
+    [Required]
+    public Guid CareHomeId { get; set; }
+    public CareHome? CareHome { get; set; }
+
+    public DateTimeOffset GrantedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    [MaxLength(200)]
+    public string? GrantedBy { get; set; }
 }
 
 /// <summary>Grants a Relative user access to a specific resident.</summary>
