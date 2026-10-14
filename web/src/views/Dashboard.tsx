@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 // Note: nav/sign-out are handled by the parent AuthenticatedApp shell in App.tsx
 import { useApiClient } from "../hooks/useApiClient";
+import { WelcomeImagePanel } from "../components/WelcomeImagePanel";
 import { appConfig } from "../config";
 import type {
   AiPlaylistEnvelope,
@@ -1312,6 +1313,8 @@ export default function Dashboard({ isAdmin = false }: { isAdmin?: boolean }) {
                 {savingManual ? "Saving..." : "Save manual playlist"}
               </button>
             </div>
+
+            <WelcomeImagePanel resident={residentQuery} />
           </div>
         </div>
 

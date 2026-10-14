@@ -824,16 +824,108 @@ class MediaUI:
         # Generate a local instant logo (non-blocking feel)
         local_img = self._generate_logo_local(resident)
 
-        # If AI is enabled, spawn a background job (dedup per resident)
-        if USE_STABILITY_LOGOS and resident.key not in self._logo_jobs:
+        # Ask the portal whether a person has approved a picture for this
+        # resident. Backgrounded, so the card is on screen at once and the
+        # picture replaces it a moment later if there is one.
+        if resident.key not in self._logo_jobs:
             self._logo_jobs.add(resident.key)
             threading.Thread(
-                target=self._ai_job,
+                target=self._portal_job,
                 args=(resident, path),
                 daemon=True
             ).start()
 
         return local_img
+
+    # ---------- The picture a person approved in the portal ----------
+
+    def _portal_welcome_image(self, resident: ResidentIdentity):
+        """Download the approved picture for this resident, or (None, None).
+
+        Only approved pictures are served, so whatever comes back has been
+        looked at by a person. Nothing here is fatal: on any failure the
+        resident keeps the card they already had, which is why this runs in the
+        background rather than in front of playback.
+        """
+        base = os.getenv("API_BASE", "").rstrip("/")
+        device_id = os.getenv("DEVICE_ID", "")
+        device_key = os.getenv("DEVICE_KEY", "")
+        if not (base and device_id and device_key):
+            return None, None
+
+        try:
+            import urllib.parse
+            url = (base + "/api/device/" + urllib.parse.quote(device_id)
+                   + "/resident/" + urllib.parse.quote(resident.name) + "/welcome-image")
+            r = requests.get(url, headers={"X-Device-Id": device_id,
+                                           "X-Device-Key": device_key}, timeout=15)
+            if r.status_code == 204:
+                return None, None          # nothing approved yet; the normal case
+            if r.status_code != 200:
+                print(f"[UI] Portal welcome image: API said {r.status_code}")
+                return None, None
+            meta = r.json() or {}
+        except Exception as e:
+            print(f"[UI] Portal welcome image unavailable: {e}")
+            return None, None
+
+        picture_url = meta.get("url")
+        stamp = str(meta.get("approvedAtUtc") or meta.get("id") or "")
+        if not picture_url:
+            return None, None
+
+        try:
+            got = requests.get(picture_url, timeout=30)
+            got.raise_for_status()
+            bg = Image.open(io.BytesIO(got.content))
+            subject = meta.get("subject")
+            print(f"[UI] Portal welcome image for {resident.name}"
+                  + (f" (from: {subject})" if subject else ""))
+            return self._overlay_identity(bg, resident), stamp
+        except Exception as e:
+            print(f"[UI] Could not fetch the approved picture: {e}")
+            return None, None
+
+    def _portal_job(self, resident: ResidentIdentity, out_path: str):
+        """Refresh from the portal, and only then consider generating anything."""
+        try:
+            stamp_path = out_path + ".portal"
+            previous = ""
+            try:
+                with open(stamp_path) as f:
+                    previous = f.read().strip()
+            except OSError:
+                pass
+
+            img, stamp = self._portal_welcome_image(resident)
+
+            if img is None:
+                # Nothing approved. Fall back to on-device generation only if a
+                # key was ever configured, which on current devices it is not,
+                # so most residents simply keep the plain card.
+                if USE_STABILITY_LOGOS:
+                    self._ai_job(resident, out_path)
+                return
+
+            if stamp and stamp == previous and os.path.exists(out_path):
+                return                     # already showing this one
+
+            try:
+                img.save(out_path)
+                with open(stamp_path, "w") as f:
+                    f.write(stamp or "")
+            except Exception as e:
+                print(f"[UI] Could not cache the welcome picture: {e}")
+
+            def _swap_if_current():
+                if (self.current_resident_key == resident.key
+                        and self._current_frame is self.idle_frame):
+                    self._set_logo(img)
+            self.root.after(0, _swap_if_current)
+        except Exception as e:
+            print(f"[UI] Portal welcome image job failed: {e}")
+        finally:
+            self._logo_jobs.discard(resident.key)
 
     # --- tiny guard in _ai_job swap to avoid accidental thrash during playback ---
     def _ai_job(self, resident: ResidentIdentity, out_path: str):
@@ -906,15 +998,23 @@ class MediaUI:
             print(f"[UI] (AI) Stability API failed ({e}); falling back to local render")
             return self._generate_logo_local(resident)
 
-        # ── Overlay PIL text on top of the AI background ──────────────────────
-        W, H = 1600, 900
-        bg = bg.resize((W, H), Image.LANCZOS)
+        return self._overlay_identity(bg, resident)
 
-        # Semi-transparent dark bar so text is always readable
-        title   = f"{resident.name} TV"
-        draw    = ImageDraw.Draw(bg)
+    def _overlay_identity(self, bg, resident: ResidentIdentity):
+        """Put the resident's name over a picture, legibly.
+
+        Image models still cannot spell, so the name is drawn here rather than
+        asked for, and a dark bar behind it keeps the text readable whatever
+        the picture underneath turns out to be.
+        """
+        likes_line = self._vibe_line(resident.survey_blob)
+        W, H = 1600, 900
+        bg = bg.convert("RGBA").resize((W, H), Image.LANCZOS)
+
+        title = f"{resident.name} TV"
+        draw = ImageDraw.Draw(bg)
         title_font = _safe_font(size=140, bold=True)
-        sub_font   = _safe_font(size=54)
+        sub_font = _safe_font(size=54)
 
         tw, th = _measure_text(draw, title, title_font)
         sw, sh = _measure_text(draw, likes_line, sub_font)
@@ -924,11 +1024,9 @@ class MediaUI:
         bar = Image.new("RGBA", (W, th + bar_pad * 2 + 60 + sh), (0, 0, 0, 160))
         bg.alpha_composite(bar, dest=(0, ty - bar_pad))
 
-        tx = (W - tw) // 2
-        _text_outline(draw, (tx, ty), title, title_font, fill="#ffffff", outline="#000", width=6)
-
+        _text_outline(draw, ((W - tw) // 2, ty), title, title_font,
+                      fill="#ffffff", outline="#000", width=6)
         draw.text(((W - sw) // 2, ty + th + 30), likes_line, font=sub_font, fill=ACCENT)
-
         return bg
 
     def _generate_logo_local(self, resident: ResidentIdentity) -> Image.Image:
