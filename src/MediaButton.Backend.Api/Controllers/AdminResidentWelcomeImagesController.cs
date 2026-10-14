@@ -28,6 +28,7 @@ public class AdminResidentWelcomeImagesController(
     AppDbContext db,
     MobizioService mobizio,
     StorageSasService sas,
+    AzureOpenAiImageService azureImages,
     UserAccessService access,
     IConfiguration configuration,
     IHttpClientFactory httpFactory,
@@ -71,10 +72,11 @@ public class AdminResidentWelcomeImagesController(
             return Forbid();
 
         var flowUrl = configuration["WelcomeImageFlow:Url"];
-        if (string.IsNullOrWhiteSpace(flowUrl))
+        if (!azureImages.IsConfigured && string.IsNullOrWhiteSpace(flowUrl))
             return StatusCode(503,
-                "No image flow configured. Set WelcomeImageFlow:Url to a flow that takes "
-                + "{ residentName, prompt, count } and returns { images: [ { base64 } ] }.");
+                "No image generator configured. Set AzureOpenAI:Endpoint (and an image "
+                + "deployment) to use Azure OpenAI on this subscription, or "
+                + "WelcomeImageFlow:Url to call a flow instead.");
 
         count = Math.Clamp(count, 1, 4);
 
@@ -93,37 +95,64 @@ public class AdminResidentWelcomeImagesController(
 
         var built = WelcomeImagePrompt.Build(resident, profile?.FormFields);
 
-        using var http = httpFactory.CreateClient();
-        http.Timeout = TimeSpan.FromSeconds(180);
+        // Azure OpenAI on this subscription is preferred: no extra account, and
+        // in production no stored key either. A flow stays supported for anyone
+        // who would rather route through their own AI hub.
+        var pictures = new List<byte[]>();
+        string? revisedPrompt = null;
 
-        JsonObject? result;
-        try
+        if (azureImages.IsConfigured)
         {
-            var resp = await http.PostAsJsonAsync(flowUrl, new
+            try
             {
-                residentName = resident,
-                prompt = built.Prompt,
-                subject = built.Subject,
-                count,
-                aspectRatio = "16:9",
-            });
-            if (!resp.IsSuccessStatusCode)
-            {
-                var body = await resp.Content.ReadAsStringAsync();
-                return StatusCode(502, $"Image flow returned {(int)resp.StatusCode}: {Trim(body)}");
+                var generated = await azureImages.GenerateAsync(built.Prompt, count);
+                pictures.AddRange(generated.Select(g => g.Bytes));
+                revisedPrompt = generated.Select(g => g.RevisedPrompt)
+                                         .FirstOrDefault(r => !string.IsNullOrWhiteSpace(r));
             }
-            result = await resp.Content.ReadFromJsonAsync<JsonObject>();
+            catch (Exception ex)
+            {
+                return StatusCode(502, $"Azure OpenAI could not generate a picture: {ex.Message}");
+            }
         }
-        catch (Exception ex)
+        else
         {
-            return StatusCode(502, $"Image flow request failed: {ex.Message}");
+            using var http = httpFactory.CreateClient();
+            http.Timeout = TimeSpan.FromSeconds(180);
+
+            JsonObject? result;
+            try
+            {
+                var resp = await http.PostAsJsonAsync(flowUrl, new
+                {
+                    residentName = resident,
+                    prompt = built.Prompt,
+                    subject = built.Subject,
+                    count,
+                    aspectRatio = "16:9",
+                });
+                if (!resp.IsSuccessStatusCode)
+                {
+                    var body = await resp.Content.ReadAsStringAsync();
+                    return StatusCode(502, $"Image flow returned {(int)resp.StatusCode}: {Trim(body)}");
+                }
+                result = await resp.Content.ReadFromJsonAsync<JsonObject>();
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(502, $"Image flow request failed: {ex.Message}");
+            }
+
+            pictures = ExtractImages(result);
         }
 
-        var pictures = ExtractImages(result);
         if (pictures.Count == 0)
             return StatusCode(502,
-                "The image flow answered but contained no image. Expected "
-                + "{ images: [ { base64 } ] } or { images: [ \"<base64>\" ] }.");
+                azureImages.IsConfigured
+                    ? "Azure OpenAI returned no usable image. The prompt may have been refused; "
+                      + "the reason is in the application log."
+                    : "The image flow answered but contained no image. Expected "
+                      + "{ images: [ { base64 } ] }.");
 
         var who = access.GetEmail(User);
         var saved = new List<ResidentWelcomeImage>();
@@ -147,7 +176,11 @@ public class AdminResidentWelcomeImagesController(
                 BlobPath = blobPath,
                 ContentType = "image/png",
                 Status = WelcomeImageStatus.Candidate,
-                Prompt = built.Prompt,
+                // dall-e-3 rewrites the prompt before drawing. Keep what it
+                // actually used, because that is what produced the picture.
+                Prompt = revisedPrompt is null
+                    ? built.Prompt
+                    : built.Prompt + "\n\nThe model redrew this as:\n" + revisedPrompt,
                 Subject = built.Subject,
                 GeneratedBy = who,
             };
