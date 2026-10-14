@@ -195,15 +195,19 @@ class MediaUI:
         # ----- Idle (logo) view -----
         self.idle_frame = tk.Frame(self.stack, bg=BG)
 
-        self.logo_label = tk.Label(self.idle_frame, bg=BG)
-        self.logo_label.pack(pady=(30, 10))
+        self.logo_label = tk.Label(self.idle_frame, bg=BG, borderwidth=0,
+                                   highlightthickness=0)
+        self.logo_label.pack(fill="x")
 
+        # Not packed: with the ident filling the screen there is no row left
+        # for it, and a Tk label cannot be transparent over a picture. Its text
+        # — today's date — is painted into the image by _set_logo instead. The
+        # variable stays so every existing caller still works unchanged.
         self.subtitle_var = tk.StringVar(value="")
         self.subtitle = tk.Label(
             self.idle_frame, textvariable=self.subtitle_var,
             fg=FG, bg=BG, font=("DejaVu Sans", 18)
         )
-        self.subtitle.pack(pady=(0, 16))
         self._logo_target_w = None
 
         # "Up next" row (hidden when empty)
@@ -214,8 +218,7 @@ class MediaUI:
         self.upnext_label.grid(row=0, column=0, sticky="ne", padx=(0, 8))
         self.upnext_value.grid(row=0, column=1, sticky="nw")
 
-        # Spacer
-        tk.Label(self.idle_frame, text="", bg=BG).pack(pady=8)
+        # No spacer: the ident runs to the bottom edge of the screen.
 
         # ----- Player view (render target) -----
         self.play_frame = tk.Frame(self.stack, bg="black")
@@ -758,38 +761,58 @@ class MediaUI:
         self._set_upnext("", sticky=False)
 
     def _set_logo(self, pil_img: Image.Image):
+            """Show the resident's channel ident across the whole screen.
+
+            It used to be capped at 900 pixels wide with 280 reserved beneath
+            for a subtitle — which left the ident floating in the middle of a
+            large television, and the subtitle repeated the strapline already
+            drawn into the picture.
+
+            So: scale to the full screen width. If that makes it taller than
+            the space available, the excess comes off the top, because the name
+            and strapline live along the bottom and losing those would defeat
+            the point.
+            """
             try:
                 from PIL import ImageTk
 
-                # Reserve vertical space for subtitle + "Up next"
-                # (tweak if your fonts/padding change)
-                RESERVED_H = 280
-
-                # Determine available size
                 self.root.update_idletasks()
                 sw = max(1, self.root.winfo_screenwidth())
                 sh = max(1, self.root.winfo_screenheight())
 
-                # Lock a pleasant max width (slightly smaller than screen)
-                if getattr(self, "_logo_target_w", None) is None:
-                    self._logo_target_w = min(max(540, sw - 260), 900)
+                # Only the "Up next" line sits below the picture now, and only
+                # when there is something to say.
+                reserved = 150 if (self.upnext_value.cget("text") or "").strip() else 0
+                max_h = max(200, sh - reserved)
 
-                max_w = self._logo_target_w
-                max_h = max(260, int(sh - RESERVED_H))  # leave room below the logo
-
-                # Compute scale to satisfy BOTH constraints
                 w0, h0 = max(1, pil_img.width), max(1, pil_img.height)
-                scale_w = max_w / w0
-                scale_h = max_h / h0
-                scale = min(scale_w, scale_h)  # fit inside box
-
-                new_w = max(1, int(w0 * scale))
-                new_h = max(1, int(h0 * scale))
+                scale = sw / w0
+                new_w, new_h = sw, max(1, int(h0 * scale))
 
                 resized = pil_img.resize((new_w, new_h), Image.LANCZOS)
-                img_tk = ImageTk.PhotoImage(resized)
 
-                # Apply without changing layout; other widgets stay visible
+                if new_h > max_h:
+                    # Trim from the top: the lettering is along the bottom.
+                    resized = resized.crop((0, new_h - max_h, new_w, new_h))
+
+                # The date goes on last, across the top, where the ident keeps
+                # its background. It is worth keeping: for someone who has lost
+                # track of the day, "Tuesday, 14th October" on their own screen
+                # is one of the more useful things here. It cannot be a Tk
+                # label any more, because a label cannot be transparent over a
+                # picture, so it is painted into the image.
+                caption = (self.subtitle_var.get() or "").strip()
+                if caption:
+                    resized = resized.convert("RGBA")
+                    draw = ImageDraw.Draw(resized)
+                    size = max(22, int(resized.width * 0.028))
+                    cap_font = _safe_font(size=size)
+                    cw, ch = _measure_text(draw, caption, cap_font)
+                    cx, cy = (resized.width - cw) // 2, max(8, int(resized.height * 0.035))
+                    _text_outline(draw, (cx, cy), caption, cap_font,
+                                  fill="#ffffff", outline="#000000", width=3)
+
+                img_tk = ImageTk.PhotoImage(resized)
                 self.logo_label.configure(image=img_tk, text="", compound="none")
                 self.logo_label.image = img_tk
 
