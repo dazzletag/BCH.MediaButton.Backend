@@ -20,6 +20,7 @@ public class AppDbContext : DbContext
     public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
     public DbSet<ResidentAccessGrant> ResidentAccessGrants => Set<ResidentAccessGrant>();
     public DbSet<EpgEvent> EpgEvents => Set<EpgEvent>();
+    public DbSet<ResidentWelcomeImage> ResidentWelcomeImages => Set<ResidentWelcomeImage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -29,6 +30,13 @@ public class AppDbContext : DbContext
             b.Property(d => d.DeviceId).HasMaxLength(100);
             b.Property(d => d.DisplayName).HasMaxLength(200);
             b.Property(d => d.ConfigJson).HasMaxLength(4000);
+        });
+
+        // Every device start asks "is there an approved picture for this
+        // resident", so index exactly that.
+        modelBuilder.Entity<ResidentWelcomeImage>(b =>
+        {
+            b.HasIndex(w => new { w.Resident, w.Status });
         });
 
         modelBuilder.Entity<EpgEvent>(b =>

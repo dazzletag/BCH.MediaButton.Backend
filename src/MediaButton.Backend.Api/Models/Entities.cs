@@ -115,6 +115,66 @@ public class MediaAsset
     public DateTimeOffset UploadedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
+public enum WelcomeImageStatus
+{
+    /// <summary>Generated and waiting for somebody to look at it.</summary>
+    Candidate,
+    /// <summary>Chosen by a person; this is the one devices will show.</summary>
+    Approved,
+    /// <summary>Looked at and turned down. Kept so the same thing is not re-offered.</summary>
+    Rejected
+}
+
+/// <summary>
+/// A generated welcome picture for one resident's screen.
+///
+/// These are reviewed before any resident sees them. The device used to
+/// generate its own image at runtime, which meant nobody ever looked at it
+/// first — not acceptable for a picture shown to someone who may not be able
+/// to tell us they find it upsetting. So candidates are generated here, a
+/// person approves one, and only the approved one reaches a device.
+///
+/// The prompt is stored alongside the image because when a picture turns out
+/// wrong, the prompt is the thing that needs fixing, and six months later
+/// nobody will remember what was asked for.
+/// </summary>
+public class ResidentWelcomeImage
+{
+    [Key]
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    [Required]
+    [MaxLength(200)]
+    public string Resident { get; set; } = string.Empty;
+
+    [Required]
+    [MaxLength(500)]
+    public string BlobPath { get; set; } = string.Empty;
+
+    [MaxLength(200)]
+    public string? ContentType { get; set; }
+
+    [Required]
+    public WelcomeImageStatus Status { get; set; } = WelcomeImageStatus.Candidate;
+
+    /// <summary>What was asked for, so a poor result can be diagnosed.</summary>
+    public string? Prompt { get; set; }
+
+    /// <summary>Which recorded interest the picture came from, if any.</summary>
+    [MaxLength(200)]
+    public string? Subject { get; set; }
+
+    [MaxLength(200)]
+    public string? GeneratedBy { get; set; }
+
+    public DateTimeOffset GeneratedAtUtc { get; set; } = DateTimeOffset.UtcNow;
+
+    [MaxLength(200)]
+    public string? ApprovedBy { get; set; }
+
+    public DateTimeOffset? ApprovedAtUtc { get; set; }
+}
+
 /// <summary>
 /// A single video the Pi has cached locally on disk, as reported by the
 /// device's periodic snapshot push. The backend stores these so staff and
