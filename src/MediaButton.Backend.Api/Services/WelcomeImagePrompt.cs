@@ -21,10 +21,10 @@ namespace MediaButtonBackend.Services;
 /// rosette. The interest survives; the people do not.</para>
 ///
 /// <para><b>Room for the name.</b> The name and strapline are drawn afterwards
-/// in PIL, because image models still cannot spell reliably. The prompt asks
-/// for the bottom third to be left plain: a hole in the middle is something
-/// these models reliably ignore, and the first real attempt put the dog
-/// squarely behind the lettering. Empty space at an edge they do honour.</para>
+/// in PIL, because image models still cannot spell reliably. Only the very
+/// bottom strip is reserved: asking for a clear band across the middle is
+/// something these models ignore, and asking for a whole empty third bought
+/// the space at the cost of the picture, which came back nearly bare.</para>
 /// </summary>
 public static class WelcomeImagePrompt
 {
@@ -117,7 +117,7 @@ public static class WelcomeImagePrompt
         if (found.Count == 0)
         {
             return new Result(
-                Ident("a television set, a teacup and a vase of cheerful flowers"),
+                Ident("a teapot and cup, a vase of cheerful flowers, and a potted plant"),
                 null,
                 "Nothing personal was recorded, so a general cheerful ident was used. "
                 + "Adding interests to this resident's This is Me record — a pet, their "
@@ -133,20 +133,32 @@ public static class WelcomeImagePrompt
             $"Built from their recorded interests: {interests}.");
     }
 
-    /// <summary>The channel-ident instruction wrapped around the motifs.</summary>
+    /// <summary>
+    /// The channel-ident instruction wrapped around the motifs.
+    ///
+    /// A big old television set carries the whole idea: this is their channel,
+    /// and the things they like are gathered round it. An earlier version asked
+    /// only for the objects and got two items floating on a plain background,
+    /// which looked like clip art rather than a title card.
+    /// </summary>
     private static string Ident(string motifs) =>
-        "A bright, friendly television channel ident, like the opening title card of a "
-        + "cheerful daytime programme. Featuring " + motifs + ", "
-        + "drawn as bold, charming, colourful illustration with clean shapes, warm sunny "
-        + "colours and a soft gradient background. Playful and uplifting, with a retro "
-        + "television feel. Arrange the objects across the upper two thirds of the "
-        + "picture, and leave the bottom third plain and empty — just background "
-        + "colour or a simple gradient there, with nothing in it. "
+        "A joyful retro television channel ident. In the centre, filling most of the "
+        + "picture, a chunky 1980s television set with a wood-effect or boldly coloured "
+        + "casing, big control dials, and a telescopic aerial on top. Its screen glows "
+        + "warmly with bright abstract colour bars and soft light. "
+        + "Gathered closely around the television, overlapping its edges and filling the "
+        + "space: " + motifs + ". "
+        + "Bold, charming, colourful illustration with clean shapes and thick outlines, "
+        + "in a warm sunny 1980s palette of orange, teal, mustard and pink, on a "
+        + "patterned retro background with starbursts and soft rays. Rich and full, "
+        + "every part of the picture busy and cheerful. "
+        + "Leave only the very bottom strip plain and uncluttered. "
         + "Landscape format, 16:9. "
         // Negatives last, plainly worded. These models follow the tail of a
         // prompt closely, and each of these has a reason.
         + "No people, no faces, no figures, no hands. "
-        + "No text, letters, words, numbers, captions, logos or signatures. "
+        + "No text, letters, words, numbers, captions, logos or signatures — the "
+        + "television screen must show only colour and light, never writing. "
         + "Nothing frightening, gloomy, surreal or distorted.";
 
     /// <summary>
