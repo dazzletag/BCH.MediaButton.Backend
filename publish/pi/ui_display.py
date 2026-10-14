@@ -1001,32 +1001,49 @@ class MediaUI:
         return self._overlay_identity(bg, resident)
 
     def _overlay_identity(self, bg, resident: ResidentIdentity):
-        """Put the resident's name over a picture, legibly.
+        """Put the resident's name over their channel ident, legibly.
 
-        Image models still cannot spell, so the name is drawn here rather than
-        asked for, and a dark bar behind it keeps the text readable whatever
-        the picture underneath turns out to be.
+        In the lower third, over a gradient that fades from nothing at the top
+        to dark at the very bottom. The first version used a solid bar across
+        the middle, which sat squarely over whatever the picture was actually
+        of — a dog's face, in the first real attempt. The whole point of the
+        picture is that it shows the things they like, so the lettering goes
+        where it covers least.
+
+        Image models still cannot spell, so the words are drawn here rather
+        than asked for.
         """
         likes_line = self._vibe_line(resident.survey_blob)
         W, H = 1600, 900
         bg = bg.convert("RGBA").resize((W, H), Image.LANCZOS)
 
         title = f"{resident.name} TV"
+        title_font = _safe_font(size=118, bold=True)
+        sub_font = _safe_font(size=46)
+
+        measure = ImageDraw.Draw(bg)
+        tw, th = _measure_text(measure, title, title_font)
+        sw, sh = _measure_text(measure, likes_line, sub_font)
+
+        block_h = th + 22 + sh
+        baseline = H - 54                      # bottom margin
+        ty = baseline - block_h
+
+        # A gradient rather than a bar: transparent where the picture is, solid
+        # only at the very bottom edge where there is nothing to hide.
+        fade_top = max(0, ty - 110)
+        fade = Image.new("L", (1, H), 0)
+        for y in range(fade_top, H):
+            t = (y - fade_top) / max(1, H - fade_top)
+            fade.putpixel((0, y), int(225 * (t ** 1.6)))
+        scrim = Image.new("RGBA", (W, H), (0, 0, 0, 255))
+        scrim.putalpha(fade.resize((W, H)))
+        bg.alpha_composite(scrim)
+
         draw = ImageDraw.Draw(bg)
-        title_font = _safe_font(size=140, bold=True)
-        sub_font = _safe_font(size=54)
-
-        tw, th = _measure_text(draw, title, title_font)
-        sw, sh = _measure_text(draw, likes_line, sub_font)
-        ty = H // 2 - th - 20
-
-        bar_pad = 30
-        bar = Image.new("RGBA", (W, th + bar_pad * 2 + 60 + sh), (0, 0, 0, 160))
-        bg.alpha_composite(bar, dest=(0, ty - bar_pad))
-
         _text_outline(draw, ((W - tw) // 2, ty), title, title_font,
-                      fill="#ffffff", outline="#000", width=6)
-        draw.text(((W - sw) // 2, ty + th + 30), likes_line, font=sub_font, fill=ACCENT)
+                      fill="#ffffff", outline="#000000", width=5)
+        draw.text(((W - sw) // 2, ty + th + 22), likes_line, font=sub_font, fill=ACCENT)
         return bg
 
     def _generate_logo_local(self, resident: ResidentIdentity) -> Image.Image:

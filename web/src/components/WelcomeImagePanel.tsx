@@ -109,6 +109,39 @@ export function WelcomeImagePanel({ resident }: { resident: string }) {
   const approved = items.find((i) => i.status === "Approved");
   const candidates = items.filter((i) => i.status === "Candidate");
 
+  // Show the lettering the device will draw. Approving a picture without it
+  // means approving something nobody has actually seen: the first attempt put
+  // the name across a dog's face, and from a bare thumbnail that is invisible.
+  const Preview = ({ img, border }: { img: WelcomeImage; border: string }) => (
+    <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 9",
+                  borderRadius: 8, overflow: "hidden", border }}>
+      <img
+        src={img.url}
+        alt={`Welcome screen for ${name}`}
+        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+      />
+      <div
+        style={{
+          position: "absolute", inset: 0, display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "flex-end", paddingBottom: "6%",
+          background: "linear-gradient(to bottom, transparent 55%, rgba(0,0,0,0.78) 100%)",
+          textAlign: "center",
+        }}
+      >
+        <div style={{ color: "#fff", fontWeight: 800, lineHeight: 1.05,
+                      fontSize: "clamp(14px, 7.5cqw, 46px)",
+                      textShadow: "0 2px 6px rgba(0,0,0,0.9)" }}>
+          {name || "Resident"} TV
+        </div>
+        <div style={{ color: "#ffd166", marginTop: "2%",
+                      fontSize: "clamp(8px, 3cqw, 18px)",
+                      textShadow: "0 2px 5px rgba(0,0,0,0.9)" }}>
+          Curated by us just for you!
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <section style={{ marginTop: 24 }}>
       <h3 style={{ margin: "0 0 4px" }}>Welcome screen picture</h3>
@@ -141,18 +174,9 @@ export function WelcomeImagePanel({ resident }: { resident: string }) {
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
             Showing on the device now
           </div>
-          <img
-            src={approved.url}
-            alt={`Welcome screen for ${name}`}
-            style={{
-              width: "100%",
-              maxWidth: 480,
-              aspectRatio: "16 / 9",
-              objectFit: "cover",
-              borderRadius: 8,
-              border: "2px solid #2e7d32",
-            }}
-          />
+          <div style={{ maxWidth: 480, containerType: "inline-size" }}>
+            <Preview img={approved} border="2px solid #2e7d32" />
+          </div>
           {approved.subject && (
             <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
               From their record: “{approved.subject}”
@@ -174,18 +198,8 @@ export function WelcomeImagePanel({ resident }: { resident: string }) {
             }}
           >
             {candidates.map((img) => (
-              <div key={img.id}>
-                <img
-                  src={img.url}
-                  alt="Suggested welcome screen"
-                  style={{
-                    width: "100%",
-                    aspectRatio: "16 / 9",
-                    objectFit: "cover",
-                    borderRadius: 8,
-                    border: "1px solid #ccc",
-                  }}
-                />
+              <div key={img.id} style={{ containerType: "inline-size" }}>
+                <Preview img={img} border="1px solid #ccc" />
                 <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
                   <button onClick={() => decide(img.id, "approve")} disabled={busy}>
                     Use this one

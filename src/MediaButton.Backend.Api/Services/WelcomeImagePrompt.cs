@@ -22,8 +22,9 @@ namespace MediaButtonBackend.Services;
 ///
 /// <para><b>Room for the name.</b> The name and strapline are drawn afterwards
 /// in PIL, because image models still cannot spell reliably. The prompt asks
-/// for a clear band across the middle so the lettering lands on something
-/// calm.</para>
+/// for the bottom third to be left plain: a hole in the middle is something
+/// these models reliably ignore, and the first real attempt put the dog
+/// squarely behind the lettering. Empty space at an edge they do honour.</para>
 /// </summary>
 public static class WelcomeImagePrompt
 {
@@ -138,8 +139,9 @@ public static class WelcomeImagePrompt
         + "cheerful daytime programme. Featuring " + motifs + ", "
         + "drawn as bold, charming, colourful illustration with clean shapes, warm sunny "
         + "colours and a soft gradient background. Playful and uplifting, with a retro "
-        + "television feel. Arrange the objects around the edges and across the top and "
-        + "bottom, leaving the middle of the picture clear and uncluttered. "
+        + "television feel. Arrange the objects across the upper two thirds of the "
+        + "picture, and leave the bottom third plain and empty — just background "
+        + "colour or a simple gradient there, with nothing in it. "
         + "Landscape format, 16:9. "
         // Negatives last, plainly worded. These models follow the tail of a
         // prompt closely, and each of these has a reason.
