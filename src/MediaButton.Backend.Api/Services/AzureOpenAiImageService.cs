@@ -27,10 +27,27 @@ public class AzureOpenAiImageService(
         new(() => new DefaultAzureCredential());
 
     private string? Endpoint => configuration["AzureOpenAI:Endpoint"]?.TrimEnd('/');
-    private string Deployment => configuration["AzureOpenAI:ImageDeployment"] ?? "dall-e-3";
-    private string ApiVersion => configuration["AzureOpenAI:ImageApiVersion"] ?? "2024-10-21";
+    private string Deployment => configuration["AzureOpenAI:ImageDeployment"] ?? "gpt-image-1";
+    private string ApiVersion => configuration["AzureOpenAI:ImageApiVersion"] ?? "2025-04-01-preview";
     private string? ApiKey => configuration["AzureOpenAI:ApiKey"];
-    private string Size => configuration["AzureOpenAI:ImageSize"] ?? "1792x1024";
+
+    /// <summary>
+    /// dall-e-3 took 1792x1024 for widescreen; gpt-image-1 rejects that and
+    /// offers 1536x1024 as its landscape size. Both are close enough to 16:9
+    /// that the overlay step crops to 1600x900 without anything important
+    /// being lost.
+    /// </summary>
+    private string Size => configuration["AzureOpenAI:ImageSize"]
+        ?? (IsDallE ? "1792x1024" : "1536x1024");
+
+    /// <summary>
+    /// The two families take different parameters, and sending one family's to
+    /// the other is rejected rather than ignored. There is no API to ask which
+    /// a deployment is, so it is inferred from the name and can be overridden.
+    /// </summary>
+    private bool IsDallE =>
+        (configuration["AzureOpenAI:ImageModelFamily"]
+         ?? Deployment).Contains("dall", StringComparison.OrdinalIgnoreCase);
 
     public bool IsConfigured => !string.IsNullOrWhiteSpace(Endpoint);
 
@@ -79,13 +96,23 @@ public class AzureOpenAiImageService(
             ["prompt"] = prompt,
             ["n"] = 1,
             ["size"] = Size,
-            ["response_format"] = "b64_json",
-            // "vivid" is the default and pushes dramatic, hyper-real results.
-            // That is the opposite of what a resident's welcome screen wants,
-            // so ask for the plainer treatment.
-            ["style"] = "natural",
-            ["quality"] = "standard",
         };
+
+        if (IsDallE)
+        {
+            // "vivid" is dall-e-3's default and pushes dramatic, hyper-real
+            // results — the opposite of what belongs on the screen a resident
+            // meets. "natural" is the plainer treatment.
+            body["style"] = "natural";
+            body["quality"] = "standard";
+            body["response_format"] = "b64_json";
+        }
+        else
+        {
+            // gpt-image-1 always returns base64 and rejects response_format and
+            // style outright. Its quality scale is low/medium/high.
+            body["quality"] = configuration["AzureOpenAI:ImageQuality"] ?? "medium";
+        }
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
@@ -127,9 +154,10 @@ public class AzureOpenAiImageService(
             return null;
         }
 
-        // dall-e-3 rewrites the prompt before drawing and returns what it used.
-        // Worth keeping: when a picture comes back wrong, this is what actually
-        // produced it, and it is often quite different from what was asked.
+        // dall-e-3 rewrites the prompt before drawing and returns what it used,
+        // which is worth keeping: when a picture comes back wrong, that rewrite
+        // is what produced it. gpt-image-1 does not echo one, so this is often
+        // legitimately absent.
         var revised = first?["revised_prompt"]?.GetValue<string>();
 
         byte[] bytes;
