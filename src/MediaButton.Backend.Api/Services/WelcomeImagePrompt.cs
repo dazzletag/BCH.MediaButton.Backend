@@ -1,41 +1,94 @@
 namespace MediaButtonBackend.Services;
 
 /// <summary>
-/// Turns a resident's "This is Me" record into a prompt for one picture.
+/// Turns a resident's "This is Me" record into a prompt for their own
+/// television channel ident.
 ///
-/// This is the screen a resident sees before anything plays, so the picture is
-/// not decoration — it is the first thing that tells them the television is
-/// theirs. Three judgements are built in, and each is deliberate:
+/// The screen says "Darren Taggart TV — curated by us just for you", and the
+/// picture behind it should look like a channel of one's own: bright, cheerful
+/// and obviously made for this person. Not a tasteful landscape — a title card.
 ///
-/// <para><b>One subject, not a collage.</b> A resident who liked gardening, brass
-/// bands and Blackpool gets a garden, or a bandstand, or the promenade — never
-/// all three in one image. Asking a model for several unrelated things at once
-/// is what produces the cluttered, dreamlike results that read as artificial.</para>
+/// Three judgements, each deliberate:
 ///
-/// <para><b>Somewhere real, not an abstract.</b> The existing prompt asked for
-/// "a warm, cheerful abstract background scene". Abstract and surreal imagery is
-/// a poor fit for people living with dementia, who may try to make literal sense
-/// of what they see; a recognisable place is kinder and more likely to be
-/// recognised with pleasure.</para>
+/// <para><b>Motifs, not a scene.</b> Two or three objects a person liked, set
+/// out like channel branding. A landscape would be quieter but says nothing
+/// about whose channel it is; a guitar, a vinyl record and a happy dog say it
+/// at a glance.</para>
 ///
-/// <para><b>Nobody in it.</b> No people, no faces. A generated face can be taken
-/// for a relative who is not there, and that is worse than no picture at all.</para>
+/// <para><b>Things, not people.</b> A favourite band cannot be drawn without
+/// faces, and a generated face can be taken for a relative who is not there.
+/// So music becomes a guitar and a record, football becomes a ball and a
+/// rosette. The interest survives; the people do not.</para>
+///
+/// <para><b>Room for the name.</b> The name and strapline are drawn afterwards
+/// in PIL, because image models still cannot spell reliably. The prompt asks
+/// for a clear band across the middle so the lettering lands on something
+/// calm.</para>
 /// </summary>
 public static class WelcomeImagePrompt
 {
-    /// <summary>Fields in a This is Me record worth drawing a picture from, best first.</summary>
+    /// <summary>Fields in a This is Me record worth drawing from, best first.</summary>
     private static readonly string[] SubjectFieldHints =
     [
         "hobbies", "hobby", "interests", "interest", "likes", "enjoys", "pastimes",
-        "occupation", "job", "work", "career", "profession",
         "music", "favourite music", "songs",
+        "occupation", "job", "work", "career", "profession",
         "places", "place", "holidays", "holiday", "birthplace", "born",
         "pets", "pet", "animals", "sport", "sports", "team",
     ];
 
     /// <summary>
+    /// What a liking looks like as an object. Almost anything can be drawn
+    /// once it is a thing rather than a person — which is what makes a channel
+    /// ident a better fit here than a landscape.
+    /// </summary>
+    private static readonly (string[] Match, string Motif)[] Motifs =
+    [
+        (["beatles", "rock", "pop", "guitar", "band", "music", "song", "singer",
+          "album", "record", "concert", "elvis", "abba", "sinatra", "morissette",
+          "alanis", "jazz", "blues", "choir", "hymn", "orchestra", "brass"],
+         "a classic electric guitar and a stack of vinyl records"),
+        (["piano", "organ", "accordion"], "an upright piano with sheet music"),
+        (["dog", "puppy", "spaniel", "labrador", "terrier", "collie"],
+         "a cheerful dog sitting with its tongue out"),
+        (["cat", "kitten"], "a contented cat curled up"),
+        (["horse", "pony", "riding"], "a friendly horse looking over a stable door"),
+        (["bird", "robin", "budgie", "pigeon"], "a bright little robin on a branch"),
+        (["garden", "gardening", "flower", "rose", "allotment", "plant"],
+         "a watering can spilling bright flowers"),
+        (["sea", "beach", "coast", "seaside", "pier"],
+         "a striped deckchair and a bucket and spade"),
+        (["boat", "sail", "canal", "barge", "river", "lake"], "a little painted boat"),
+        (["fish", "angling"], "a fishing rod and a wicker creel"),
+        (["train", "railway", "steam", "locomotive"], "a jolly steam engine"),
+        (["car", "motor", "vintage", "motorbike"], "a bright classic car"),
+        (["walk", "hiking", "rambl", "countryside", "hill", "moor"],
+         "a pair of walking boots and a flask"),
+        (["farm", "tractor", "sheep", "cattle", "cow"], "a red tractor"),
+        (["cook", "baking", "bake", "cake", "kitchen"], "a frosted cake and a teapot"),
+        (["tea", "coffee"], "a steaming teacup and saucer"),
+        (["knit", "sew", "needle", "craft", "quilt"], "balls of wool and knitting needles"),
+        (["football", "soccer"], "a football and a club rosette"),
+        (["cricket"], "a cricket bat and ball"),
+        (["bowls", "golf", "tennis", "darts"], "sports equipment arranged neatly"),
+        (["book", "reading", "library", "poetry"], "a stack of well-read books"),
+        (["film", "movie", "cinema", "television", "soap", "programme"],
+         "an old television set and a film reel"),
+        (["dance", "dancing", "ballroom"], "a pair of dancing shoes and a mirror ball"),
+        (["church", "chapel", "faith", "bible"], "a country church with a bright blue sky"),
+        (["pub", "beer", "ale"], "a frothy pint glass on a beer mat"),
+        (["bingo", "cards", "crossword", "puzzle", "quiz"], "playing cards and a crossword"),
+        (["travel", "holiday", "abroad", "spain", "cornwall", "wales", "scotland"],
+         "a suitcase covered in travel labels"),
+        (["wood", "forest", "tree", "park", "nature"], "a leafy green tree"),
+        (["army", "navy", "raf", "forces", "military"], "a row of polished medals"),
+        (["nurse", "nursing", "teacher", "teaching", "school"],
+         "a satchel and a vase of flowers"),
+    ];
+
+    /// <summary>
     /// Phrases that must never reach an image model. A This is Me record is a
-    /// care document: it contains illnesses, bereavements, distress triggers and
+    /// care document: it holds illnesses, bereavements, distress triggers and
     /// safeguarding notes. None of that belongs in a picture, and some of it
     /// would be actively harmful to render.
     /// </summary>
@@ -53,49 +106,59 @@ public static class WelcomeImagePrompt
 
     /// <summary>
     /// Build the prompt. <paramref name="formFields"/> is the This is Me record.
-    /// Returns a gentle generic scene when there is nothing personal to draw on,
-    /// rather than inventing a life the resident did not have.
+    /// With nothing personal recorded it still produces a cheerful ident, rather
+    /// than inventing a life the resident did not have.
     /// </summary>
     public static Result Build(string residentName, IReadOnlyDictionary<string, string>? formFields)
     {
-        var subject = PickSubject(formFields);
+        var found = PickMotifs(formFields);
 
-        if (subject is null)
+        if (found.Count == 0)
         {
-            // No usable record. Somewhere pleasant and unremarkable is the honest
-            // answer — better than guessing at a past from a name or a date.
             return new Result(
-                Scene("a quiet English country garden in late summer, with a wooden bench, "
-                      + "hollyhocks and a brick wall"),
+                Ident("a television set, a teacup and a vase of cheerful flowers"),
                 null,
-                "No usable interests recorded, so a general scene was used. Adding to this "
-                + "resident's This is Me record would make the picture personal to them.");
+                "Nothing personal was recorded, so a general cheerful ident was used. "
+                + "Adding interests to this resident's This is Me record — a pet, their "
+                + "music, a hobby — would put those things on their channel.");
         }
 
+        var motifs = string.Join(", ", found.Select(f => f.Motif));
+        var interests = string.Join(", ", found.Select(f => f.Interest));
+
         return new Result(
-            Scene(subject),
-            subject,
-            $"Drawn from this resident's recorded interests: “{subject}”.");
+            Ident(motifs),
+            interests,
+            $"Built from their recorded interests: {interests}.");
     }
 
-    /// <summary>The instruction wrapped around whatever the subject turns out to be.</summary>
-    private static string Scene(string subject) =>
-        "A single peaceful scene: " + subject + ". "
-        + "Painted in a warm, realistic, representational style, like a good oil painting "
-        + "or a bright photograph on a clear day. Soft natural daylight, gentle colours, "
-        + "calm and uncluttered, one clear subject with plenty of open space. "
+    /// <summary>The channel-ident instruction wrapped around the motifs.</summary>
+    private static string Ident(string motifs) =>
+        "A bright, friendly television channel ident, like the opening title card of a "
+        + "cheerful daytime programme. Featuring " + motifs + ", "
+        + "drawn as bold, charming, colourful illustration with clean shapes, warm sunny "
+        + "colours and a soft gradient background. Playful and uplifting, with a retro "
+        + "television feel. Arrange the objects around the edges and across the top and "
+        + "bottom, leaving the middle of the picture clear and uncluttered. "
         + "Landscape format, 16:9. "
-        // Negatives last and plainly worded: these models follow the tail of a
-        // prompt closely, and every one of these has a reason.
-        + "No people, no faces, no figures, no animals in distress. "
-        + "No text, letters, words, numbers, captions or signatures. "
-        + "Nothing surreal, abstract, distorted, dreamlike or frightening. "
-        + "Nothing dark, gloomy, cluttered or crowded. Not a collage.";
+        // Negatives last, plainly worded. These models follow the tail of a
+        // prompt closely, and each of these has a reason.
+        + "No people, no faces, no figures, no hands. "
+        + "No text, letters, words, numbers, captions, logos or signatures. "
+        + "Nothing frightening, gloomy, surreal or distorted.";
 
-    private static string? PickSubject(IReadOnlyDictionary<string, string>? fields)
+    /// <summary>
+    /// Up to three interests, as objects. More than three and an ident becomes
+    /// a jumble; fewer and it says little about whose channel it is.
+    /// </summary>
+    private static List<(string Interest, string Motif)> PickMotifs(
+        IReadOnlyDictionary<string, string>? fields)
     {
+        var chosen = new List<(string Interest, string Motif)>();
         if (fields is null || fields.Count == 0)
-            return null;
+            return chosen;
+
+        var usedMotifs = new HashSet<string>();
 
         foreach (var hint in SubjectFieldHints)
         {
@@ -106,29 +169,55 @@ public static class WelcomeImagePrompt
                 if (!key.Contains(hint, StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                var value = Clean(raw);
-                if (value is not null)
-                    return value;
+                foreach (var item in Items(raw))
+                {
+                    var match = Motifs.FirstOrDefault(
+                        m => m.Match.Any(w => item.Contains(w, StringComparison.OrdinalIgnoreCase)));
+                    if (match.Motif is null)
+                        continue;
+                    // Two bands are still one guitar: avoid drawing it twice.
+                    if (!usedMotifs.Add(match.Motif))
+                        continue;
+
+                    chosen.Add((item, match.Motif));
+                    if (chosen.Count == 3)
+                        return chosen;
+                }
             }
         }
-        return null;
+        return chosen;
     }
 
     /// <summary>
-    /// Reduce a field to one short, safe phrase, or null if nothing survives.
-    /// Takes the first item of a list rather than joining them, because one
-    /// subject is the whole point.
+    /// Each separately-listed interest in a field, cleaned.
+    ///
+    /// "and" counts as a separator, not just punctuation. People write "the
+    /// beatles, alanis morissette and dogs", and splitting on commas alone
+    /// buries the dog inside the singer — where the music motif claims the
+    /// whole item and the dog is never seen.
     /// </summary>
+    private static IEnumerable<string> Items(string raw)
+    {
+        var separated = System.Text.RegularExpressions.Regex.Replace(
+            raw, @"\s+and\s+", ",", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        foreach (var part in separated.Split(',', ';', '\n', '\r', '/', '|', '&'))
+        {
+            var cleaned = Clean(part);
+            if (cleaned is not null)
+                yield return cleaned;
+        }
+    }
+
+    /// <summary>Reduce one listed item to a short, safe phrase, or null.</summary>
     private static string? Clean(string raw)
     {
         var text = raw.Trim();
         if (text.Length == 0)
             return null;
 
-        // Care records use these for "nothing recorded"; a picture of "N/A" is
-        // not what anybody wants.
-        if (text.Length <= 4 ||
-            text.Equals("none", StringComparison.OrdinalIgnoreCase) ||
+        // Care records use these for "nothing recorded".
+        if (text.Equals("none", StringComparison.OrdinalIgnoreCase) ||
             text.Equals("n/a", StringComparison.OrdinalIgnoreCase) ||
             text.Equals("na", StringComparison.OrdinalIgnoreCase) ||
             text.Equals("not known", StringComparison.OrdinalIgnoreCase) ||
@@ -136,19 +225,19 @@ public static class WelcomeImagePrompt
             text.Equals("not applicable", StringComparison.OrdinalIgnoreCase))
             return null;
 
-        var first = text.Split(',', ';', '\n', '\r', '/', '|')
-                        .Select(p => p.Trim())
-                        .FirstOrDefault(p => p.Length > 4);
-        if (first is null)
+        foreach (var lead in new[] { "likes ", "loves ", "enjoys ", "and ", "the " })
+        {
+            if (text.StartsWith(lead, StringComparison.OrdinalIgnoreCase))
+                text = text[lead.Length..].Trim();
+        }
+
+        if (text.Length <= 2)
             return null;
 
-        if (Excluded.Any(bad => first.Contains(bad, StringComparison.OrdinalIgnoreCase)))
+        if (Excluded.Any(bad => text.Contains(bad, StringComparison.OrdinalIgnoreCase)))
             return null;
 
-        // Long free text is a nurse's paragraph, not a subject for a painting.
-        if (first.Length > 90)
-            first = first[..90].TrimEnd();
-
-        return first;
+        // Long free text is a nurse's paragraph, not an interest.
+        return text.Length > 70 ? text[..70].TrimEnd() : text;
     }
 }
