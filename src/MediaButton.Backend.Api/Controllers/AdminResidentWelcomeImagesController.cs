@@ -98,7 +98,9 @@ public class AdminResidentWelcomeImagesController(
         // Azure OpenAI on this subscription is preferred: no extra account, and
         // in production no stored key either. A flow stays supported for anyone
         // who would rather route through their own AI hub.
-        var pictures = new List<byte[]>();
+        // (bytes, content type) — the type is sniffed from the bytes, because
+        // FLUX returns JPEG from an endpoint that says nothing about it.
+        var pictures = new List<(byte[] Bytes, string ContentType)>();
         string? revisedPrompt = null;
 
         if (azureImages.IsConfigured)
@@ -106,7 +108,7 @@ public class AdminResidentWelcomeImagesController(
             try
             {
                 var generated = await azureImages.GenerateAsync(built.Prompt, count);
-                pictures.AddRange(generated.Select(g => g.Bytes));
+                pictures.AddRange(generated.Select(g => (g.Bytes, g.ContentType)));
                 revisedPrompt = generated.Select(g => g.RevisedPrompt)
                                          .FirstOrDefault(r => !string.IsNullOrWhiteSpace(r));
             }
@@ -143,7 +145,7 @@ public class AdminResidentWelcomeImagesController(
                 return StatusCode(502, $"Image flow request failed: {ex.Message}");
             }
 
-            pictures = ExtractImages(result);
+            pictures = ExtractImages(result).Select(b => (b, "image/png")).ToList();
         }
 
         if (pictures.Count == 0)
@@ -156,13 +158,19 @@ public class AdminResidentWelcomeImagesController(
 
         var who = access.GetEmail(User);
         var saved = new List<ResidentWelcomeImage>();
-        foreach (var bytes in pictures.Take(count))
+        foreach (var (bytes, contentType) in pictures.Take(count))
         {
-            var blobPath = $"welcome/{Slug(resident)}/{Guid.NewGuid():N}.png";
+            var extension = contentType switch
+            {
+                "image/jpeg" => "jpg",
+                "image/webp" => "webp",
+                _ => "png",
+            };
+            var blobPath = $"welcome/{Slug(resident)}/{Guid.NewGuid():N}.{extension}";
             try
             {
                 using var stream = new MemoryStream(bytes);
-                await sas.UploadBlobAsync(PhotosContainer, blobPath, stream, "image/png");
+                await sas.UploadBlobAsync(PhotosContainer, blobPath, stream, contentType);
             }
             catch (Exception ex)
             {
@@ -174,7 +182,7 @@ public class AdminResidentWelcomeImagesController(
             {
                 Resident = resident,
                 BlobPath = blobPath,
-                ContentType = "image/png",
+                ContentType = contentType,
                 Status = WelcomeImageStatus.Candidate,
                 // dall-e-3 rewrites the prompt before drawing. Keep what it
                 // actually used, because that is what produced the picture.

@@ -32,27 +32,56 @@ public class AzureOpenAiImageService(
     private string? ApiKey => configuration["AzureOpenAI:ApiKey"];
 
     /// <summary>
-    /// dall-e-3 took 1792x1024 for widescreen; gpt-image-1 rejects that and
-    /// offers 1536x1024 as its landscape size. Both are close enough to 16:9
-    /// that the overlay step crops to 1600x900 without anything important
-    /// being lost.
+    /// Each family takes different parameters and rejects, rather than
+    /// ignores, another family's. There is no API to ask which a deployment
+    /// is, so it is inferred from the name and can be overridden.
     /// </summary>
-    private string Size => configuration["AzureOpenAI:ImageSize"]
-        ?? (IsDallE ? "1792x1024" : "1536x1024");
+    private string Family
+    {
+        get
+        {
+            var hint = configuration["AzureOpenAI:ImageModelFamily"] ?? Deployment;
+            if (hint.Contains("dall", StringComparison.OrdinalIgnoreCase)) return "dalle";
+            if (hint.Contains("flux", StringComparison.OrdinalIgnoreCase)) return "flux";
+            return "gptimage";
+        }
+    }
 
     /// <summary>
-    /// The two families take different parameters, and sending one family's to
-    /// the other is rejected rather than ignored. There is no API to ask which
-    /// a deployment is, so it is inferred from the name and can be overridden.
+    /// Landscape, in whatever each family will accept: dall-e-3 took
+    /// 1792x1024, gpt-image-1 offers 1536x1024, FLUX wants multiples of 32 and
+    /// takes 1344x768. All are near enough 16:9 that the overlay step reaches
+    /// 1600x900 without losing anything that matters.
     /// </summary>
-    private bool IsDallE =>
-        (configuration["AzureOpenAI:ImageModelFamily"]
-         ?? Deployment).Contains("dall", StringComparison.OrdinalIgnoreCase);
+    private string Size => configuration["AzureOpenAI:ImageSize"] ?? Family switch
+    {
+        "dalle" => "1792x1024",
+        "flux" => "1344x768",
+        _ => "1536x1024",
+    };
 
     public bool IsConfigured => !string.IsNullOrWhiteSpace(Endpoint);
 
     /// <summary>One generated picture, and what the model was actually asked.</summary>
-    public record Picture(byte[] Bytes, string? RevisedPrompt);
+    public record Picture(byte[] Bytes, string? RevisedPrompt, string ContentType);
+
+    /// <summary>
+    /// What the bytes actually are. FLUX returns JPEG whatever the endpoint is
+    /// called, and storing a JPEG as image/png is the sort of thing that works
+    /// everywhere until the one place it does not.
+    /// </summary>
+    private static string SniffContentType(byte[] bytes)
+    {
+        if (bytes.Length >= 8 &&
+            bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47)
+            return "image/png";
+        if (bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
+            return "image/jpeg";
+        if (bytes.Length >= 12 &&
+            bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[8] == 0x57 && bytes[9] == 0x45)
+            return "image/webp";
+        return "application/octet-stream";
+    }
 
     /// <summary>
     /// Generate up to <paramref name="count"/> pictures. Returns what succeeded;
@@ -98,20 +127,27 @@ public class AzureOpenAiImageService(
             ["size"] = Size,
         };
 
-        if (IsDallE)
+        switch (Family)
         {
-            // "vivid" is dall-e-3's default and pushes dramatic, hyper-real
-            // results — the opposite of what belongs on the screen a resident
-            // meets. "natural" is the plainer treatment.
-            body["style"] = "natural";
-            body["quality"] = "standard";
-            body["response_format"] = "b64_json";
-        }
-        else
-        {
-            // gpt-image-1 always returns base64 and rejects response_format and
-            // style outright. Its quality scale is low/medium/high.
-            body["quality"] = configuration["AzureOpenAI:ImageQuality"] ?? "medium";
+            case "dalle":
+                // "vivid" is dall-e-3's default and pushes dramatic, hyper-real
+                // results — the opposite of what belongs on the screen a
+                // resident meets. "natural" is the plainer treatment.
+                body["style"] = "natural";
+                body["quality"] = "standard";
+                body["response_format"] = "b64_json";
+                break;
+
+            case "flux":
+                // FLUX takes the prompt, a count and a size, and nothing else.
+                // It returns base64 without being asked.
+                break;
+
+            default:
+                // gpt-image-1 always returns base64 and rejects response_format
+                // and style outright. Its quality scale is low/medium/high.
+                body["quality"] = configuration["AzureOpenAI:ImageQuality"] ?? "medium";
+                break;
         }
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
@@ -132,7 +168,33 @@ public class AzureOpenAiImageService(
         using var http = httpFactory.CreateClient();
         http.Timeout = TimeSpan.FromSeconds(120);
 
-        using var response = await http.SendAsync(request, ct);
+        var response = await http.SendAsync(request, ct);
+
+        // A deployment's quota is counted per minute, so a burst of candidates
+        // can outrun it. The service says how long to wait; waiting once is
+        // far better than handing back two pictures out of three.
+        if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+        {
+            var wait = response.Headers.RetryAfter?.Delta
+                       ?? TimeSpan.FromSeconds(
+                           double.TryParse(response.Headers.RetryAfter?.ToString(), out var secs)
+                               ? secs : 20);
+            if (wait > TimeSpan.FromSeconds(90))
+                wait = TimeSpan.FromSeconds(90);
+            logger.LogInformation("Azure rate limit reached; waiting {Seconds:0}s", wait.TotalSeconds);
+            response.Dispose();
+            await Task.Delay(wait, ct);
+
+            using var retry = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
+            };
+            foreach (var header in request.Headers)
+                retry.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            response = await http.SendAsync(retry, ct);
+        }
+
+        using var _ = response;
         var text = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)
@@ -178,7 +240,7 @@ public class AzureOpenAiImageService(
             return null;
         }
 
-        return new Picture(bytes, revised);
+        return new Picture(bytes, revised, SniffContentType(bytes));
     }
 
     private static string Clip(string s) => s.Length <= 500 ? s : s[..500] + "…";
