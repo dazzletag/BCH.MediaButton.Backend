@@ -59,47 +59,70 @@ public class AdminUserProfilesController : ControllerBase
         profile.CareHomeId = wanted.Count == 1 ? wanted[0] : null;
     }
 
-    private async Task<object?> DescribeAsync(Guid id) =>
-        await _db.UserProfiles
-            .Where(u => u.Id == id)
-            .Include(u => u.CareHomeGrants).ThenInclude(g => g.CareHome)
-            .Select(u => new
-            {
-                u.Id, u.AzureAdEmail, u.DisplayName, u.Role, u.CareHomeId, u.AllCareHomes,
-                careHomeIds = u.CareHomeGrants.Select(g => g.CareHomeId).ToList(),
-                careHomeNames = u.CareHomeGrants.Where(g => g.CareHome != null)
-                                                .Select(g => g.CareHome!.Name).ToList(),
-            })
+    /// <summary>
+    /// The homes a profile may see: the granted ones, plus the single home on
+    /// the old column, which profiles saved before multi-home still carry.
+    /// Done over materialised entities, never inside a query.
+    /// </summary>
+    private static List<(Guid Id, string Name)> Homes(UserProfile u)
+    {
+        var homes = u.CareHomeGrants
+            .Where(g => g.CareHome != null)
+            .Select(g => (g.CareHomeId, g.CareHome!.Name))
+            .ToList();
+
+        if (u.CareHomeId is Guid legacy && homes.All(h => h.Item1 != legacy))
+            homes.Add((legacy, u.CareHome?.Name ?? "(home)"));
+
+        return homes;
+    }
+
+    private async Task<object?> DescribeAsync(Guid id)
+    {
+        var u = await _db.UserProfiles
+            .Where(p => p.Id == id)
+            .Include(p => p.CareHome)
+            .Include(p => p.CareHomeGrants).ThenInclude(g => g.CareHome)
+            .AsNoTracking()
             .FirstOrDefaultAsync();
+        if (u is null) return null;
+
+        return new
+        {
+            u.Id, u.AzureAdEmail, u.DisplayName, u.Role, u.CareHomeId, u.AllCareHomes,
+            careHomeIds = Homes(u).Select(h => h.Id).ToList(),
+            careHomeNames = Homes(u).Select(h => h.Name).ToList(),
+        };
+    }
 
     [HttpGet]
     public async Task<IActionResult> List()
     {
-        var profiles = await _db.UserProfiles
+        // Fetched, then shaped. Folding the old single home into the list has
+        // to happen in memory: expressed inside the query it is not something
+        // EF can turn into SQL, and it fails at runtime rather than at build,
+        // which is how it reached production.
+        var rows = await _db.UserProfiles
             .Include(u => u.CareHome)
             .Include(u => u.AccessGrants)
             .Include(u => u.CareHomeGrants).ThenInclude(g => g.CareHome)
             .OrderBy(u => u.DisplayName ?? u.AzureAdEmail)
-            .Select(u => new
-            {
-                u.Id,
-                u.AzureAdEmail,
-                u.DisplayName,
-                u.Role,
-                u.CareHomeId,
-                u.AllCareHomes,
-                careHomeName = u.CareHome != null ? u.CareHome.Name : null,
-                // The old single home is folded in, so a profile saved before
-                // multi-home existed still lists the home it actually has.
-                careHomeIds = u.CareHomeGrants.Select(g => g.CareHomeId)
-                    .Concat(u.CareHomeId != null ? new[] { u.CareHomeId.Value } : Array.Empty<Guid>())
-                    .Distinct().ToList(),
-                careHomeNames = u.CareHomeGrants
-                    .Where(g => g.CareHome != null)
-                    .Select(g => g.CareHome!.Name).ToList(),
-                residents = u.AccessGrants.Select(g => g.ResidentKey).ToList()
-            })
+            .AsNoTracking()
             .ToListAsync();
+
+        var profiles = rows.Select(u => new
+        {
+            u.Id,
+            u.AzureAdEmail,
+            u.DisplayName,
+            u.Role,
+            u.CareHomeId,
+            u.AllCareHomes,
+            careHomeName = u.CareHome?.Name,
+            careHomeIds = Homes(u).Select(h => h.Id).ToList(),
+            careHomeNames = Homes(u).Select(h => h.Name).ToList(),
+            residents = u.AccessGrants.Select(g => g.ResidentKey).ToList()
+        }).ToList();
 
         return Ok(profiles);
     }
