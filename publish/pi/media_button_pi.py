@@ -3643,6 +3643,31 @@ with open(CONFIG_PATH, 'r') as f:
 
 # apply config
 GONE_TIMEOUT = CONFIG.get('gone_timeout', GONE_TIMEOUT)
+
+
+def _warn_about_settings_that_do_nothing():
+    """Say which beacon settings are ignored, and which one is not.
+
+    A device was found configured with gone_timeout: 1, set by somebody who
+    reasonably believed it governed how quickly playback stopped. It does not —
+    nothing reads it — and the real behaviour came from an undocumented default
+    of five seconds, which was stopping a resident's videos mid-watch. A
+    setting that looks live and is not is worse than no setting at all, so the
+    log now names them.
+    """
+    dead = [k for k in ("gone_timeout", "stop_grace_misses", "watchdog_interval")
+            if k in (CONFIG or {})]
+    effective = (CONFIG or {}).get("absence_timeout", 5.0)
+    if dead:
+        print(f"[CONFIG] These do nothing: {', '.join(dead)}. "
+              f"Playback stops after absence_timeout, currently {float(effective):.1f}s.",
+              flush=True)
+    elif "absence_timeout" not in (CONFIG or {}):
+        print("[CONFIG] absence_timeout is not set; using the 5.0s default. "
+              "Check the [PRESENCE] lines if videos stop mid-watch.", flush=True)
+
+
+_warn_about_settings_that_do_nothing()
 DETECTION_COOLDOWN = CONFIG.get('detection_cooldown', DETECTION_COOLDOWN)
 AVOID_RECENT_N = CONFIG.get('avoid_recent_n', AVOID_RECENT_N)
 BIG_PLAYLIST_SIZE = CONFIG.get('big_playlist_size', BIG_PLAYLIST_SIZE)

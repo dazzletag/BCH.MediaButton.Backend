@@ -18,6 +18,28 @@ residents:
     url: "https://stream.live.vc.bbcmedia.co.uk/bbc_radio_two"
 
 detection_cooldown: 0.3
+
+# How long the beacon may go unheard before playback stops, in seconds.
+#
+# This is the one that governs it. A beacon advertises roughly once a second,
+# but adverts get missed, and a gap longer than this is treated as the switch
+# having been put down. Set too tight, a resident's video stops in the middle
+# while they are still holding it.
+#
+# Measured on Jules Challen's beacon on 2026-10-15: mean gap 1.2s, but a fifth
+# of adverts more than 2s apart and several over 5s in a single sitting. At the
+# old default of 5 her videos stopped roughly every forty seconds. Twelve gives
+# real headroom while still stopping within about twelve seconds of the switch
+# genuinely going down.
+#
+# If a device stops mid-video, read the [PRESENCE] lines in the log before
+# changing this: they report the real gaps, and a beacon whose worst gap is
+# growing usually wants a new battery rather than a longer timeout.
+absence_timeout: 12
+
+# Read, but nothing uses them. Kept only because existing devices have them in
+# their config and removing them would look like a setting had been taken away.
+# The startup log says so too, so nobody tunes these expecting an effect.
 gone_timeout: 1
 stop_grace_misses: 1
 watchdog_interval: 0.2
