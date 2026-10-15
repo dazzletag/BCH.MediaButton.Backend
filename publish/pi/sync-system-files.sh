@@ -43,6 +43,34 @@ install_if_changed() {
 install_if_changed "$SRC_DIR/media-button.logrotate" /etc/logrotate.d/media-button 0644
 
 # ---------------------------------------------------------------------------
+# Offline-start override (systemd drop-in)
+#
+# Makes media-button.service start with no network and treat its git/pip auto-
+# update as optional, so a device with no connection (e.g. moved to another site
+# on a different SSID) still comes up on its already-downloaded videos instead of
+# the unit aborting in a failed ExecStartPre. A drop-in — not an edit to the unit
+# — so install.sh's per-device UID fix in the unit is never disturbed. Needs a
+# daemon-reload (unlike the plain file copies above), and takes effect on the next
+# start. Idempotent and never fails the start, per this script's rules.
+# ---------------------------------------------------------------------------
+install_offline_dropin() {
+  local src="$SRC_DIR/media-button.service.d/offline.conf"
+  local dir=/etc/systemd/system/media-button.service.d
+  local dest="$dir/offline.conf"
+  [[ -f "$src" ]] || { echo "[SYNC] Missing offline drop-in source, skipping"; return 0; }
+  install -d -m 0755 "$dir" 2>/dev/null || true
+  cmp -s "$src" "$dest" && return 0
+  if install -m 0644 "$src" "$dest"; then
+    systemctl daemon-reload 2>/dev/null || true
+    echo "[SYNC] Installed $dest; takes effect on next start"
+  else
+    echo "[SYNC] FAILED to install $dest (continuing anyway)"
+  fi
+}
+
+install_offline_dropin
+
+# ---------------------------------------------------------------------------
 # Reverse SSH tunnel
 #
 # The unit cannot be a plain copy: every device forwards a different port, so
